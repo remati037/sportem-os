@@ -4,7 +4,16 @@
       "Bash(git mv *)",
       "Bash(git branch *)",
       "Bash(git add *)",
-      "Bash(git symbolic-ref *)"
+      "Bash(git symbolic-ref *)",
+      "Bash(git commit -q -m ' *)",
+      "Bash(rm -rf sportem-app)",
+      "Bash(npx --yes create-next-app@latest sportem-app --typescript --app --eslint --tailwind --no-src-dir --import-alias \"@/*\" --use-npm --disable-git --no-turbopack)",
+      "Bash(cp -R /private/tmp/claude-501/-Users-marko-Desktop-Marko-sportem-os/2db3948f-e652-4977-b10d-eb8abcf765da/scratchpad/sportem-app/app /Users/marko/Desktop/Marko/sportem-os/app)",
+      "Bash(cp -R /private/tmp/claude-501/-Users-marko-Desktop-Marko-sportem-os/2db3948f-e652-4977-b10d-eb8abcf765da/scratchpad/sportem-app/public /Users/marko/Desktop/Marko/sportem-os/public)",
+      "Bash(npm install *)",
+      "Bash(npm run *)",
+      "Bash(git check-ignore *)",
+      "Bash(git checkout *)"
     ]
   }
 }

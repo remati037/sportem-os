@@ -1,0 +1,17 @@
+# Build / dependencies
+.next
+node_modules
+build
+out
+
+# Supabase lokalni artefakti
+supabase/.branches
+supabase/.temp
+
+# Generisano
+next-env.d.ts
+package-lock.json
+
+# Dokumentacija (čuva se ručno formatirana)
+docs
+CLAUDE.md
