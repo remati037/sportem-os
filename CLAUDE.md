@@ -1,0 +1,126 @@
+# CLAUDE.md — Sportem app
+
+> Ovaj fajl Claude Code čita na startu svake sesije. Sadrži sve što je potrebno da bilo koja sesija radi ispravno bez ponovnog objašnjavanja. **Kad se neka odluka promeni — upiši je ovde.**
+
+---
+
+## 1. Šta je projekat
+
+**Sportem app** — PWA (web + instalabilna + full responsive), interni operativni sistem za ecommerce sportske opreme (`sportem.rs`, WordPress + WooCommerce). Jedno mesto za: porudžbine, katalog/inventar, finansije (zarada, profit, marža, fakture, isplate, poštarina, keš), troškove, dashboard, low stock, push. Zamenjuje dosadašnji Google Sheets + Make tok.
+
+Vlasnici: **korisnik (Admin)** i **brat (Menadžer)**. **Drug (Logistika)** je dobavljač koji drži fizički magacin (roba se uzima po VP cenama).
+
+**Izvori istine (`docs/`):**
+- `docs/sportem-kontekst.md` — biznis kontekst, tokovi novca, ljudi, struktura baze, edge case-ovi. **Master dokument.**
+- `docs/Sportem-Plan-Implementacije-v2.md` — plan implementacije po fazama i koracima (v2.0).
+- `docs/Sportem-Dizajn-Sistem.md` — dizajn tokeni, boje, tipografija, komponente. Izvor istine za UI (Korak 0.2/0.3).
+
+---
+
+## 2. Workflow (kako se radi)
+
+- **Jedan korak plana = jedna sesija.** Ne uzimati ceo plan odjednom — uzeti CLAUDE.md + tekst konkretnog koraka.
+- Posle svakog koraka proveriti „Rezultat" (definiciju gotovog), pa commit. Ne prelaziti na sledeći korak dok rezultat ne stoji.
+- **Skretanje sa plana** (druga biblioteka/šema) je dozvoljeno **samo ako ne dira zaključane odluke ni zamrznute cene.** Svaku izmenu odluke upisati u ovaj fajl.
+- **Migracije baze uvek kroz `supabase/migrations`** — nikad ručne izmene šeme kroz Supabase dashboard (da lokalni i produkcioni ostanu u sync-u).
+- Sav UI tekst na **srpskom** sa punim dijakriticima (č, ć, š, ž, đ).
+
+---
+
+## 3. Zaključane odluke (ne menjaju se bez izmene docs-a)
+
+- PWA, online-only, push notifikacije u Fazi 1. Email nije u Fazi 1.
+- **Tri role:**
+  - **Admin** — sve (finansije, cene, fakture, reklame).
+  - **Menadžer** — svi Sportem podaci (zarada, porudžbine, izveštaji), **bez izmene finansija**.
+  - **Logistika** — samo stanje/naziv/slike artikala; **ne vidi MP, VP, profit ni bilo koje finansije — kolone se NE renderuju (ne blur, nego ih nema).**
+- **Supabase je jedini izvor istine**; Sheets izlazi iz sistema. App je glavni katalog (cene/proizvodi se menjaju tu); WooCommerce se po potrebi ažurira ručno.
+- **Sve porudžbine ulaze kroz WooCommerce webhook** — i XExpress i lične/keš prodaje. **U app-u nema ručnog kreiranja porudžbina.** (Keš/lična prodaja = porudžbina se samo označi `licno` + „Keš/Isplaćeno".)
+- Webhook prati **`order.created` i `order.updated`** — otkazivanja/refund se sinhronizuju automatski.
+- Statusi porudžbine su podesiva lista: **Kreirano → Poslato → Isporučeno → Otkazano/Vraćeno.**
+- Svaki proizvod ima bar jednu varijantu (i bez pravih varijanti — „default" varijanta); porudžbina uvek gađa varijantu **po SKU**.
+- Poštarina/težina/broj paketa se popunjavaju na koraku **„Poslato"**, ne na kreiranju.
+- **Faktura drugu = automatski izračunata cifra + spisak porudžbina/stavki u app-u. Bez PDF fakture.** (PDF postoji samo za listu za slanje — Korak 1.5.)
+- Troškovi ne diraju fakturu; reklame se unose zbirno i ručno; bez ponavljajućih troškova.
+- Meta integracija, XExpress API i auto-decrement inventara **NISU u Fazi 1.**
+- **Auth: Supabase Auth** — 3 fiksna interna korisnika + 1 vendor, bez javne registracije, native RLS.
+
+---
+
+## 4. Centralni princip: zamrznute cene (snapshot) — NE DIRATI bez potvrde
+
+Razlog: u Sheetsu se desio bag — promena cene je retroaktivno promenila zaradu starih porudžbina.
+
+- **Katalog** (`product_variants`) drži *trenutne* MP, VP, zaradu.
+- **Stavke porudžbine** (`order_items`) u trenutku kreiranja **kopiraju** tadašnju MP, VP, zaradu i **zamrznu ih**.
+- Svi izveštaji/fakture/profit čitaju **isključivo** iz zamrznutih stavki, **nikad iz kataloga**.
+- Edit MP na konkretnoj stavci (popust) menja **samo zamrznutu vrednost te stavke**; VP i katalog se ne diraju.
+- Važi i za backfill (Korak 1.3) i za edit stavki (Korak 1.2).
+
+**Edge case — nepoznat SKU:** stavka se kreira sa `sku` + `product_name` + `mp_at_sale`, `vp_at_sale` prazno → porudžbina dobija flag `needs_vp`; kad admin naknadno unese VP, flag se skida i profit postaje tačan.
+
+---
+
+## 5. Tehničke konvencije (poštovati svuda)
+
+- **Timezone `Europe/Belgrade`** za sve — T+1 logiku uplata, cron, datume porudžbina, izveštaje. Cron na Vercelu je **UTC** → preračunati (koristiti `date-fns-tz` za logiku; cron postaviti na fiksni UTC i tolerisati ±1h zbog letnjeg računanja, ili dva cron unosa).
+- **Cene: `integer` u RSD, bez decimala** (12500 = 12.500 RSD). **Bez float tipova bilo gde u finansijama.** Prikaz kroz `rsd()` helper (dizajn dok. sekcija 7).
+- **Generisane kolone (Postgres):** `profit = mp_price - vp_price` (katalog) i `profit_at_sale = (mp_at_sale - vp_at_sale) * quantity` (stavke) kao `GENERATED ALWAYS AS ... STORED`. `profit_at_sale` je null dok nema VP.
+- **Soft delete / arhiviranje:** proizvodi i varijante se **ne brišu** ako imaju istorijske porudžbine — dobijaju `archived_at`. Arhivirani ne izlaze u pretrazi/izboru, ali istorija i izveštaji ostaju netaknuti.
+- **Webhook sigurnost:** provera WooCommerce HMAC potpisa (`x-wc-webhook-signature`) na svakom pozivu; odbaciti bez validnog potpisa; ruta ne sme otkriti ništa u error odgovorima.
+- **Idempotentnost:** upsert po `woo_order_id` — ponovljeni webhook (Woo retry) ne pravi duplikate.
+- **RLS je izvor sigurnosti, UI je samo higijena** — svaka provera pristupa mora postojati na nivou baze/servera, ne samo u navigaciji. Logistika vidi `products`/`product_variants` samo kroz restriktovani view (bez `mp_price`, `vp_price`, `profit`) ili column-level GRANT; sve finansijske tabele (orders, order_items, invoices, payouts, expenses) logistici potpuno nedostupne.
+- **Validacija:** `zod` na svim server akcijama i API rutama, uz jedinstven error/toast obrazac.
+
+---
+
+## 6. Tehnološki stack
+
+- **Framework:** Next.js (App Router) + TypeScript.
+- **Stilizacija:** Tailwind CSS + shadcn/ui, prebojen po `docs/Sportem-Dizajn-Sistem.md` (Geist / Geist Mono, tnum brojevi, brend zelena `#1B7A45`).
+- **Baza + Auth + Storage:** Supabase (Postgres, Supabase Auth, Storage za slike, native RLS). Migracije preko Supabase CLI.
+- **Hosting + cron:** Vercel (auto-deploy sa GitHub-a na `main`, preview na PR, Vercel Cron).
+- **PWA:** Serwist (service worker, manifest, push).
+- **PDF (lista za slanje):** `@react-pdf/renderer` — radi na Vercel serverless. **Puppeteer/Chromium NE koristiti.**
+- **Monitoring:** Sentry (besplatan tier) — greške servera i klijenta.
+
+---
+
+## 7. Struktura foldera
+
+> Nastaje u Koraku 0.1 (`create-next-app`). Trenutno postoji samo `docs/`.
+
+```
+app/                 # Next.js App Router (rute, layout, server akcije)
+components/           # UI komponente (shadcn/ui + brend obrasci)
+lib/                 # helperi (rsd(), num(), getUser(), requireRole(), supabase klijenti)
+db/                  # tipovi/upiti vezani za bazu
+supabase/
+  migrations/        # SVE izmene šeme idu ovde (nikad dashboard)
+docs/                # kontekst, plan, dizajn sistem (izvori istine)
+CLAUDE.md            # ovaj fajl
+```
+
+---
+
+## 8. Komande
+
+```bash
+npm run dev            # lokalni dev server (Next.js)
+supabase start         # lokalna Postgres instanca (razvoj bez produkcione baze)
+supabase db push       # primeni migracije iz supabase/migrations
+# testovi: dopuniti kad se postave (Korak 0.1+)
+```
+
+---
+
+## 9. Zlatno pravilo (doslovno)
+
+> **„Pre bilo koje izmene šeme baze pročitaj `docs/sportem-kontekst.md`; migracije samo kroz `supabase/migrations`; nikad ne diraj snapshot (zamrznute cene) logiku bez eksplicitne potvrde."**
+
+---
+
+## 10. Napomene / razrešene kontradikcije
+
+- Dizajn dokument (sekcija 4, „Tabela") kao primer praznog stanja navodi „Dodaj ručnu prodaju" — **to je zastarelo.** Po zaključanoj odluci nema ručnog kreiranja porudžbina; prazno stanje glasi **„Nema porudžbina za ovaj period"** (bez akcije).
+- Grana za produkciju/deploy je **`main`**.
