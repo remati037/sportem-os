@@ -145,4 +145,4 @@ supabase db push       # primeni migracije iz supabase/migrations
 - **Ručno wiring** (bez `@sentry/wizard`): `instrumentation.ts` (`register()` + `onRequestError`), `instrumentation-client.ts` (`onRouterTransitionStart`), `sentry.server.config.ts`, `sentry.edge.config.ts`, `app/global-error.tsx`. `next.config.ts` je wrap-ovan `withSentryConfig`.
 - **Obim:** greške (server+client) + performance tracing na **0.1 (10%)**; **Session Replay isključen** (client bundle + free-tier kvota). Uključiti `replayIntegration` kasnije ako zatreba vizuelni debug.
 - **Env:** `NEXT_PUBLIC_SENTRY_DSN` + `SENTRY_AUTH_TOKEN` (tajna, samo build) u Vercel; `SENTRY_ORG`/`SENTRY_PROJECT` (nisu tajna) čitaju se u `next.config.ts`. Bez auth tokena upload source-map-a se tiho preskače.
-- **Test:** `GET /sentry-test` namerno baca server grešku (dokaz da event stiže). Ukloniti/zaključati posle verifikacije. `tunnelRoute: "/monitoring-tunnel"` zaobilazi ad-blocker-e.
+- **Test:** verifikovano preko privremene rute `/sentry-test` (server greška stigla u dashboard), pa uklonjena. `tunnelRoute: "/monitoring-tunnel"` zaobilazi ad-blocker-e.
