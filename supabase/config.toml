@@ -162,7 +162,10 @@ enable_refresh_token_rotation = true
 # Requires enable_refresh_token_rotation = true.
 refresh_token_reuse_interval = 10
 # Allow/disallow new user signups to your project.
-enable_signup = true
+# Sportem: bez javne registracije (Korak 0.5). Nalozi samo kroz invite (admin API).
+# NAPOMENA: ovo je LOKALNI config; na cloud-u isto podesiti u dashboardu
+# (Authentication → Sign In / Providers → "Allow new users to sign up" = off).
+enable_signup = false
 # Allow/disallow anonymous sign-ins to your project.
 enable_anonymous_sign_ins = false
 # Allow/disallow testing manual linking of accounts
@@ -197,7 +200,8 @@ web3 = 30
 
 [auth.email]
 # Allow/disallow new user signups via email to your project.
-enable_signup = true
+# Sportem: isključeno — invite ide preko admin API-ja, ne javnog signup-a.
+enable_signup = false
 # If enabled, a user will be required to confirm any email change on both the old, and new email
 # addresses. If disabled, only the new email is required to confirm.
 double_confirm_changes = true
