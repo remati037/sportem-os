@@ -198,4 +198,13 @@
     text-transform: uppercase;
     color: var(--ink-faint);
   }
+
+  /* .auth-pattern — tiha dot-grid tekstura za auth ekrane (bledi ka ivicama). */
+  .auth-pattern {
+    background-image: radial-gradient(var(--border-strong) 1px, transparent 1px);
+    background-size: 24px 24px;
+    opacity: 0.55;
+    -webkit-mask-image: radial-gradient(ellipse 80% 70% at 50% 45%, black 30%, transparent 75%);
+    mask-image: radial-gradient(ellipse 80% 70% at 50% 45%, black 30%, transparent 75%);
+  }
 }
