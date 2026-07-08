@@ -13,7 +13,26 @@
       "Bash(npm install *)",
       "Bash(npm run *)",
       "Bash(git check-ignore *)",
-      "Bash(git checkout *)"
+      "Bash(git checkout *)",
+      "Bash(git push *)",
+      "Read(//private/tmp/**)",
+      "Bash(pkill -f \"next dev\")",
+      "Bash(node -e \"const rsd=\\(n\\)=>new Intl.NumberFormat\\('sr-RS',{style:'currency',currency:'RSD',maximumFractionDigits:0}\\).format\\(n\\); const num=\\(n\\)=>new Intl.NumberFormat\\('sr-RS'\\).format\\(n\\); console.log\\(JSON.stringify\\(rsd\\(128500\\)\\)\\); console.log\\(JSON.stringify\\(rsd\\(2490\\)\\)\\); console.log\\(JSON.stringify\\(num\\(37\\)\\)\\);\")",
+      "Bash(npm i *)",
+      "Bash(npx --yes shadcn@latest add button card input select dialog sonner tabs table badge dropdown-menu skeleton form label --yes --overwrite)",
+      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\(Object.keys\\({...p.dependencies,...p.devDependencies}\\).filter\\(d=>/radix|next-themes|sonner|tanstack|hook-form|zod|cva|class-variance|clsx|tailwind-merge|lucide|tw-animate/.test\\(d\\)\\).sort\\(\\).join\\('\\\\n'\\)\\)\")",
+      "Bash(echo \"exit:$?\")",
+      "Bash(pkill -f \"next-server\")",
+      "Bash(supabase init *)",
+      "Bash(supabase migration *)",
+      "Bash(git -C /Users/marko/Desktop/Marko/sportem-os status --short supabase/)",
+      "Read(//private/tmp/pgcheck/**)",
+      "Bash(node check.mjs /Users/marko/Desktop/Marko/sportem-os/supabase/seed.sql /Users/marko/Desktop/Marko/sportem-os/supabase/dev-fixtures.sql /Users/marko/Desktop/Marko/sportem-os/supabase/dev-fixtures-teardown.sql)",
+      "Bash(supabase link *)",
+      "Bash(supabase db *)",
+      "Bash(command -v psql)",
+      "Read(//opt/homebrew/opt/**)",
+      "Bash(git commit *)"
     ]
   }
 }

@@ -1,26 +1,201 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+
+/* =========================================================================
+   Sportem — dizajn tokeni (1:1 iz docs/Sportem-Dizajn-Sistem.md, sekcija 5.1)
+   Light-only tema. Cene: integer RSD, prikaz kroz lib/format.ts (rsd/num).
+   ========================================================================= */
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* neutralni */
+  --paper: #f5f7f5;
+  --surface: #ffffff;
+  --surface-2: #fafbfa;
+  --ink: #15211b;
+  --ink-soft: #5a6b62;
+  --ink-faint: #8a988f;
+  --border: #e4e9e5;
+  --border-strong: #d2dad4;
+
+  /* brend zelena */
+  --green: #1b7a45;
+  --green-deep: #145c34;
+  --green-bright: #2e9e5b;
+  --green-soft: #e7f2eb;
+  --green-ring: rgba(27, 122, 69, 0.2);
+
+  /* statusi (jaka / soft) */
+  --info: #3d6b8c;
+  --info-soft: #e9eff4;
+  --sent: #0e7c86;
+  --sent-soft: #e1f1f2;
+  --success: #1b7a45;
+  --success-soft: #e7f2eb;
+  --warning: #a86a12;
+  --warning-soft: #fbf1dd;
+  --danger: #b23b30;
+  --danger-soft: #fbeae8;
+
+  /* radijusi */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+
+  /* senke (mek, slojevit, zeleno-crni ton) */
+  --shadow-soft: 0 1px 2px rgba(21, 33, 27, 0.04), 0 2px 8px rgba(21, 33, 27, 0.05);
+  --shadow-card: 0 1px 3px rgba(21, 33, 27, 0.05), 0 6px 18px rgba(21, 33, 27, 0.06);
+  --shadow-lift: 0 6px 16px rgba(21, 33, 27, 0.08), 0 16px 36px rgba(21, 33, 27, 0.1);
+  --shadow-focus: 0 0 0 3px var(--green-ring);
+
+  /* -----------------------------------------------------------------------
+     shadcn/ui semantički alias sloj (Korak 0.3).
+     Referencira brend tokene iznad kroz var() — bez dupliranja boja i bez
+     paralelnog HSL seta (HSL iz dizajn dok. 5.5 služi samo kao referenca).
+     Brend tokeni ostaju jedini izvor istine za boje.
+     ----------------------------------------------------------------------- */
+  --background: var(--paper);
+  --foreground: var(--ink);
+  --card: var(--surface);
+  --card-foreground: var(--ink);
+  --popover: var(--surface);
+  --popover-foreground: var(--ink);
+  --primary: var(--green);
+  --primary-foreground: #ffffff;
+  --secondary: var(--green-soft);
+  --secondary-foreground: var(--green-deep);
+  --muted: var(--surface-2);
+  --muted-foreground: var(--ink-soft);
+  --accent: var(--green-soft);
+  --accent-foreground: var(--green-deep);
+  --destructive: var(--danger);
+  --destructive-foreground: #ffffff;
+  /* --border je već definisan iznad (brend token) — shadcn ga koristi direktno. */
+  --input: var(--border-strong);
+  --ring: var(--green);
+  --radius: var(--radius-md); /* 12px = 0.75rem, tačno kao dizajn dok. 5.5 */
 }
+
+/* =========================================================================
+   @theme — Tailwind v4 mapiranje tokena na utilitije (zamena za v3 config).
+   Konvencija: --color-surface-2 -> bg-surface-2, --color-ink-soft -> text-ink-soft.
+   ========================================================================= */
+
+@theme {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+
+  --color-green: var(--green);
+  --color-green-deep: var(--green-deep);
+  --color-green-bright: var(--green-bright);
+  --color-green-soft: var(--green-soft);
+
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-sent: var(--sent);
+  --color-sent-soft: var(--sent-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+  --radius-pill: var(--radius-pill);
+
+  --shadow-soft: var(--shadow-soft);
+  --shadow-card: var(--shadow-card);
+  --shadow-lift: var(--shadow-lift);
+  --shadow-focus: var(--shadow-focus);
+
+  --font-sans: var(--font-geist-sans), system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+/* =========================================================================
+   @theme inline — shadcn/ui utility bindings (Korak 0.3).
+   Dereferencira semantičke vars na mestu upotrebe (inline), pa var()-alias
+   sloj radi ispravno. Omogućava bg-background, bg-primary, border-border,
+   ring-ring, bg-destructive itd. koje generisane shadcn komponente koriste.
+   ========================================================================= */
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
 }
+/* Napomena: --radius-sm/md/lg/xl/pill utilitiji već postoje iz brend @theme
+   bloka iznad (8/12/16/20px), pa ih shadcn komponente (rounded-md/lg) koriste
+   direktno — nema potrebe za ponovnim definisanjem. */
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* =========================================================================
+   Bazne klase (sekcija 5.4)
+   ========================================================================= */
+
+@layer base {
+  body {
+    background: var(--paper);
+    color: var(--ink);
+  }
+
+  /* tabularni brojevi za sve cifre u tabelama i statima */
+  .num,
+  td.num,
+  .stat-value {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+
+  /* pristupačnost — gasi tranzicije/animacije (sekcija 8) */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer components {
+  /* .eyebrow — nadnaslov (sekcija 2). Ostale komponentne klase (dugmad, input,
+     kartica, pilula) su prešle na shadcn/ui u Koraku 0.3:
+     Button/Input/Card/Badge pod components/ui/. */
+  .eyebrow {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
 }

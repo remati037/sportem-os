@@ -124,3 +124,10 @@ supabase db push       # primeni migracije iz supabase/migrations
 
 - Dizajn dokument (sekcija 4, „Tabela") kao primer praznog stanja navodi „Dodaj ručnu prodaju" — **to je zastarelo.** Po zaključanoj odluci nema ručnog kreiranja porudžbina; prazno stanje glasi **„Nema porudžbina za ovaj period"** (bez akcije).
 - Grana za produkciju/deploy je **`main`**.
+
+**Korak 0.4 — razrešene odluke o bazi (potvrđene sa korisnikom):**
+- **Cloud + CLI, BEZ Docker-a.** Ne koristi se `supabase start` / lokalni Postgres. Šema se piše kao migracioni fajl u `supabase/migrations` i šalje na cloud kroz `supabase db push` (poštuje pravilo „migracije samo kroz `supabase/migrations`", samo bez lokalne kopije). `supabase/seed.sql` se primenjuje jednokratno na cloud (`psql -f` ili SQL editor) — seed su test podaci, nije šema.
+- **`role`, `delivery_method`, `payment_status` = `text` + `CHECK`** (ne Postgres enum) — lakše menjanje bez `ALTER TYPE` migracija. `order_statuses` ostaje lookup tabela (podesivo).
+- **Adresa porudžbine = eksplicitne snapshot kolone** (`ship_name`, `ship_phone`, `ship_address`, `ship_city`, `ship_postal_code`, `ship_note`), ne JSON — čitljivije za PDF listu za slanje.
+- **RLS je uključen deny-by-default** na svim tabelama u 0.4, ali **bez politika**. Politike po roli, restriktovani view za logistiku i Supabase Auth su **Korak 0.5**. `@supabase/*` klijentski paketi se instaliraju u 0.5 (0.4 nema runtime Supabase zavisnost).
+- **Seed je razdvojen na trajno i privremeno:** `supabase/seed.sql` = trajni bootstrap config (statusi porudžbine + kategorije troškova) — ostaje i u produkciji. `supabase/dev-fixtures.sql` = lažni test podaci (katalog, kupci, porudžbine) sa fiksnim UUID-jevima. **Pre backfill-a (1.3) i uključivanja webhooka (1.2) OBAVEZNO pokrenuti `supabase/dev-fixtures-teardown.sql`** — briše samo fixtures po UUID-u, ne dira prave podatke (nasumični UUID) ni trajni config.
