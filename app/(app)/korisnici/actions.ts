@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+import { firstZodError } from "@/lib/actions";
 import { requireRole, type Role } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -31,7 +32,7 @@ export async function inviteUser(_prev: ActionState, formData: FormData): Promis
   });
 
   if (!parsed.success) {
-    return { error: parsed.error.issues[0]?.message ?? "Neispravan unos.", success: null };
+    return { error: firstZodError(parsed.error), success: null };
   }
 
   const admin = createAdminClient();

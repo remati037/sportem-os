@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
+import { type ActionState, firstZodError } from "@/lib/actions";
 import { createClient } from "@/lib/supabase/server";
 
 const schema = z
@@ -15,7 +16,7 @@ const schema = z
     path: ["confirm"],
   });
 
-export type SetPasswordState = { error: string | null };
+export type SetPasswordState = ActionState;
 
 /** Invited korisnik postavlja lozinku (sesija je uspostavljena kroz /auth/callback). */
 export async function setPassword(
@@ -27,7 +28,7 @@ export async function setPassword(
     confirm: formData.get("confirm"),
   });
   if (!parsed.success) {
-    return { error: parsed.error.issues[0]?.message ?? "Neispravan unos." };
+    return { error: firstZodError(parsed.error) };
   }
 
   const supabase = await createClient();

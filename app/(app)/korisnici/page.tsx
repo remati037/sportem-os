@@ -1,4 +1,5 @@
 import { requireRole, type Role } from "@/lib/auth";
+import { ROLE_LABEL } from "@/lib/roles";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -13,12 +14,6 @@ import {
 import { InviteUserDialog } from "./invite-user-dialog";
 
 export const dynamic = "force-dynamic";
-
-const ROLE_LABEL: Record<Role, string> = {
-  admin: "Admin",
-  manager: "Menadžer",
-  logistics: "Logistika",
-};
 
 type ProfileRow = { id: string; full_name: string | null; role: Role };
 
