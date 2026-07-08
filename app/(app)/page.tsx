@@ -1,14 +1,14 @@
 import { redirect } from "next/navigation";
 import { LayoutDashboard } from "lucide-react";
 
-import { getProfile, requireRole } from "@/lib/auth";
+import { getProfile } from "@/lib/auth";
 import { EmptyState } from "@/components/patterns/empty-state";
 
 export default async function DashboardPage() {
-  // Logistika nema Dashboard — sleće na Katalog (izbegava redirect petlju kroz requireRole).
   const session = await getProfile();
-  if (session?.profile.role === "logistics") redirect("/katalog");
-  await requireRole("admin", "manager");
+  if (!session) redirect("/prijava");
+  // Logistika nema Dashboard — sleće na Katalog (izbegava redirect petlju kroz requireRole).
+  if (session.profile.role === "logistics") redirect("/katalog");
 
   return (
     <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-10">

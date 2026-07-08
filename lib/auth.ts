@@ -1,5 +1,5 @@
+import { cache } from "react";
 import { redirect } from "next/navigation";
-import type { User } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/server";
 
@@ -11,45 +11,39 @@ export type Profile = {
   role: Role;
 };
 
-/** Trenutni auth korisnik ili null (ne redirektuje). */
-export async function getUser(): Promise<User | null> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  return user;
-}
+export type AppSession = {
+  userId: string;
+  profile: Profile;
+};
 
-/** Korisnik + njegov `profiles` red (rola, ime) ili null. */
-export async function getProfile(): Promise<{ user: User; profile: Profile } | null> {
+/**
+ * Sesija (userId + `profiles` red) ili null.
+ *
+ * Identitet čita iz verifikovanog JWT-a (`getClaims` — lokalna provera, bez
+ * mrežnog poziva ka Auth serveru), pa jedan upit na `profiles`. `cache()`
+ * deduplikuje pozive unutar istog zahteva (layout + stranica = 1 upit).
+ * Higijena na nivou app-a; prava zaštita je RLS (CLAUDE.md 5).
+ */
+export const getProfile = cache(async (): Promise<AppSession | null> => {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return null;
+  const { data } = await supabase.auth.getClaims();
+  const userId = data?.claims.sub;
+  if (!userId) return null;
 
   const { data: profile } = await supabase
     .from("profiles")
     .select("id, full_name, role")
-    .eq("id", user.id)
+    .eq("id", userId)
     .single();
 
   if (!profile) return null;
-  return { user, profile: profile as Profile };
-}
-
-/** Vrati korisnika ili redirect na /prijava. Za zaštićene stranice. */
-export async function requireUser(): Promise<User> {
-  const user = await getUser();
-  if (!user) redirect("/prijava");
-  return user;
-}
+  return { userId, profile: profile as Profile };
+});
 
 /**
- * Vrati profil ili redirect na /prijava; ako rola nije dozvoljena → redirect na /.
- * Higijena na nivou app-a; prava zaštita finansija je RLS (CLAUDE.md 5).
+ * Vrati sesiju ili redirect na /prijava; ako rola nije dozvoljena → redirect na /.
  */
-export async function requireRole(...roles: Role[]): Promise<{ user: User; profile: Profile }> {
+export async function requireRole(...roles: Role[]): Promise<AppSession> {
   const session = await getProfile();
   if (!session) redirect("/prijava");
   if (!roles.includes(session.profile.role)) redirect("/");

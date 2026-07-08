@@ -37,19 +37,20 @@ export async function updateSession(request: NextRequest) {
     },
   );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // getClaims verifikuje JWT lokalno (bez poziva ka Auth serveru) i pritom
+  // refreshuje istekli token — dužnost middleware-a ostaje očuvana.
+  const { data } = await supabase.auth.getClaims();
+  const isAuthed = Boolean(data?.claims);
 
   const { pathname } = request.nextUrl;
 
-  if (!user && !isPublic(pathname)) {
+  if (!isAuthed && !isPublic(pathname)) {
     const url = request.nextUrl.clone();
     url.pathname = "/prijava";
     return NextResponse.redirect(url);
   }
 
-  if (user && pathname === "/prijava") {
+  if (isAuthed && pathname === "/prijava") {
     const url = request.nextUrl.clone();
     url.pathname = "/";
     return NextResponse.redirect(url);

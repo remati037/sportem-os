@@ -32,7 +32,27 @@
       "Bash(supabase db *)",
       "Bash(command -v psql)",
       "Read(//opt/homebrew/opt/**)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(sed -n '/^export {/,/}/p' components/ui/dialog.tsx)",
+      "Bash(sed -n '/^export {/,/}/p' components/ui/form.tsx)",
+      "Bash(npx tsc *)",
+      "Bash(echo \"---EXIT $?---\")",
+      "Bash(npx eslint *)",
+      "Bash(npx prettier *)",
+      "Bash(node --env-file=.env.local /private/tmp/claude-501/-Users-marko-Desktop-Marko-sportem-os/841e4778-8fac-4a21-b5fd-f5c59bf950f3/scratchpad/verify.mjs)",
+      "Bash(node --env-file=.env.local ./_verify_tmp.mjs)",
+      "Bash(git commit -m ' *)",
+      "Bash(git rm *)",
+      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\('serwist', p.dependencies.serwist\\); console.log\\('@serwist/next', p.devDependencies['@serwist/next']\\); console.log\\('sharp', p.devDependencies.sharp\\)\")",
+      "Bash(node -e \"const s=require\\('sharp'\\); for\\(const f of ['public/icons/icon-192.png','public/icons/icon-512.png','public/icons/maskable-512.png','app/icon.png','app/apple-icon.png']\\){s\\(f\\).metadata\\(\\).then\\(m=>console.log\\(f, m.width+'x'+m.height\\)\\)}\")",
+      "Bash(node -e \"console.log\\(JSON.stringify\\(require\\('./node_modules/@serwist/next/package.json'\\).exports, null, 2\\)\\)\")",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}  type=%{content_type}  redirect=%{redirect_url}\\\\n\" http://localhost:3000/manifest.webmanifest)",
+      "Bash(curl -s http://localhost:3000/manifest.webmanifest)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}  type=%{content_type}  redirect=%{redirect_url}\\\\n\" http://localhost:3000/sw.js)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}  type=%{content_type}\\\\n\" http://localhost:3000/icons/icon-192.png)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}  redirect=%{redirect_url}\\\\n\" http://localhost:3000/)",
+      "Bash(curl -s http://localhost:3000/prijava)",
+      "Bash(pkill -f \"next start\")"
     ]
   }
 }
