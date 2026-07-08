@@ -1,0 +1,72 @@
+/// <reference lib="webworker" />
+/// <reference types="@serwist/next/typings" />
+
+// Korak 0.7 — Serwist service worker (PWA skelet).
+//
+// USTAV: app je online-only. SW NE sme da kešira stranice, finansijske ni auth
+// podatke — servirati zastarelu cifru offline bio bi bug. Zato NE koristimo
+// `defaultCache` (koji radi SWR na navigacijama i kešira slike/fontove sa
+// stranih domena), nego vlastiti, konzervativni `runtimeCaching`: keširaju se
+// SAMO immutable, content-hash-ovani build asseti. Sve ostalo (navigacije,
+// Supabase, /api/*, Sentry tunel) nema handler → ide network-only.
+//
+// Push handler NIJE ovde (Korak 1.9) — 0.7 samo postavlja infrastrukturu.
+
+import {
+  CacheFirst,
+  ExpirationPlugin,
+  Serwist,
+  StaleWhileRevalidate,
+  type PrecacheEntry,
+  type SerwistGlobalConfig,
+} from "serwist";
+
+// `__SW_MANIFEST` ubacuje Serwist build plugin (lista precache entrija).
+declare global {
+  interface WorkerGlobalScope extends SerwistGlobalConfig {
+    __SW_MANIFEST: (PrecacheEntry | string)[] | undefined;
+  }
+}
+
+declare const self: ServiceWorkerGlobalScope;
+
+const serwist = new Serwist({
+  // Precache: samo content-hash-ovani static asseti koje ubaci build plugin.
+  // Uz `cacheOnNavigation: false` (next.config) nijedan HTML se ne precache-uje.
+  precacheEntries: self.__SW_MANIFEST,
+  skipWaiting: true,
+  clientsClaim: true,
+  navigationPreload: false,
+  runtimeCaching: [
+    {
+      // Content-hash-ovani JS/CSS/font chunkovi — bezbedno zauvek.
+      // Ovde padaju i `next/font` (Geist / Geist Mono) self-hostovani fontovi.
+      matcher: ({ url }) => url.pathname.startsWith("/_next/static/"),
+      handler: new CacheFirst({
+        cacheName: "next-static",
+        plugins: [
+          new ExpirationPlugin({
+            maxEntries: 128,
+            maxAgeSeconds: 60 * 60 * 24 * 365,
+            maxAgeFrom: "last-used",
+          }),
+        ],
+      }),
+    },
+    {
+      // Statični brend asseti (PWA ikonice). Freshness nije kritičan.
+      matcher: ({ url, sameOrigin }) =>
+        sameOrigin &&
+        (url.pathname.startsWith("/icons/") || url.pathname === "/manifest.webmanifest"),
+      handler: new StaleWhileRevalidate({
+        cacheName: "brand-assets",
+        plugins: [new ExpirationPlugin({ maxEntries: 32, maxAgeSeconds: 60 * 60 * 24 * 30 })],
+      }),
+    },
+    // NAMERNO bez handlera za: navigacije (HTML), *.supabase.co, /api/*,
+    // Sentry /monitoring-tunnel. Serwist ih pušta na mrežu (network-only) —
+    // nikad iz keša. Ovo čuva online-only integritet.
+  ],
+});
+
+serwist.addEventListeners();

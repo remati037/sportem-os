@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
@@ -16,6 +16,18 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Sportem",
   description: "Interni operativni sistem za Sportem",
+  // PWA (Korak 0.7): manifest + iOS standalone. app/manifest.ts → /manifest.webmanifest.
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    title: "Sportem",
+    statusBarStyle: "default",
+  },
+};
+
+// Next 16: themeColor ide u viewport export (ne u metadata). Brend zelena.
+export const viewport: Viewport = {
+  themeColor: "#1B7A45",
 };
 
 export default function RootLayout({

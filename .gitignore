@@ -41,3 +41,8 @@ yarn-error.log*
 
 # TypeScript
 *.tsbuildinfo
+
+# PWA (Serwist) — generisani service worker (build artefakti)
+/public/sw.js
+/public/sw.js.map
+/public/swe-worker-*.js

@@ -15,6 +15,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Serwist generisani service worker (build artefakt) — ne lintuje se.
+    "public/sw.js",
+    "public/swe-worker-*.js",
   ]),
 ]);
 

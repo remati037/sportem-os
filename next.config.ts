@@ -1,12 +1,26 @@
 import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs";
+import withSerwistInit from "@serwist/next";
 
 const nextConfig: NextConfig = {/* config options here */};
+
+// PWA (Korak 0.7): Serwist service worker. Radi kroz webpack plugin → produkcioni
+// build MORA biti `next build --webpack` (v. package.json). SW je isključen u dev-u
+// (dev ostaje Turbopack). Online-only: bez keširanja navigacija.
+const withSerwist = withSerwistInit({
+  swSrc: "app/sw.ts",
+  swDest: "public/sw.js",
+  disable: process.env.NODE_ENV === "development",
+  cacheOnNavigation: false,
+  reloadOnOnline: false,
+});
 
 // Sentry build-time integracija (Korak 0.6): upload source-map-a, tunel za
 // zaobilaženje ad-blocker-a. org/project idu iz env (nisu tajna); DSN i
 // SENTRY_AUTH_TOKEN su u Vercel env. Bez tokena, upload se tiho preskače.
-export default withSentryConfig(nextConfig, {
+// Serwist unutra (ubacuje SW plugin), Sentry spolja (source-map upload vidi
+// finalni build). Redosled bitan.
+export default withSentryConfig(withSerwist(nextConfig), {
   org: process.env.SENTRY_ORG,
   project: process.env.SENTRY_PROJECT,
 
