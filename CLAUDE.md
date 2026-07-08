@@ -140,3 +140,9 @@ supabase db push       # primeni migracije iz supabase/migrations
 - **Bez javne registracije:** `enable_signup=false` (config.toml lokalno + **na cloud-u u dashboardu**). Invite ne zavisi od signup-a. Za invite redirect na cloud-u dodati `NEXT_PUBLIC_APP_URL/auth/callback` u Auth → URL Configuration (Redirect URLs).
 - **Zaštita ruta:** `proxy.ts` (Next 16 „proxy" konvencija — bivši `middleware.ts`) refreshuje sesiju i redirektuje neulogovane na `/prijava`; javne rute su `/prijava`, `/postavi-lozinku`, `/auth/*`. Helperi `getUser()`, `getProfile()`, `requireUser()`, `requireRole()` su u `lib/auth.ts` (logika sesije u `lib/supabase/middleware.ts`).
 - **RLS test:** `npm run rls:test` (`scripts/rls-test.mjs`) — loguje se kao Logistika i dokazuje da cene/porudžbine/finansije vraćaju 0 redova, a view/proizvodi rade; Admin vidi sve. Kredencijali kroz env (`RLS_TEST_*`), preduslov su učitani dev-fixtures + test nalozi.
+
+**Korak 0.6 — Sentry (server + client), potvrđeno sa korisnikom:**
+- **Ručno wiring** (bez `@sentry/wizard`): `instrumentation.ts` (`register()` + `onRequestError`), `instrumentation-client.ts` (`onRouterTransitionStart`), `sentry.server.config.ts`, `sentry.edge.config.ts`, `app/global-error.tsx`. `next.config.ts` je wrap-ovan `withSentryConfig`.
+- **Obim:** greške (server+client) + performance tracing na **0.1 (10%)**; **Session Replay isključen** (client bundle + free-tier kvota). Uključiti `replayIntegration` kasnije ako zatreba vizuelni debug.
+- **Env:** `NEXT_PUBLIC_SENTRY_DSN` + `SENTRY_AUTH_TOKEN` (tajna, samo build) u Vercel; `SENTRY_ORG`/`SENTRY_PROJECT` (nisu tajna) čitaju se u `next.config.ts`. Bez auth tokena upload source-map-a se tiho preskače.
+- **Test:** `GET /sentry-test` namerno baca server grešku (dokaz da event stiže). Ukloniti/zaključati posle verifikacije. `tunnelRoute: "/monitoring-tunnel"` zaobilazi ad-blocker-e.

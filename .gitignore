@@ -19,6 +19,10 @@ next-env.d.ts
 # Vercel
 .vercel
 
+# Sentry
+.sentryclirc
+.env.sentry-build-plugin
+
 # Supabase (lokalni razvoj)
 /supabase/.branches
 /supabase/.temp
