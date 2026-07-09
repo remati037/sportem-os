@@ -53,7 +53,7 @@ export default async function PorudzbinaPage({ params }: { params: Promise<{ id:
   const profitTotal = order.items.reduce((sum, i) => sum + (i.profit_at_sale ?? 0), 0);
 
   return (
-    <main className="mx-auto w-full max-w-4xl flex-1 px-6 py-10">
+    <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-10 sm:px-6">
       <Link
         href="/porudzbine"
         className="text-ink-soft hover:text-ink mb-6 inline-flex items-center gap-1.5 text-sm"

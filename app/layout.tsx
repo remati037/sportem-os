@@ -31,6 +31,9 @@ export const viewport: Viewport = {
   // PWA/iOS standalone: rasteže sadržaj ispod safe-area (home-indikator), da bottom nav
   // može da doda env(safe-area-inset-bottom) razmak i ne bude „isečen".
   viewportFit: "cover",
+  // App-like: bez pinch-zoom-a i bez iOS auto-zoom-a na fokus inputa.
+  maximumScale: 1,
+  userScalable: false,
 };
 
 export default function RootLayout({

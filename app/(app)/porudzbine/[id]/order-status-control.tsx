@@ -133,9 +133,9 @@ export function OrderStatusControl({
       {/* Ručna promena na bilo koji status + napomena */}
       <div className="border-border mt-4 space-y-2 border-t pt-4">
         <Label className="text-ink-faint text-xs">Ručna promena statusa</Label>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <Select value={manualStatus} onValueChange={setManualStatus}>
-            <SelectTrigger className="h-9 w-48">
+            <SelectTrigger className="h-9 w-full sm:w-48">
               <SelectValue placeholder="Izaberi status…" />
             </SelectTrigger>
             <SelectContent>
@@ -150,13 +150,14 @@ export function OrderStatusControl({
             value={note}
             onChange={(e) => setNote(e.target.value)}
             placeholder="Napomena (opciono)"
-            className="h-9 flex-1"
+            className="h-9 w-full sm:flex-1"
           />
           <Button
             size="sm"
             variant="subtle"
             disabled={pending || !manualStatus || manualStatus === currentStatusId}
             onClick={() => changeTo(manualStatus, note.trim() || undefined)}
+            className="w-full sm:w-auto"
           >
             Sačuvaj
           </Button>
