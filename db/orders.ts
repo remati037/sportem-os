@@ -15,6 +15,8 @@ export type OrderListRow = {
   goods_total: number | null;
   needs_vp: boolean;
   needs_review: boolean;
+  /** Ime primaoca (snapshot na porudžbini) — prikaz „Kupac" u listi. */
+  ship_name: string | null;
   status: { name: string; color: string | null } | null;
   customer: { name: string | null } | null;
 };
@@ -60,7 +62,7 @@ export type OrderDetail = {
 };
 
 const LIST_COLS =
-  "id, woo_order_id, ordered_at, goods_total, needs_vp, needs_review, status:order_statuses(name, color), customer:customers(name)";
+  "id, woo_order_id, ordered_at, goods_total, needs_vp, needs_review, ship_name, status:order_statuses(name, color), customer:customers(name)";
 
 export type OrderFilters = {
   statusId?: string;

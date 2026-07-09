@@ -99,7 +99,9 @@ export default async function PorudzbinePage({
                   <TableCell className="num text-ink-soft px-4 py-2.5">
                     {o.ordered_at ? datum(o.ordered_at) : "—"}
                   </TableCell>
-                  <TableCell className="text-ink px-4 py-2.5">{o.customer?.name ?? "—"}</TableCell>
+                  <TableCell className="text-ink px-4 py-2.5">
+                    {o.ship_name ?? o.customer?.name ?? "—"}
+                  </TableCell>
                   <TableCell className="px-4 py-2.5">
                     {o.status ? <StatusPill name={o.status.name} color={o.status.color} /> : "—"}
                   </TableCell>
