@@ -51,15 +51,22 @@ export function VariantFormDialog({
   attributeNames,
   variant,
   trigger,
+  open: openProp,
+  onOpenChange,
 }: {
   mode: "create" | "edit";
   productId: string;
   attributeNames: string[];
   variant?: VariantData;
-  trigger: ReactNode;
+  /** Opciono: kad se izostavi, forma je kontrolisana kroz `open`/`onOpenChange` (npr. iz „⋮" menija). */
+  trigger?: ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [openInternal, setOpenInternal] = useState(false);
+  const open = openProp ?? openInternal;
+  const setOpen = onOpenChange ?? setOpenInternal;
   const [pending, startTransition] = useTransition();
 
   const initialValues = variant?.attributes ?? {};
@@ -98,7 +105,7 @@ export function VariantFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>{trigger}</DialogTrigger>
+      {trigger ? <DialogTrigger asChild>{trigger}</DialogTrigger> : null}
       <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{mode === "create" ? "Nova varijanta" : "Izmena varijante"}</DialogTitle>
@@ -110,7 +117,7 @@ export function VariantFormDialog({
           <input type="hidden" name="product_id" value={productId} />
           {mode === "edit" && variant ? <input type="hidden" name="id" value={variant.id} /> : null}
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="sku">SKU</Label>
               <Input
@@ -140,7 +147,7 @@ export function VariantFormDialog({
             <div className="border-border bg-surface-2/50 space-y-3 rounded-md border p-3">
               <span className="eyebrow">Atributi</span>
               <input type="hidden" name="attributes" value={JSON.stringify(attrValues)} />
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {attributeNames.map((attrName) => (
                   <div key={attrName} className="space-y-2">
                     <Label htmlFor={`attr_${attrName}`}>{attrName}</Label>
@@ -156,7 +163,7 @@ export function VariantFormDialog({
             </div>
           ) : null}
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="mp_price">MP cena (RSD)</Label>
               <Input
@@ -183,7 +190,7 @@ export function VariantFormDialog({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="stock_quantity">Stanje</Label>
               <Input
@@ -208,7 +215,7 @@ export function VariantFormDialog({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="supplier_sku">Šifra dobavljača</Label>
               <Input

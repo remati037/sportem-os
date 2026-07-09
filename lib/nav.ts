@@ -30,7 +30,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/porudzbine", label: "Porudžbine", icon: ShoppingCart, roles: STAFF, primary: true },
   { href: "/katalog", label: "Katalog", icon: Package, roles: ALL, primary: true },
   { href: "/finansije", label: "Finansije", icon: Wallet, roles: STAFF, primary: true },
-  { href: "/troskovi", label: "Troškovi", icon: Receipt, roles: STAFF, primary: true },
+  { href: "/troskovi", label: "Troškovi", icon: Receipt, roles: STAFF, primary: false },
   { href: "/korisnici", label: "Korisnici", icon: Users, roles: ["admin"], primary: false },
   { href: "/podesavanja", label: "Podešavanja", icon: Settings, roles: ["admin"], primary: false },
 ];
@@ -38,6 +38,16 @@ export const NAV_ITEMS: NavItem[] = [
 /** Stavke vidljive datoj roli. */
 export function navForRole(role: Role): NavItem[] {
   return NAV_ITEMS.filter((item) => item.roles.includes(role));
+}
+
+/** Primarne stavke (bottom bar na mobilnom) vidljive datoj roli. */
+export function navPrimaryForRole(role: Role): NavItem[] {
+  return navForRole(role).filter((item) => item.primary);
+}
+
+/** Sekundarne stavke (mobilni „Više" meni) vidljive datoj roli. */
+export function navSecondaryForRole(role: Role): NavItem[] {
+  return navForRole(role).filter((item) => !item.primary);
 }
 
 /** Da li je stavka aktivna za dati pathname (`/` egzaktno, ostale po prefiksu). */

@@ -8,6 +8,12 @@ import { toast } from "sonner";
 
 import type { OrderListRow } from "@/db/orders";
 import { rsd, datum } from "@/lib/format";
+import {
+  MobileCard,
+  MobileCardField,
+  MobileCardHeader,
+  MobileCardList,
+} from "@/components/patterns/mobile-card-list";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -87,7 +93,8 @@ export function OrdersBulkTable({ orders }: { orders: OrderListRow[] }) {
         </div>
       ) : null}
 
-      <div className="border-border bg-surface shadow-soft overflow-x-auto rounded-lg border">
+      {/* Desktop tabela */}
+      <div className="border-border bg-surface shadow-soft hidden overflow-x-auto rounded-lg border md:block">
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
@@ -151,6 +158,48 @@ export function OrdersBulkTable({ orders }: { orders: OrderListRow[] }) {
           </TableBody>
         </Table>
       </div>
+
+      {/* Mobilne kartice */}
+      <MobileCardList>
+        {orders.map((o) => (
+          <MobileCard
+            key={o.id}
+            href={`/porudzbine/${o.id}`}
+            ariaLabel={`Porudžbina ${o.woo_order_id ?? ""}`}
+          >
+            <MobileCardHeader
+              leading={
+                <input
+                  type="checkbox"
+                  aria-label={`Izaberi porudžbinu ${o.woo_order_id ?? ""}`}
+                  className="accent-green mt-1 size-4 cursor-pointer"
+                  checked={selected.has(o.id)}
+                  onChange={() => toggle(o.id)}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              }
+              title={<span className="num">{o.woo_order_id != null ? `#${o.woo_order_id}` : "—"}</span>}
+              subtitle={
+                <span>
+                  {o.ordered_at ? datum(o.ordered_at) : "—"} · {o.ship_name ?? o.customer?.name ?? "—"}
+                </span>
+              }
+              trailing={o.status ? <StatusPill name={o.status.name} color={o.status.color} /> : null}
+            />
+            <div className="mt-3 space-y-1.5">
+              <MobileCardField label="Iznos">
+                <span className="num font-medium">{o.goods_total != null ? rsd(o.goods_total) : "—"}</span>
+              </MobileCardField>
+              {o.needs_vp || o.needs_review ? (
+                <div className="relative z-10 flex flex-wrap gap-1.5">
+                  {o.needs_vp ? <Badge variant="warning">Nedostaje VP</Badge> : null}
+                  {o.needs_review ? <Badge variant="danger">Za proveru</Badge> : null}
+                </div>
+              ) : null}
+            </div>
+          </MobileCard>
+        ))}
+      </MobileCardList>
     </>
   );
 }

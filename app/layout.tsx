@@ -28,6 +28,9 @@ export const metadata: Metadata = {
 // Next 16: themeColor ide u viewport export (ne u metadata). Brend zelena.
 export const viewport: Viewport = {
   themeColor: "#1B7A45",
+  // PWA/iOS standalone: rasteže sadržaj ispod safe-area (home-indikator), da bottom nav
+  // može da doda env(safe-area-inset-bottom) razmak i ne bude „isečen".
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

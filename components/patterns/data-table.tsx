@@ -3,6 +3,7 @@
 import * as React from "react";
 import {
   type ColumnDef,
+  type Row,
   type RowData,
   type SortingState,
   flexRender,
@@ -46,6 +47,8 @@ type DataTableProps<TData, TValue> = {
   empty?: React.ReactNode;
   /** Max visina scroll kontejnera (sticky header). Default 24rem. */
   maxHeight?: string;
+  /** Ako je zadat, na mobilnom (`md:hidden`) prikazuje kartice umesto horizontalnog skrola. */
+  renderMobileCard?: (row: Row<TData>) => React.ReactNode;
 };
 
 function cellAlign(align?: "left" | "right", numeric?: boolean) {
@@ -60,6 +63,7 @@ function DataTable<TData, TValue>({
   initialSorting = [],
   empty,
   maxHeight = "24rem",
+  renderMobileCard,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = React.useState<SortingState>(initialSorting);
   const [globalFilter, setGlobalFilter] = React.useState("");
@@ -88,7 +92,30 @@ function DataTable<TData, TValue>({
         />
       ) : null}
 
-      <div className="border-border bg-surface shadow-soft overflow-hidden rounded-lg border">
+      {renderMobileCard ? (
+        <div className="space-y-2 md:hidden">
+          {rows.length ? (
+            rows.map((row) => <React.Fragment key={row.id}>{renderMobileCard(row)}</React.Fragment>)
+          ) : (
+            <div className="border-border bg-surface shadow-soft rounded-lg border">
+              {empty ?? (
+                <EmptyState
+                  title="Nema rezultata"
+                  description="Nema redova za prikaz."
+                  className="border-0 shadow-none"
+                />
+              )}
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      <div
+        className={cn(
+          "border-border bg-surface shadow-soft overflow-hidden rounded-lg border",
+          renderMobileCard && "hidden md:block",
+        )}
+      >
         <div className="overflow-auto" style={{ maxHeight }}>
           <Table>
             <TableHeader className="[&_tr]:border-border">

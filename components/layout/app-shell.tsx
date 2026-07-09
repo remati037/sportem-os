@@ -9,7 +9,9 @@ export function AppShell({ profile, children }: { profile: Profile; children: Re
   return (
     <div className="flex min-h-full flex-1">
       <Sidebar profile={profile} />
-      <div className="flex min-w-0 flex-1 flex-col pb-14 md:pb-0">{children}</div>
+      <div className="flex min-w-0 flex-1 flex-col pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pb-0">
+        {children}
+      </div>
       <BottomNav role={profile.role} />
     </div>
   );

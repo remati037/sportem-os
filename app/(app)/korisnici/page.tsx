@@ -1,6 +1,11 @@
 import { requireRole, type Role } from "@/lib/auth";
 import { ROLE_LABEL } from "@/lib/roles";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  MobileCard,
+  MobileCardHeader,
+  MobileCardList,
+} from "@/components/patterns/mobile-card-list";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -52,7 +57,8 @@ export default async function KorisniciPage() {
         <InviteUserDialog />
       </div>
 
-      <div className="border-border bg-surface shadow-soft overflow-hidden rounded-lg border">
+      {/* Desktop tabela */}
+      <div className="border-border bg-surface shadow-soft hidden overflow-hidden rounded-lg border md:block">
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
@@ -90,6 +96,32 @@ export default async function KorisniciPage() {
           </TableBody>
         </Table>
       </div>
+
+      {/* Mobilne kartice */}
+      <MobileCardList>
+        {users.map((u) => (
+          <MobileCard key={u.id}>
+            <MobileCardHeader
+              title={u.full_name ?? "—"}
+              subtitle={u.email}
+              trailing={
+                u.confirmed ? (
+                  <Badge variant="success">Aktivan</Badge>
+                ) : (
+                  <Badge variant="warning">Pozvan — čeka</Badge>
+                )
+              }
+            />
+            <div className="mt-3">
+              {u.role ? (
+                <Badge variant="info">{ROLE_LABEL[u.role]}</Badge>
+              ) : (
+                <span className="text-ink-faint text-sm">bez role</span>
+              )}
+            </div>
+          </MobileCard>
+        ))}
+      </MobileCardList>
     </main>
   );
 }

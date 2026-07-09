@@ -50,14 +50,21 @@ export function ProductFormDialog({
   product,
   categories,
   trigger,
+  open: openProp,
+  onOpenChange,
 }: {
   mode: "create" | "edit";
   product?: ProductData;
   categories: { id: string; name: string }[];
-  trigger: ReactNode;
+  /** Opciono: kad se izostavi, forma je kontrolisana kroz `open`/`onOpenChange` (npr. iz „⋮" menija). */
+  trigger?: ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [openInternal, setOpenInternal] = useState(false);
+  const open = openProp ?? openInternal;
+  const setOpen = onOpenChange ?? setOpenInternal;
   const [category, setCategory] = useState(product?.category_id ?? NO_CATEGORY);
   const [attrs, setAttrs] = useState<string[]>(product?.attribute_names ?? []);
   const [attrInput, setAttrInput] = useState("");
@@ -95,7 +102,7 @@ export function ProductFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>{trigger}</DialogTrigger>
+      {trigger ? <DialogTrigger asChild>{trigger}</DialogTrigger> : null}
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{mode === "create" ? "Novi proizvod" : "Izmena proizvoda"}</DialogTitle>

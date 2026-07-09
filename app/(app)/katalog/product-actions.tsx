@@ -1,11 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { Archive, ArchiveRestore, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
-import { Button } from "@/components/ui/button";
+import { RowActions } from "@/components/patterns/row-actions";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 
 import {
   archiveProduct,
@@ -35,6 +36,7 @@ export function ProductActions({
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const [editOpen, setEditOpen] = useState(false);
 
   function run(fn: () => Promise<CatalogActionState>, redirectToList = false) {
     startTransition(async () => {
@@ -50,46 +52,39 @@ export function ProductActions({
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <>
+      <RowActions>
+        <DropdownMenuItem onSelect={() => setEditOpen(true)}>
+          <Pencil /> Izmeni
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          disabled={pending}
+          onSelect={() =>
+            run(() => (product.archived ? unarchiveProduct(product.id) : archiveProduct(product.id)))
+          }
+        >
+          {product.archived ? <ArchiveRestore /> : <Archive />}
+          {product.archived ? "Vrati iz arhive" : "Arhiviraj"}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          variant="destructive"
+          disabled={pending}
+          onSelect={() => {
+            if (confirm(`Obrisati proizvod „${product.name}"? Ako ima varijante, biće arhiviran.`))
+              run(() => deleteProduct(product.id), true);
+          }}
+        >
+          <Trash2 /> Obriši
+        </DropdownMenuItem>
+      </RowActions>
+
       <ProductFormDialog
         mode="edit"
         product={product}
         categories={categories}
-        trigger={
-          <Button variant="ghost" size="sm">
-            <Pencil /> Izmeni
-          </Button>
-        }
+        open={editOpen}
+        onOpenChange={setEditOpen}
       />
-      <Button
-        variant="ghost"
-        size="sm"
-        disabled={pending}
-        onClick={() =>
-          run(() => (product.archived ? unarchiveProduct(product.id) : archiveProduct(product.id)))
-        }
-      >
-        {product.archived ? (
-          <>
-            <ArchiveRestore /> Vrati iz arhive
-          </>
-        ) : (
-          <>
-            <Archive /> Arhiviraj
-          </>
-        )}
-      </Button>
-      <Button
-        variant="danger"
-        size="sm"
-        disabled={pending}
-        onClick={() => {
-          if (confirm(`Obrisati proizvod „${product.name}"? Ako ima varijante, biće arhiviran.`))
-            run(() => deleteProduct(product.id), true);
-        }}
-      >
-        <Trash2 /> Obriši
-      </Button>
-    </div>
+    </>
   );
 }

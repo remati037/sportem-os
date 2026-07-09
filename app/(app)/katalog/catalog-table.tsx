@@ -12,6 +12,11 @@ import { rsd } from "@/lib/format";
 import { DataTable } from "@/components/patterns/data-table";
 import { DataTableColumnHeader } from "@/components/patterns/data-table-column-header";
 import { EmptyState } from "@/components/patterns/empty-state";
+import {
+  MobileCard,
+  MobileCardField,
+  MobileCardHeader,
+} from "@/components/patterns/mobile-card-list";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
@@ -216,6 +221,45 @@ export function CatalogTable({
             className="border-0 shadow-none"
           />
         }
+        renderMobileCard={(row) => {
+          const p = row.original;
+          return (
+            <MobileCard href={`/katalog/${p.id}`} ariaLabel={p.name}>
+              <MobileCardHeader
+                leading={<Thumb image={p.image} name={p.name} />}
+                title={
+                  <span className="flex items-center gap-2">
+                    {p.name}
+                    {p.archived ? <Badge variant="warning">Arhiviran</Badge> : null}
+                  </span>
+                }
+                subtitle={p.brand ?? undefined}
+              />
+              <div className="mt-3 space-y-1.5">
+                <MobileCardField label="Kategorija">
+                  {p.categoryName ?? "—"}
+                </MobileCardField>
+                <MobileCardField label="Stanje">
+                  <span className="num inline-flex items-center gap-2">
+                    {p.totalStock}
+                    {p.lowStock ? <Badge variant="warning">Nisko</Badge> : null}
+                  </span>
+                </MobileCardField>
+                {canSeeFinance ? (
+                  <MobileCardField label="MP">
+                    <span className="num">
+                      {p.mpMin == null || p.mpMax == null
+                        ? "—"
+                        : p.mpMin === p.mpMax
+                          ? rsd(p.mpMin)
+                          : `${rsd(p.mpMin)} – ${rsd(p.mpMax)}`}
+                    </span>
+                  </MobileCardField>
+                ) : null}
+              </div>
+            </MobileCard>
+          );
+        }}
       />
     </div>
   );
