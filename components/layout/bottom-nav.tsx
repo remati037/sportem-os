@@ -28,7 +28,9 @@ export function BottomNav({ role }: { role: Role }) {
               active ? "text-green-deep" : "text-ink-soft",
             )}
           >
-            {active ? <span className="bg-green absolute inset-x-3 top-0 h-0.5 rounded-full" /> : null}
+            {active ? (
+              <span className="bg-green absolute inset-x-3 top-0 h-0.5 rounded-full" />
+            ) : null}
             <Icon className="size-5 shrink-0" aria-hidden />
             <span className="max-w-full truncate">{item.label}</span>
           </Link>

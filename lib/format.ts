@@ -16,3 +16,19 @@ export const rsd = (n: number) =>
 
 /** Običan broj/količina u srpskom formatu → npr. num(1500) === "1.500" */
 export const num = (n: number) => new Intl.NumberFormat("sr-RS").format(n);
+
+/* Datumi uvek u Europe/Belgrade (CLAUDE.md 5), bez obzira na server TZ. */
+
+/** Datum → „9. 7. 2026." */
+export const datum = (iso: string) =>
+  new Intl.DateTimeFormat("sr-RS", { dateStyle: "short", timeZone: "Europe/Belgrade" }).format(
+    new Date(iso),
+  );
+
+/** Datum i vreme → „9. 7. 2026. 14:30" */
+export const datumVreme = (iso: string) =>
+  new Intl.DateTimeFormat("sr-RS", {
+    dateStyle: "short",
+    timeStyle: "short",
+    timeZone: "Europe/Belgrade",
+  }).format(new Date(iso));

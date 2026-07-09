@@ -16,7 +16,7 @@ export function AuthShell({ eyebrow, title, description, children }: AuthShellPr
         className="absolute top-1/2 left-1/2 h-[36rem] w-[36rem] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(circle,rgba(27,122,69,0.07),transparent_65%)]"
       />
 
-      <div className="relative w-full max-w-sm animate-in duration-500 fade-in slide-in-from-bottom-2 motion-reduce:animate-none">
+      <div className="animate-in fade-in slide-in-from-bottom-2 relative w-full max-w-sm duration-500 motion-reduce:animate-none">
         <div className="mb-8 flex flex-col items-center gap-4 text-center">
           <div className="bg-green shadow-soft flex size-12 items-center justify-center rounded-[0.875rem] text-xl font-bold text-white select-none">
             S

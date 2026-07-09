@@ -1,8 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
-/** Javne rute — dostupne bez sesije (prijava + prihvat invite-a). */
-const PUBLIC_PATHS = ["/prijava", "/postavi-lozinku", "/auth"];
+/** Javne rute — dostupne bez sesije (prijava + prihvat invite-a + webhookovi). */
+const PUBLIC_PATHS = ["/prijava", "/postavi-lozinku", "/auth", "/api/webhooks"];
 
 function isPublic(pathname: string) {
   return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));

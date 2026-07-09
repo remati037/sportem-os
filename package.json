@@ -10,7 +10,8 @@
     "lint": "eslint",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "rls:test": "node --env-file-if-exists=.env.local --env-file-if-exists=.env.test.local scripts/rls-test.mjs"
+    "rls:test": "node --env-file-if-exists=.env.local --env-file-if-exists=.env.test.local scripts/rls-test.mjs",
+    "woo:test": "node --env-file-if-exists=.env.local scripts/woo-webhook-test.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
