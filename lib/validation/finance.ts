@@ -40,3 +40,25 @@ export const createPayoutSchema = z.object({
 export const updatePayoutSchema = createPayoutSchema.extend({
   id: uuid("Neispravna uplata."),
 });
+
+/* ── Fakture (invoices) — 1.6b ───────────────────────────────────────────── */
+
+export const issueInvoiceSchema = z.object({
+  // Ručni unos broja (jedinstvenost čuva invoice_number UNIQUE u bazi).
+  invoice_number: z
+    .string()
+    .trim()
+    .min(1, "Unesite broj fakture.")
+    .max(100, "Broj fakture je predugačak."),
+  period_from: isoDate("period od"),
+  period_to: isoDate("period do"),
+  // Bar jedna porudžbina — faktura bez stavki nema smisla.
+  order_ids: z
+    .array(uuid("Neispravna porudžbina."))
+    .min(1, "Izaberite bar jednu porudžbinu.")
+    .max(1000, "Previše porudžbina."),
+});
+
+export const markInvoicePaidSchema = z.object({
+  id: uuid("Neispravna faktura."),
+});

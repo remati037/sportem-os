@@ -171,3 +171,197 @@ export async function getPayoutSpisak(payoutId: string): Promise<PayoutSpisak> {
 
   return { byOrder, byArticle };
 }
+
+/* ── Fakture (invoices) — 1.6b ───────────────────────────────────────────── */
+
+/**
+ * Zarada po porudžbini iz view-a `order_profit` (Σ zamrznute profit_at_sale).
+ * Zaseban upit umesto PostgREST embed-a nad view-om (pouzdanije). Vraća Map
+ * order_id → profit. Porudžbina bez reda u view-u (nema stavki) → 0.
+ */
+async function profitByOrder(orderIds: string[]): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  if (orderIds.length === 0) return map;
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("order_profit")
+    .select("order_id, profit")
+    .in("order_id", orderIds);
+  for (const r of (data as { order_id: string; profit: number | null }[]) ?? []) {
+    map.set(r.order_id, r.profit ?? 0);
+  }
+  return map;
+}
+
+export type InvoiceCandidate = {
+  id: string;
+  woo_order_id: number | null;
+  ship_name: string | null;
+  delivered_at: string | null;
+  profit: number;
+};
+
+export type InvoiceCandidates = { orders: InvoiceCandidate[]; total: number };
+
+/**
+ * Kandidati za fakturu = „drug mi duguje" baza: XExpress + isporučeno + uplaćeno
+ * + nefakturisano + bez needs_vp. Zarada iz zamrznutih stavki (order_profit).
+ */
+export async function getInvoiceCandidates(): Promise<InvoiceCandidates> {
+  const delivered = await deliveredStatusId();
+  if (!delivered) return { orders: [], total: 0 };
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("orders")
+    .select("id, woo_order_id, ship_name, delivered_at")
+    .eq("delivery_method", "xexpress")
+    .eq("payment_status", "uplaceno")
+    .eq("status_id", delivered)
+    .is("invoice_id", null)
+    .eq("needs_vp", false)
+    .order("delivered_at", { ascending: true, nullsFirst: false });
+
+  const rows =
+    (data as {
+      id: string;
+      woo_order_id: number | null;
+      ship_name: string | null;
+      delivered_at: string | null;
+    }[]) ?? [];
+
+  const profits = await profitByOrder(rows.map((o) => o.id));
+  const orders: InvoiceCandidate[] = rows.map((o) => ({
+    ...o,
+    profit: profits.get(o.id) ?? 0,
+  }));
+  const total = orders.reduce((sum, o) => sum + o.profit, 0);
+  return { orders, total };
+}
+
+export type BlockedOrder = {
+  id: string;
+  woo_order_id: number | null;
+  ship_name: string | null;
+  delivered_at: string | null;
+};
+
+/**
+ * Porudžbine koje BI bile kandidati ali čekaju VP (needs_vp=true) — neće ući u
+ * fakturu dok se VP ne unese. Prikazuju se kao upozorenje.
+ */
+export async function getBlockedNeedsVpOrders(): Promise<BlockedOrder[]> {
+  const delivered = await deliveredStatusId();
+  if (!delivered) return [];
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("orders")
+    .select("id, woo_order_id, ship_name, delivered_at")
+    .eq("delivery_method", "xexpress")
+    .eq("payment_status", "uplaceno")
+    .eq("status_id", delivered)
+    .is("invoice_id", null)
+    .eq("needs_vp", true)
+    .order("delivered_at", { ascending: true, nullsFirst: false });
+  return (data as BlockedOrder[]) ?? [];
+}
+
+/** „Drug mi duguje" = Σ nefakturisane realizovane zarade (isti skup kao kandidati). */
+export async function getDrugMiDuguje(): Promise<{ total: number; orderCount: number }> {
+  const { orders, total } = await getInvoiceCandidates();
+  return { total, orderCount: orders.length };
+}
+
+export type InvoiceRow = {
+  id: string;
+  invoice_number: string | null;
+  period_from: string | null;
+  period_to: string | null;
+  total_amount: number | null;
+  status: string;
+  created_at: string;
+  orderCount: number;
+};
+
+/** Lista izdatih faktura (sa brojem vezanih porudžbina). */
+export async function listInvoices(): Promise<InvoiceRow[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("invoices")
+    .select(
+      "id, invoice_number, period_from, period_to, total_amount, status, created_at, orders(count)",
+    )
+    .order("created_at", { ascending: false });
+
+  return (
+    (data as unknown as (Omit<InvoiceRow, "orderCount"> & {
+      orders: { count: number }[];
+    })[]) ?? []
+  ).map(({ orders, ...inv }) => ({
+    ...inv,
+    orderCount: orders[0]?.count ?? 0,
+  }));
+}
+
+export type InvoiceDetailOrder = {
+  id: string;
+  woo_order_id: number | null;
+  ship_name: string | null;
+  delivered_at: string | null;
+  profit: number;
+};
+
+export type InvoiceDetail = {
+  invoice: InvoiceRow;
+  orders: InvoiceDetailOrder[];
+  computedTotal: number; // živi Σ profit (kontrola prema zamrznutom total_amount)
+  isBackfill: boolean;
+};
+
+/** Detalj fakture: vezane porudžbine + zarada po porudžbini + živi zbir. */
+export async function getInvoiceDetail(id: string): Promise<InvoiceDetail | null> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("invoices")
+    .select(
+      `id, invoice_number, period_from, period_to, total_amount, status, created_at,
+       orders(id, woo_order_id, ship_name, delivered_at)`,
+    )
+    .eq("id", id)
+    .maybeSingle();
+  if (!data) return null;
+
+  const row = data as unknown as Omit<InvoiceRow, "orderCount"> & {
+    orders: {
+      id: string;
+      woo_order_id: number | null;
+      ship_name: string | null;
+      delivered_at: string | null;
+    }[];
+  };
+
+  const sorted = [...row.orders].sort(
+    (a, b) => (a.woo_order_id ?? 0) - (b.woo_order_id ?? 0),
+  );
+  const profits = await profitByOrder(sorted.map((o) => o.id));
+  const orders: InvoiceDetailOrder[] = sorted.map((o) => ({
+    ...o,
+    profit: profits.get(o.id) ?? 0,
+  }));
+  const computedTotal = orders.reduce((sum, o) => sum + o.profit, 0);
+
+  return {
+    invoice: {
+      id: row.id,
+      invoice_number: row.invoice_number,
+      period_from: row.period_from,
+      period_to: row.period_to,
+      total_amount: row.total_amount,
+      status: row.status,
+      created_at: row.created_at,
+      orderCount: orders.length,
+    },
+    orders,
+    computedTotal,
+    isBackfill: row.invoice_number === "ISTORIJA-BACKFILL",
+  };
+}

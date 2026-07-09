@@ -8,7 +8,12 @@ import { requireRole } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { previousWorkingDay } from "@/lib/date-belgrade";
 import { APP_STATUS } from "@/lib/woo";
-import { createPayoutSchema, updatePayoutSchema } from "@/lib/validation/finance";
+import {
+  createPayoutSchema,
+  updatePayoutSchema,
+  issueInvoiceSchema,
+  markInvoicePaidSchema,
+} from "@/lib/validation/finance";
 
 /*
  * Server akcije finansija (Korak 1.6, Admin-only — dira novac). Pišu kroz RLS
@@ -215,4 +220,160 @@ export async function deletePayout(id: string): Promise<FinanceActionState> {
 
   revalidatePayouts();
   return { error: null, success: "Uplata obrisana." };
+}
+
+/* ── Fakture (invoices) — 1.6b, Admin-only ───────────────────────────────── */
+
+function revalidateInvoices(id?: string) {
+  revalidatePath("/finansije");
+  revalidatePath("/finansije/fakture");
+  if (id) revalidatePath(`/finansije/fakture/${id}`);
+}
+
+/**
+ * Provera da su SVE porudžbine i dalje eligible za fakturu: xexpress +
+ * isporučeno + uplaćeno + nefakturisano + bez needs_vp. Guard protiv stale
+ * klijent liste / konkurentnog izdavanja. Vraća poruku greške ili null.
+ */
+async function assertInvoiceable(orderIds: string[]): Promise<string | null> {
+  if (orderIds.length === 0) return "Izaberite bar jednu porudžbinu.";
+  const delivered = await deliveredStatusId();
+  if (!delivered) return "Status „Isporučeno“ nije pronađen.";
+
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("orders")
+    .select("id")
+    .in("id", orderIds)
+    .eq("delivery_method", "xexpress")
+    .eq("payment_status", "uplaceno")
+    .eq("status_id", delivered)
+    .is("invoice_id", null)
+    .eq("needs_vp", false);
+
+  if ((data?.length ?? 0) !== orderIds.length) {
+    return "Neke porudžbine više nisu dostupne za fakturu (uplaćene + bez čekanja VP). Osveži i pokušaj ponovo.";
+  }
+  return null;
+}
+
+export type IssueInvoiceInput = z.input<typeof issueInvoiceSchema>;
+
+/**
+ * Izdavanje fakture drugu. total_amount = Σ zamrznute zarade (order_profit)
+ * rekompjutovana server-side. Vezane porudžbine dobijaju invoice_id (stavke se
+ * time zaključavaju). Broj fakture je ručni — duplikat pada na 23505.
+ */
+export async function issueInvoice(input: IssueInvoiceInput): Promise<FinanceActionState> {
+  await requireRole("admin");
+
+  const parsed = issueInvoiceSchema.safeParse(input);
+  if (!parsed.success) return { error: firstZodError(parsed.error) };
+  const { invoice_number, period_from, period_to, order_ids } = parsed.data;
+
+  const blocked = await assertInvoiceable(order_ids);
+  if (blocked) return { error: blocked };
+
+  const supabase = await createClient();
+
+  // Rekompjutuj total iz zamrznutih stavki (ne veruj klijentskoj cifri).
+  const { data: profitRows } = await supabase
+    .from("order_profit")
+    .select("profit")
+    .in("order_id", order_ids);
+  const total = ((profitRows as { profit: number | null }[]) ?? []).reduce(
+    (sum, r) => sum + (r.profit ?? 0),
+    0,
+  );
+
+  const { data: invoice, error: insErr } = await supabase
+    .from("invoices")
+    .insert({
+      invoice_number,
+      period_from,
+      period_to,
+      total_amount: total,
+      status: "izdato",
+    })
+    .select("id")
+    .single();
+  if (insErr || !invoice) {
+    if ((insErr as { code?: string } | null)?.code === "23505") {
+      return { error: "Faktura sa tim brojem već postoji." };
+    }
+    return { error: "Izdavanje fakture nije uspelo." };
+  }
+
+  const { error: updErr } = await supabase
+    .from("orders")
+    .update({ invoice_id: invoice.id })
+    .in("id", order_ids);
+  if (updErr) {
+    // Rollback fakture da ne ostane bez vezanih porudžbina.
+    await supabase.from("invoices").delete().eq("id", invoice.id);
+    return { error: "Vezivanje porudžbina za fakturu nije uspelo." };
+  }
+
+  revalidateInvoices(invoice.id);
+  return {
+    error: null,
+    success: `Faktura ${invoice_number} izdata (${order_ids.length} porudžbina).`,
+  };
+}
+
+export type MarkInvoicePaidInput = z.input<typeof markInvoicePaidSchema>;
+
+/** Označi fakturu kao plaćenu (Sportem platio drugu). Samo iz stanja „izdato". */
+export async function markInvoicePaid(input: MarkInvoicePaidInput): Promise<FinanceActionState> {
+  await requireRole("admin");
+
+  const parsed = markInvoicePaidSchema.safeParse(input);
+  if (!parsed.success) return { error: firstZodError(parsed.error) };
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("invoices")
+    .update({ status: "placeno" })
+    .eq("id", parsed.data.id)
+    .eq("status", "izdato")
+    .select("id")
+    .maybeSingle();
+  if (error) return { error: "Izmena fakture nije uspela." };
+  if (!data) return { error: "Faktura nije u stanju „izdato“." };
+
+  revalidateInvoices(parsed.data.id);
+  return { error: null, success: "Faktura označena kao plaćena." };
+}
+
+/**
+ * Brisanje fakture. Re-otvara vezane porudžbine (invoice_id=null → nazad u
+ * kandidate). Zaštićeni: „placeno" faktura i sintetička „ISTORIJA-BACKFILL".
+ */
+export async function deleteInvoice(id: string): Promise<FinanceActionState> {
+  await requireRole("admin");
+  if (!id) return { error: "Neispravan unos." };
+
+  const supabase = await createClient();
+
+  const { data: inv } = await supabase
+    .from("invoices")
+    .select("id, status, invoice_number")
+    .eq("id", id)
+    .maybeSingle();
+  if (!inv) return { error: "Faktura nije pronađena." };
+  if (inv.status === "placeno") {
+    return { error: "Plaćena faktura se ne može obrisati." };
+  }
+  if (inv.invoice_number === "ISTORIJA-BACKFILL") {
+    return { error: "Istorijska faktura (backfill) se ne može obrisati." };
+  }
+
+  // Re-otvori porudžbine pre brisanja (FK je SET NULL, ali eksplicitno radi jasnoće).
+  await supabase.from("orders").update({ invoice_id: null }).eq("invoice_id", id);
+
+  const { error } = await supabase.from("invoices").delete().eq("id", id);
+  if (error) return { error: "Brisanje fakture nije uspelo." };
+
+  revalidateInvoices();
+  return { error: null, success: "Faktura obrisana." };
 }
