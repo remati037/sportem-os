@@ -27,6 +27,23 @@ export function verifyWooSignature(rawBody: string, signature: string | null): b
   return timingSafeEqual(received, expected);
 }
 
+/**
+ * Woo „ping" pri kreiranju/aktivaciji webhooka (`WC_Webhook::deliver_ping()`).
+ * Telo je `{"webhook_id":N}` (JSON) ili `webhook_id=N` (form-encoded) i NEMA
+ * potpis — mora se prepoznati PRE provere potpisa, inače padne na 401 i Woo ne
+ * dozvoli snimanje. Ping ne nosi podatke po kojima delujemo — samo ACK 200.
+ */
+export function isWooPing(rawBody: string): boolean {
+  const body = rawBody.trim();
+  if (/^webhook_id=\d+$/.test(body)) return true;
+  try {
+    const p = JSON.parse(body);
+    return typeof p === "object" && p !== null && "webhook_id" in p && !("id" in p);
+  } catch {
+    return false;
+  }
+}
+
 /* ── Normalizacija ───────────────────────────────────────────────────────── */
 
 /**

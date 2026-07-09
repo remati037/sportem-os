@@ -45,15 +45,17 @@ function sign(body) {
   return createHmac("sha256", SECRET).update(body, "utf8").digest("base64");
 }
 
-async function post(payload, { badSignature = false } = {}) {
+async function post(payload, { badSignature = false, noSignature = false } = {}) {
   const body = typeof payload === "string" ? payload : JSON.stringify(payload);
+  const headers = {
+    "content-type": "application/json",
+    "x-wc-webhook-topic": "order.created",
+  };
+  // noSignature = Woo ping / napad bez potpisa; badSignature = pogrešan potpis.
+  if (!noSignature) headers["x-wc-webhook-signature"] = badSignature ? sign(`${body}x`) : sign(body);
   const res = await fetch(`${APP_URL}/api/webhooks/woo`, {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-wc-webhook-signature": badSignature ? sign(`${body}x`) : sign(body),
-      "x-wc-webhook-topic": "order.created",
-    },
+    headers,
     body,
   });
   return res.status;
@@ -183,9 +185,17 @@ async function main() {
     (await post(makeOrder({ id: 990009, sku: variant.sku }), { badSignature: true })) === 401,
   );
 
-  console.log("\n7) Ping → 200");
+  console.log("\n7) Potpisan ping → 200");
   check("form-encoded ping", (await post("webhook_id=42")) === 200);
   check("JSON ping", (await post({ webhook_id: 42 })) === 200);
+
+  console.log("\n7b) NEPOTPISAN ping → 200 (Woo deliver_ping ne šalje potpis)");
+  check("form-encoded ping bez potpisa", (await post("webhook_id=42", { noSignature: true })) === 200);
+  check("JSON ping bez potpisa", (await post({ webhook_id: 42 }, { noSignature: true })) === 200);
+  check(
+    "nepotpisana PRAVA porudžbina → 401",
+    (await post(makeOrder({ id: 990009, sku: variant.sku }), { noSignature: true })) === 401,
+  );
 
   console.log("\n8) Dedup kupca po telefonu (+381 vs 0…)");
   const { count: custCount } = await db

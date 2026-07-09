@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import {
   APP_STATUS,
   isWooCancelled,
+  isWooPing,
   normalizePhone,
   parseRsd,
   verifyWooSignature,
@@ -29,28 +30,19 @@ export async function POST(request: Request) {
   // Sirovo telo PRE JSON parse-a — HMAC se računa nad bajt-identičnim stringom.
   const raw = await request.text();
 
+  // Woo šalje NEPOTPISAN „ping" pri kreiranju/aktivaciji webhooka — ACK 200 PRE
+  // provere potpisa (inače ping padne na 401 i Woo ne dozvoli snimanje).
+  if (isWooPing(raw)) return empty(200);
+
   if (!verifyWooSignature(raw, request.headers.get("x-wc-webhook-signature"))) {
     return empty(401);
   }
-
-  // Woo „ping" pri kreiranju webhooka: form-encoded `webhook_id=N`.
-  if (/^webhook_id=\d+$/.test(raw.trim())) return empty(200);
 
   let payload: unknown;
   try {
     payload = JSON.parse(raw);
   } catch {
     return empty(400);
-  }
-
-  // JSON ping varijanta (bez porudžbine).
-  if (
-    typeof payload === "object" &&
-    payload !== null &&
-    "webhook_id" in payload &&
-    !("id" in payload)
-  ) {
-    return empty(200);
   }
 
   const parsed = wooOrderSchema.safeParse(payload);
