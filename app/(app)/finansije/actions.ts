@@ -8,11 +8,13 @@ import { requireRole } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { previousWorkingDay } from "@/lib/date-belgrade";
 import { APP_STATUS } from "@/lib/woo";
+import { getSaldoPostarine } from "@/db/finance";
 import {
   createPayoutSchema,
   updatePayoutSchema,
   issueInvoiceSchema,
   markInvoicePaidSchema,
+  settlePostageSchema,
 } from "@/lib/validation/finance";
 
 /*
@@ -376,4 +378,36 @@ export async function deleteInvoice(id: string): Promise<FinanceActionState> {
 
   revalidateInvoices();
   return { error: null, success: "Faktura obrisana." };
+}
+
+/* ── Poštarina (settlements) — 1.6c, Admin-only ──────────────────────────── */
+
+export type SettlePostageInput = z.input<typeof settlePostageSchema>;
+
+/**
+ * Poravnanje salda poštarine (append-only ledger). Trenutni saldo se računa
+ * server-side i upisuje u balance_before (istorija). „Poravnato keš" = amount
+ * jednak trenutnom saldu → novi saldo 0. Iznos ide sa predznakom.
+ */
+export async function settlePostage(input: SettlePostageInput): Promise<FinanceActionState> {
+  const { userId } = await requireRole("admin");
+
+  const parsed = settlePostageSchema.safeParse(input);
+  if (!parsed.success) return { error: firstZodError(parsed.error) };
+  const { amount, notes } = parsed.data;
+
+  const { balance } = await getSaldoPostarine();
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("postage_settlements").insert({
+    amount,
+    balance_before: balance,
+    notes,
+    created_by: userId,
+  });
+  if (error) return { error: "Čuvanje poravnanja nije uspelo." };
+
+  revalidatePath("/finansije");
+  revalidatePath("/finansije/postarina");
+  return { error: null, success: "Poravnanje poštarine sačuvano." };
 }

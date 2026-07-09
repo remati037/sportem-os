@@ -62,3 +62,14 @@ export const issueInvoiceSchema = z.object({
 export const markInvoicePaidSchema = z.object({
   id: uuid("Neispravna faktura."),
 });
+
+/* ── Poštarina (settlements) — 1.6c ──────────────────────────────────────── */
+
+export const settlePostageSchema = z.object({
+  // Saldo poštarine može biti negativan (Sportem naplatio manje nego što košta) —
+  // zato BEZ .min(0); poravnanje ide sa predznakom.
+  amount: z.coerce
+    .number({ message: "Unesite iznos." })
+    .int("Iznos mora biti ceo broj (RSD)."),
+  notes: optionalNote,
+});

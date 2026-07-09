@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
+import { belgradeDate } from "@/lib/date-belgrade";
 import { APP_STATUS } from "@/lib/woo";
 
 /*
@@ -364,4 +365,127 @@ export async function getInvoiceDetail(id: string): Promise<InvoiceDetail | null
     computedTotal,
     isBackfill: row.invoice_number === "ISTORIJA-BACKFILL",
   };
+}
+
+/* ── Saldo poštarine — 1.6c ──────────────────────────────────────────────── */
+
+export type PostageBalance = {
+  gross: number; // Σ(shipping_charged − shipping_actual), oba NOT NULL
+  settled: number; // Σ postage_settlements.amount (sa predznakom)
+  balance: number; // gross − settled (pozitivno = drug duguje Sportem-u)
+};
+
+/**
+ * Saldo poštarine (prolazna stavka, NIJE profit): koliko je naplaćeno kupcima za
+ * dostavu vs koliko je stvarno plaćeno kuriru, umanjeno za već poravnate iznose.
+ */
+export async function getSaldoPostarine(): Promise<PostageBalance> {
+  const supabase = await createClient();
+
+  const { data: shipRows } = await supabase
+    .from("orders")
+    .select("shipping_charged, shipping_actual")
+    .not("shipping_charged", "is", null)
+    .not("shipping_actual", "is", null);
+  const gross = (
+    (shipRows as { shipping_charged: number; shipping_actual: number }[]) ?? []
+  ).reduce((sum, o) => sum + (o.shipping_charged - o.shipping_actual), 0);
+
+  const { data: settleRows } = await supabase
+    .from("postage_settlements")
+    .select("amount");
+  const settled = ((settleRows as { amount: number }[]) ?? []).reduce(
+    (sum, r) => sum + r.amount,
+    0,
+  );
+
+  return { gross, settled, balance: gross - settled };
+}
+
+export type PostageSettlementRow = {
+  id: string;
+  amount: number;
+  settled_at: string;
+  balance_before: number | null;
+  notes: string | null;
+};
+
+/** Istorija poravnanja poštarine (append-only ledger), najnovije prvo. */
+export async function listPostageSettlements(): Promise<PostageSettlementRow[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("postage_settlements")
+    .select("id, amount, settled_at, balance_before, notes")
+    .order("settled_at", { ascending: false })
+    .order("created_at", { ascending: false });
+  return (data as PostageSettlementRow[]) ?? [];
+}
+
+/* ── Neto profit — 1.6c ──────────────────────────────────────────────────── */
+
+export type NetoProfit = {
+  zarada: number; // Σ realizovane zamrznute zarade u periodu
+  troskovi: number; // Σ expenses.amount u periodu (0 do 1.7)
+  neto: number; // zarada − troskovi
+};
+
+/**
+ * Granice meseca „YYYY-MM": prvi/poslednji kalendarski dan + širok UTC pred-filter
+ * (Belgrade je UTC+1/+2, pa Belgrade-dan može pasti u prethodni UTC dan).
+ */
+function monthBounds(monthStr: string) {
+  const [y, mo] = monthStr.split("-").map(Number);
+  const lastDayNum = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return {
+    firstDay: `${monthStr}-01`,
+    lastDay: `${monthStr}-${pad(lastDayNum)}`,
+    // UTC pred-filter: dan pre prvog do dva dana posle poslednjeg (bezbedno oko DST-a).
+    gteUtc: new Date(Date.UTC(y, mo - 1, 1) - 86_400_000).toISOString(),
+    ltUtc: new Date(Date.UTC(y, mo - 1, lastDayNum) + 2 * 86_400_000).toISOString(),
+  };
+}
+
+/**
+ * Neto profit za izabrani mesec (po Belgrade datumu na delivered_at). Zarada =
+ * Σ zamrznute profit_at_sale za realizovane porudžbine (uplaćeno ili keš, bez
+ * needs_vp). Troškovi = Σ expenses.amount u periodu (prazno do Koraka 1.7 → 0).
+ */
+export async function getNetoProfit(monthStr: string): Promise<NetoProfit> {
+  const delivered = await deliveredStatusId();
+  if (!delivered) return { zarada: 0, troskovi: 0, neto: 0 };
+  const { firstDay, lastDay, gteUtc, ltUtc } = monthBounds(monthStr);
+  const supabase = await createClient();
+
+  const { data } = await supabase
+    .from("orders")
+    .select("id, delivered_at")
+    .eq("status_id", delivered)
+    .eq("needs_vp", false)
+    .in("payment_status", ["uplaceno", "kes"])
+    .not("delivered_at", "is", null)
+    .gte("delivered_at", gteUtc)
+    .lt("delivered_at", ltUtc);
+
+  const inMonth = (
+    (data as { id: string; delivered_at: string }[]) ?? []
+  ).filter((o) => {
+    const d = belgradeDate(o.delivered_at);
+    return d >= firstDay && d <= lastDay;
+  });
+
+  const profits = await profitByOrder(inMonth.map((o) => o.id));
+  const zarada = inMonth.reduce((sum, o) => sum + (profits.get(o.id) ?? 0), 0);
+
+  const { data: expRows } = await supabase
+    .from("expenses")
+    .select("amount")
+    .gte("date", firstDay)
+    .lte("date", lastDay);
+  const troskovi = ((expRows as { amount: number }[]) ?? []).reduce(
+    (sum, e) => sum + e.amount,
+    0,
+  );
+
+  return { zarada, troskovi, neto: zarada - troskovi };
 }
