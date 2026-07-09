@@ -242,6 +242,7 @@ export type ShippingOrder = {
   delivery_method: string;
   payment_status: string;
   package_count: number | null;
+  weight_grams: number | null;
   items: ShippingOrderItem[];
 };
 
@@ -257,7 +258,7 @@ export async function getOrdersForShipping(ids: string[]): Promise<ShippingOrder
     .from("orders")
     .select(
       `id, woo_order_id, ship_name, ship_phone, ship_address, ship_city, ship_postal_code,
-       ship_note, cod_amount, delivery_method, payment_status, package_count,
+       ship_note, cod_amount, delivery_method, payment_status, package_count, weight_grams,
        items:order_items(sku, product_name, quantity)`,
     )
     .in("id", ids)

@@ -147,6 +147,8 @@ export function ShippingListDocument({
               <View style={styles.footer}>
                 <Text style={styles.packages}>
                   Paketa: {o.package_count != null ? num(o.package_count) : "—"}
+                  {"   ·   "}
+                  Težina: {o.weight_grams != null ? `${num(o.weight_grams)} g` : "—"}
                 </Text>
                 {showCod ? (
                   <Text style={styles.cod}>Otkupnina: {rsd(o.cod_amount as number)}</Text>
