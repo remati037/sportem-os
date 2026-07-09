@@ -11,9 +11,11 @@ import {
   addItemSchema,
   changeOrderStatusSchema,
   markCashSaleSchema,
+  markOrdersShippedSchema,
   setItemVpSchema,
   updateItemPriceSchema,
   updateItemQuantitySchema,
+  updateShippingSchema,
 } from "@/lib/validation/orders";
 
 /*
@@ -385,4 +387,123 @@ export async function resolveReview(orderId: string): Promise<OrderActionState> 
 
   revalidateOrder(orderId);
   return { error: null, success: "Označeno kao razrešeno." };
+}
+
+/*
+ * Logistika i slanje (Korak 1.5). Idu kroz SERVICE-ROLE klijent — status menja i
+ * Menadžer (RLS na `orders` je Admin-write). `requireRole` je kapija. Slanje ne
+ * dira snapshot cene ni iznose stavki.
+ */
+
+/**
+ * Bulk „Označi poslato" (Admin + Menadžer). Selektovane porudžbine → status
+ * „Poslato" + `shipped_at`. Preskaču se već poslate/isporučene/otkazane i one
+ * „za proveru". Poštarina/težina/broj paketa se unose zasebno (updateShipping).
+ */
+export async function markOrdersShipped(orderIds: string[]): Promise<OrderActionState> {
+  const { userId } = await requireRole("admin", "manager");
+
+  const parsed = markOrdersShippedSchema.safeParse({ order_ids: orderIds });
+  if (!parsed.success) return { error: firstZodError(parsed.error) };
+
+  const supabase = createAdminClient();
+
+  const { data: sent } = await supabase
+    .from("order_statuses")
+    .select("id, name")
+    .eq("name", APP_STATUS.sent)
+    .maybeSingle();
+  if (!sent) return { error: "Status „Poslato“ nije pronađen." };
+
+  // Statusi koji se NE prebacuju u „Poslato" (imena, ne UUID).
+  const { data: blockedStatuses } = await supabase
+    .from("order_statuses")
+    .select("id, name")
+    .in("name", [APP_STATUS.sent, APP_STATUS.delivered, APP_STATUS.cancelled]);
+  const blockedIds = new Set((blockedStatuses ?? []).map((s) => s.id));
+
+  const { data: orders } = await supabase
+    .from("orders")
+    .select("id, status_id, shipped_at, needs_review")
+    .in("id", parsed.data.order_ids);
+  if (!orders || orders.length === 0) return { error: "Nijedna porudžbina nije pronađena." };
+
+  const now = new Date().toISOString();
+  let shipped = 0;
+  let skipped = 0;
+
+  for (const order of orders) {
+    if (order.needs_review || blockedIds.has(order.status_id)) {
+      skipped += 1;
+      continue;
+    }
+
+    const { error } = await supabase
+      .from("orders")
+      .update({
+        status_id: sent.id,
+        shipped_at: order.shipped_at ?? now,
+        delivered_at: null,
+        cancelled_at: null,
+        needs_review: false,
+        review_reason: null,
+      })
+      .eq("id", order.id);
+    if (error) {
+      skipped += 1;
+      continue;
+    }
+
+    await supabase.from("order_status_history").insert({
+      order_id: order.id,
+      from_status_id: order.status_id,
+      to_status_id: sent.id,
+      changed_by: userId,
+      note: "Bulk slanje (Poslato).",
+    });
+    shipped += 1;
+  }
+
+  // Porudžbine koje uopšte nisu pronađene (npr. loš id) računamo u preskočene.
+  skipped += parsed.data.order_ids.length - orders.length;
+
+  revalidatePath("/porudzbine");
+  if (shipped === 0) return { error: "Nijedna porudžbina nije označena poslato (sve preskočene)." };
+  return {
+    error: null,
+    success:
+      skipped > 0
+        ? `Označeno poslato: ${shipped} (preskočeno: ${skipped}).`
+        : `Označeno poslato: ${shipped}.`,
+  };
+}
+
+/**
+ * Paket i poštarina (Admin + Menadžer) — popunjava se na koraku „Poslato".
+ * Prolazne stavke (naplaćena/stvarna poštarina, težina, broj paketa); ne dira
+ * status, istoriju ni zamrznute cene. Nije zaključano fakturom (poštarina je
+ * van fakture — CLAUDE.md, saldo poštarine u 1.6).
+ */
+export async function updateShipping(
+  _prev: OrderActionState,
+  formData: FormData,
+): Promise<OrderActionState> {
+  await requireRole("admin", "manager");
+
+  const parsed = updateShippingSchema.safeParse({
+    order_id: formData.get("order_id"),
+    shipping_charged: formData.get("shipping_charged") ?? "",
+    shipping_actual: formData.get("shipping_actual") ?? "",
+    weight_grams: formData.get("weight_grams") ?? "",
+    package_count: formData.get("package_count") ?? "",
+  });
+  if (!parsed.success) return { error: firstZodError(parsed.error) };
+
+  const supabase = createAdminClient();
+  const { order_id, ...patch } = parsed.data;
+  const { error } = await supabase.from("orders").update(patch).eq("id", order_id);
+  if (error) return { error: "Čuvanje podataka o paketu nije uspelo." };
+
+  revalidateOrder(order_id);
+  return { error: null, success: "Podaci o paketu sačuvani." };
 }

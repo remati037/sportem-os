@@ -62,6 +62,37 @@ export const markCashSaleSchema = z.object({
   order_id: uuid("Neispravna porudžbina."),
 });
 
+/* ── Logistika i slanje (Korak 1.5) ─────────────────────────────────────── */
+
+/** Bulk „Označi poslato" — lista porudžbina za jedan potez slanja. */
+export const markOrdersShippedSchema = z.object({
+  order_ids: z
+    .array(uuid("Neispravna porudžbina."))
+    .min(1, "Izaberite bar jednu porudžbinu.")
+    .max(200, "Najviše 200 porudžbina po potezu."),
+});
+
+/** Opcioni ceo broj ≥ 0 (RSD/grami/komadi); prazno → null. */
+const optionalNonNegInt = (label: string) =>
+  z
+    .union([
+      z.literal(""),
+      z.coerce
+        .number()
+        .int(`${label} mora biti ceo broj.`)
+        .min(0, `${label} ne može biti negativna.`),
+    ])
+    .transform((v) => (v === "" ? null : v));
+
+/** Paket i poštarina (Korak 1.5) — prolazne stavke, ne diraju snapshot cene. */
+export const updateShippingSchema = z.object({
+  order_id: uuid("Neispravna porudžbina."),
+  shipping_charged: optionalNonNegInt("Naplaćena poštarina"),
+  shipping_actual: optionalNonNegInt("Stvarna poštarina"),
+  weight_grams: optionalNonNegInt("Težina"),
+  package_count: optionalNonNegInt("Broj paketa"),
+});
+
 /* ── Podešavanje statusa porudžbine (Korak 1.4, Admin) ──────────────────── */
 
 export const orderStatusSchema = z.object({

@@ -50,6 +50,9 @@ export type OrderDetail = {
   ship_note: string | null;
   goods_total: number | null;
   shipping_charged: number | null;
+  shipping_actual: number | null;
+  weight_grams: number | null;
+  package_count: number | null;
   cod_amount: number | null;
   ordered_at: string | null;
   shipped_at: string | null;
@@ -205,7 +208,8 @@ export async function getOrderDetail(id: string): Promise<OrderDetail | null> {
     .select(
       `id, woo_order_id, delivery_method, payment_status, invoice_id, needs_vp, needs_review,
        review_reason, woo_status, ship_name, ship_phone, ship_address, ship_city,
-       ship_postal_code, ship_note, goods_total, shipping_charged, cod_amount,
+       ship_postal_code, ship_note, goods_total, shipping_charged, shipping_actual,
+       weight_grams, package_count, cod_amount,
        ordered_at, shipped_at, delivered_at, paid_at, cancelled_at,
        status:order_statuses(name, color),
        customer:customers(name, phone, email),
@@ -217,6 +221,52 @@ export async function getOrderDetail(id: string): Promise<OrderDetail | null> {
   const detail = data as unknown as OrderDetail;
   detail.items.sort((a, b) => a.sku.localeCompare(b.sku));
   return detail;
+}
+
+export type ShippingOrderItem = {
+  sku: string;
+  product_name: string;
+  quantity: number;
+};
+
+export type ShippingOrder = {
+  id: string;
+  woo_order_id: number | null;
+  ship_name: string | null;
+  ship_phone: string | null;
+  ship_address: string | null;
+  ship_city: string | null;
+  ship_postal_code: string | null;
+  ship_note: string | null;
+  cod_amount: number | null;
+  delivery_method: string;
+  payment_status: string;
+  package_count: number | null;
+  items: ShippingOrderItem[];
+};
+
+/**
+ * Porudžbine za PDF „lista za slanje" (Korak 1.5) — samo polja za štampu.
+ * Kroz RLS klijent: Logistika dobija prazno (dodatna zaštita uz gejt na ruti).
+ * Sortirano po broju porudžbine radi predvidivog redosleda na papiru.
+ */
+export async function getOrdersForShipping(ids: string[]): Promise<ShippingOrder[]> {
+  if (ids.length === 0) return [];
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("orders")
+    .select(
+      `id, woo_order_id, ship_name, ship_phone, ship_address, ship_city, ship_postal_code,
+       ship_note, cod_amount, delivery_method, payment_status, package_count,
+       items:order_items(sku, product_name, quantity)`,
+    )
+    .in("id", ids)
+    .order("woo_order_id", { ascending: true, nullsFirst: false });
+
+  return ((data as unknown as ShippingOrder[]) ?? []).map((o) => ({
+    ...o,
+    items: [...o.items].sort((a, b) => a.sku.localeCompare(b.sku)),
+  }));
 }
 
 export type VariantOption = {

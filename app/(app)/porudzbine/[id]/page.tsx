@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { StatusPill } from "../status-pill";
 import { OrderItemsEditor } from "./order-items-editor";
 import { OrderStatusControl, ResolveReviewButton, type FlowIds } from "./order-status-control";
+import { ShippingForm } from "./shipping-form";
 
 export const dynamic = "force-dynamic";
 
@@ -164,6 +165,18 @@ export default async function PorudzbinaPage({ params }: { params: Promise<{ id:
             ) : null}
           </dl>
         </section>
+      </div>
+
+      <div className="mb-8">
+        <ShippingForm
+          orderId={order.id}
+          values={{
+            shipping_charged: order.shipping_charged,
+            shipping_actual: order.shipping_actual,
+            weight_grams: order.weight_grams,
+            package_count: order.package_count,
+          }}
+        />
       </div>
 
       <OrderItemsEditor

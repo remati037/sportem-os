@@ -2,7 +2,15 @@ import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs";
 import withSerwistInit from "@serwist/next";
 
-const nextConfig: NextConfig = {/* config options here */};
+const nextConfig: NextConfig = {
+  // PDF „lista za slanje" (Korak 1.5): @react-pdf registruje Geist TTF čitanjem
+  // sa diska u runtime-u. Vercel serverless trace-uje samo ono što statički
+  // vidi — font se učitava dinamički (path.join), pa ga eksplicitno uključujemo
+  // u bundle te rute, inače č/ć/đ padnu na fallback ili render pukne.
+  outputFileTracingIncludes: {
+    "/api/porudzbine/lista-za-slanje": ["./assets/fonts/**"],
+  },
+};
 
 // PWA (Korak 0.7): Serwist service worker. Radi kroz webpack plugin → produkcioni
 // build MORA biti `next build --webpack` (v. package.json). SW je isključen u dev-u
