@@ -112,7 +112,7 @@ export function ProductFormDialog({
               : "Izmenite podatke proizvoda."}
           </DialogDescription>
         </DialogHeader>
-        <form action={onSubmit} className="space-y-4">
+        <form action={onSubmit} className="min-w-0 space-y-4">
           {mode === "edit" && product ? <input type="hidden" name="id" value={product.id} /> : null}
 
           <div className="space-y-2">

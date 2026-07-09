@@ -40,7 +40,7 @@ export function ImageInput({
   return (
     <div className="space-y-2">
       <Label htmlFor="image">{label}</Label>
-      <div className="flex items-center gap-3">
+      <div className="flex min-w-0 items-center gap-3">
         <div className="border-border bg-surface-2 relative flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-md border">
           {shownUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -49,7 +49,7 @@ export function ImageInput({
             <ImageIcon className="text-ink-faint size-5" />
           )}
         </div>
-        <div className="space-y-1.5">
+        <div className="min-w-0 flex-1 space-y-1.5">
           <input
             id="image"
             name="image"
@@ -57,7 +57,7 @@ export function ImageInput({
             accept="image/webp,image/jpeg,image/png"
             onChange={onFileChange}
             className={cn(
-              "text-ink-soft text-sm",
+              "text-ink-soft w-full min-w-0 text-sm",
               "file:bg-surface-2 file:text-ink hover:file:bg-surface-2/70 file:mr-3 file:cursor-pointer file:rounded-md file:border-0 file:px-3 file:py-1.5 file:text-sm file:font-medium",
             )}
           />

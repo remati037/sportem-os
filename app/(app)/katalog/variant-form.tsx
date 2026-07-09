@@ -113,7 +113,7 @@ export function VariantFormDialog({
             SKU je jedinstven. Cene su u RSD (bez decimala). Zarada se računa automatski.
           </DialogDescription>
         </DialogHeader>
-        <form action={onSubmit} className="space-y-4">
+        <form action={onSubmit} className="min-w-0 space-y-4">
           <input type="hidden" name="product_id" value={productId} />
           {mode === "edit" && variant ? <input type="hidden" name="id" value={variant.id} /> : null}
 

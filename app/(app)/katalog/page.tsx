@@ -20,7 +20,7 @@ export default async function KatalogPage() {
   const categoryOptions = categories.map((c) => ({ id: c.id, name: c.name }));
 
   return (
-    <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-10">
+    <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-10 sm:px-6">
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-1">
           <div className="eyebrow">Inventar</div>
@@ -28,7 +28,7 @@ export default async function KatalogPage() {
           <p className="text-ink-soft text-sm">Proizvodi, varijante, cene i stanje.</p>
         </div>
         {isAdmin ? (
-          <div className="flex items-center gap-2">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
             <Button variant="ghost" asChild>
               <Link href="/katalog/uvoz">
                 <FileUp /> Uvoz iz Sheets-a
