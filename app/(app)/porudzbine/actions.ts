@@ -5,8 +5,12 @@ import { revalidatePath } from "next/cache";
 import { firstZodError } from "@/lib/actions";
 import { requireRole } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { APP_STATUS } from "@/lib/woo";
 import {
   addItemSchema,
+  changeOrderStatusSchema,
+  markCashSaleSchema,
   setItemVpSchema,
   updateItemPriceSchema,
   updateItemQuantitySchema,
@@ -209,4 +213,176 @@ export async function addItemFromCatalog(
   await syncNeedsVp(parsed.data.order_id);
   revalidateOrder(parsed.data.order_id);
   return { error: null, success: "Stavka dodata." };
+}
+
+/*
+ * Order-level akcije (Korak 1.4): promena statusa kroz tok, keš/lična prodaja,
+ * razrešavanje needs_review. Idu kroz SERVICE-ROLE klijent jer RLS na `orders`
+ * dozvoljava write samo Adminu — a status menja i Menadžer. `requireRole` je
+ * jedina kapija; keš/plaćanje ostaje Admin-only (dira novac). Zamrznute cene
+ * (`order_items`) se ne diraju.
+ */
+
+/** Promena statusa + upis u istoriju (ko i kada). Admin + Menadžer. */
+export async function changeOrderStatus(
+  _prev: OrderActionState,
+  formData: FormData,
+): Promise<OrderActionState> {
+  const { userId } = await requireRole("admin", "manager");
+
+  const parsed = changeOrderStatusSchema.safeParse({
+    order_id: formData.get("order_id"),
+    status_id: formData.get("status_id"),
+    note: formData.get("note") ?? undefined,
+  });
+  if (!parsed.success) return { error: firstZodError(parsed.error) };
+
+  const supabase = createAdminClient();
+
+  const { data: order } = await supabase
+    .from("orders")
+    .select("id, status_id, payment_status, invoice_id, shipped_at, delivered_at, cancelled_at")
+    .eq("id", parsed.data.order_id)
+    .maybeSingle();
+  if (!order) return { error: "Porudžbina nije pronađena." };
+
+  const { data: target } = await supabase
+    .from("order_statuses")
+    .select("id, name")
+    .eq("id", parsed.data.status_id)
+    .maybeSingle();
+  if (!target) return { error: "Status nije pronađen." };
+  if (order.status_id === target.id) return { error: "Porudžbina je već u tom statusu." };
+
+  const now = new Date().toISOString();
+  const patch: Record<string, unknown> = { status_id: target.id };
+
+  // Lifecycle timestamp-ovi se mapiraju SAMO na poznate (seed) statuse; custom
+  // status menja samo status_id. Prelaz unazad čisti „buduće" timestamp-ove.
+  if (target.name === APP_STATUS.cancelled) {
+    const locked = order.invoice_id !== null || order.payment_status !== "neuplaceno";
+    if (locked) {
+      // Ne otkazuj automatski fakturisanu/uplaćenu — traži ručnu odluku (kao webhook).
+      await supabase
+        .from("orders")
+        .update({
+          needs_review: true,
+          review_reason:
+            "Otkazivanje zatraženo za fakturisanu/uplaćenu porudžbinu — potrebna ručna provera.",
+        })
+        .eq("id", order.id);
+      revalidateOrder(order.id);
+      return {
+        error:
+          "Porudžbina je fakturisana/uplaćena — označena je za ručnu proveru umesto otkazivanja.",
+      };
+    }
+    patch.cancelled_at = order.cancelled_at ?? now;
+  } else if (target.name === APP_STATUS.sent) {
+    patch.shipped_at = order.shipped_at ?? now;
+    patch.delivered_at = null;
+    patch.cancelled_at = null;
+  } else if (target.name === APP_STATUS.delivered) {
+    patch.shipped_at = order.shipped_at ?? now;
+    patch.delivered_at = order.delivered_at ?? now;
+    patch.cancelled_at = null;
+  } else if (target.name === APP_STATUS.created) {
+    patch.shipped_at = null;
+    patch.delivered_at = null;
+    patch.cancelled_at = null;
+  }
+
+  // Ručna promena statusa razrešava svaku raniju „za proveru" oznaku.
+  patch.needs_review = false;
+  patch.review_reason = null;
+
+  const { error } = await supabase.from("orders").update(patch).eq("id", order.id);
+  if (error) return { error: "Promena statusa nije uspela." };
+
+  await supabase.from("order_status_history").insert({
+    order_id: order.id,
+    from_status_id: order.status_id,
+    to_status_id: target.id,
+    changed_by: userId,
+    note: parsed.data.note,
+  });
+
+  revalidateOrder(order.id);
+  return { error: null, success: `Status promenjen: ${target.name}.` };
+}
+
+/**
+ * Keš/lična prodaja (Admin-only, dira novac). Odjednom: `licno` + `kes` +
+ * `delivered_at` + `paid_at` + status „Isporučeno". Ne ulazi u fakturu.
+ */
+export async function markCashSale(
+  _prev: OrderActionState,
+  formData: FormData,
+): Promise<OrderActionState> {
+  const { userId } = await requireRole("admin");
+
+  const parsed = markCashSaleSchema.safeParse({ order_id: formData.get("order_id") });
+  if (!parsed.success) return { error: firstZodError(parsed.error) };
+
+  const supabase = createAdminClient();
+
+  const { data: order } = await supabase
+    .from("orders")
+    .select("id, status_id, invoice_id, payment_status")
+    .eq("id", parsed.data.order_id)
+    .maybeSingle();
+  if (!order) return { error: "Porudžbina nije pronađena." };
+  if (order.invoice_id) return { error: "Porudžbina je fakturisana — keš prodaja nije moguća." };
+  if (order.payment_status !== "neuplaceno")
+    return { error: "Porudžbina je već označena kao plaćena." };
+
+  const { data: delivered } = await supabase
+    .from("order_statuses")
+    .select("id")
+    .eq("name", APP_STATUS.delivered)
+    .maybeSingle();
+  if (!delivered) return { error: "Status „Isporučeno“ nije pronađen." };
+
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from("orders")
+    .update({
+      delivery_method: "licno",
+      payment_status: "kes",
+      status_id: delivered.id,
+      delivered_at: now,
+      paid_at: now,
+      cancelled_at: null,
+      needs_review: false,
+      review_reason: null,
+    })
+    .eq("id", order.id);
+  if (error) return { error: "Označavanje keš prodaje nije uspelo." };
+
+  await supabase.from("order_status_history").insert({
+    order_id: order.id,
+    from_status_id: order.status_id,
+    to_status_id: delivered.id,
+    changed_by: userId,
+    note: "Keš/lična prodaja — isplaćeno.",
+  });
+
+  revalidateOrder(order.id);
+  return { error: null, success: "Označeno kao keš/lična prodaja (isplaćeno)." };
+}
+
+/** Ručno razrešavanje „za proveru" (Admin + Menadžer). */
+export async function resolveReview(orderId: string): Promise<OrderActionState> {
+  await requireRole("admin", "manager");
+  if (!orderId) return { error: "Neispravan unos." };
+
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("orders")
+    .update({ needs_review: false, review_reason: null })
+    .eq("id", orderId);
+  if (error) return { error: "Razrešavanje nije uspelo." };
+
+  revalidateOrder(orderId);
+  return { error: null, success: "Označeno kao razrešeno." };
 }

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ShoppingCart } from "lucide-react";
 
 import { requireRole } from "@/lib/auth";
-import { getOrders } from "@/db/orders";
+import { getOrders, getOrderStatuses } from "@/db/orders";
 import { rsd, datum } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -16,17 +16,38 @@ import {
 import { EmptyState } from "@/components/patterns/empty-state";
 
 import { StatusPill } from "./status-pill";
+import { OrdersFilterBar } from "./orders-filter-bar";
 
 export const dynamic = "force-dynamic";
 
 /*
- * Minimalna lista porudžbina (Korak 1.2) — filteri, pretraga i promena
- * statusa stižu u Koraku 1.4. Sve porudžbine ulaze kroz WooCommerce webhook.
+ * Lista porudžbina (Korak 1.4) — filteri (status, isporuka, plaćanje,
+ * needs_vp, datum) + pretraga (broj/ime/telefon), sve URL-driven i server-side.
+ * Sve porudžbine ulaze kroz WooCommerce webhook.
  */
-export default async function PorudzbinePage() {
+export default async function PorudzbinePage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   await requireRole("admin", "manager");
 
-  const orders = await getOrders();
+  const sp = await searchParams;
+  const one = (v: string | string[] | undefined): string | undefined =>
+    Array.isArray(v) ? v[0] : v;
+
+  const [orders, statuses] = await Promise.all([
+    getOrders({
+      search: one(sp.q),
+      statusId: one(sp.status),
+      deliveryMethod: one(sp.delivery),
+      paymentStatus: one(sp.payment),
+      needsVp: one(sp.needs_vp) === "1",
+      from: one(sp.from),
+      to: one(sp.to),
+    }),
+    getOrderStatuses(),
+  ]);
 
   return (
     <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-10">
@@ -35,11 +56,13 @@ export default async function PorudzbinePage() {
         <h1 className="text-ink text-xl font-bold">Porudžbine</h1>
       </div>
 
+      <OrdersFilterBar statuses={statuses} />
+
       {orders.length === 0 ? (
         <EmptyState
           icon={<ShoppingCart />}
           title="Nema porudžbina za ovaj period"
-          description="Porudžbine ulaze automatski kroz WooCommerce webhook."
+          description="Nijedna porudžbina ne odgovara filterima."
         />
       ) : (
         <div className="border-border bg-surface shadow-soft overflow-x-auto rounded-lg border">

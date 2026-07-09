@@ -124,5 +124,7 @@ export function isWooCancelled(status: string): boolean {
 /** Nazivi app statusa iz `order_statuses` seed-a (lookup po imenu, ne UUID). */
 export const APP_STATUS = {
   created: "Kreirano",
+  sent: "Poslato",
+  delivered: "Isporučeno",
   cancelled: "Otkazano/Vraćeno",
 } as const;
