@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ShoppingCart } from "lucide-react";
 
 import { requireRole } from "@/lib/auth";
-import { getOrders, getOrderStatuses } from "@/db/orders";
+import { getOrders, getOrderStatuses, ORDERS_PER_PAGE_OPTIONS } from "@/db/orders";
 import { rsd, datum } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -17,6 +17,7 @@ import { EmptyState } from "@/components/patterns/empty-state";
 
 import { StatusPill } from "./status-pill";
 import { OrdersFilterBar } from "./orders-filter-bar";
+import { OrdersPagination } from "./orders-pagination";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +37,13 @@ export default async function PorudzbinePage({
   const one = (v: string | string[] | undefined): string | undefined =>
     Array.isArray(v) ? v[0] : v;
 
-  const [orders, statuses] = await Promise.all([
+  const perPageRaw = Number(one(sp.per_page));
+  const perPage = (ORDERS_PER_PAGE_OPTIONS as readonly number[]).includes(perPageRaw)
+    ? perPageRaw
+    : 25;
+  const page = Math.max(1, Number(one(sp.page)) || 1);
+
+  const [{ rows: orders, total }, statuses] = await Promise.all([
     getOrders({
       search: one(sp.q),
       statusId: one(sp.status),
@@ -45,6 +52,8 @@ export default async function PorudzbinePage({
       needsVp: one(sp.needs_vp) === "1",
       from: one(sp.from),
       to: one(sp.to),
+      page,
+      perPage,
     }),
     getOrderStatuses(),
   ]);
@@ -109,6 +118,8 @@ export default async function PorudzbinePage({
           </Table>
         </div>
       )}
+
+      {total > 0 ? <OrdersPagination total={total} page={page} perPage={perPage} /> : null}
     </main>
   );
 }

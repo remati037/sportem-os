@@ -65,7 +65,9 @@
       "Bash(python3 -)",
       "Bash(node --check scripts/woo-backfill.mjs)",
       "Bash(node --input-type=module -e ' *)",
-      "Bash(node --env-file-if-exists=.env.local --input-type=module -e ' *)"
+      "Bash(node --env-file-if-exists=.env.local --input-type=module -e ' *)",
+      "Bash(git --no-pager log --oneline -1)",
+      "Bash(node --env-file=.env.local -e ' *)"
     ]
   }
 }

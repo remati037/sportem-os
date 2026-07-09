@@ -72,19 +72,33 @@ export type OrderFilters = {
   to?: string;
   /** Pretraga: broj porudžbine / ime kupca / telefon. */
   search?: string;
-  limit?: number;
+  /** Paginacija (1-based). */
+  page?: number;
+  perPage?: number;
 };
+
+export type OrdersResult = {
+  rows: OrderListRow[];
+  /** Ukupan broj porudžbina koje odgovaraju filterima (bez paginacije). */
+  total: number;
+};
+
+export const ORDERS_PER_PAGE_OPTIONS = [10, 25, 50, 100] as const;
+const DEFAULT_PER_PAGE = 25;
 
 /** Ukloni znakove koji lome PostgREST `or()` sintaksu. */
 function sanitizeTerm(term: string): string {
   return term.replace(/[,()%]/g, " ").trim();
 }
 
-export async function getOrders(filters: OrderFilters = {}): Promise<OrderListRow[]> {
+export async function getOrders(filters: OrderFilters = {}): Promise<OrdersResult> {
   const supabase = await createClient();
   const { statusId, deliveryMethod, paymentStatus, needsVp, from, to, search } = filters;
+  const page = Math.max(1, filters.page ?? 1);
+  const perPage = filters.perPage ?? DEFAULT_PER_PAGE;
 
-  let query = supabase.from("orders").select(LIST_COLS);
+  // `count: exact` → ukupan broj pogodaka (ignoriše range), za paginaciju.
+  let query = supabase.from("orders").select(LIST_COLS, { count: "exact" });
 
   if (statusId) query = query.eq("status_id", statusId);
   if (deliveryMethod) query = query.eq("delivery_method", deliveryMethod);
@@ -101,7 +115,12 @@ export async function getOrders(filters: OrderFilters = {}): Promise<OrderListRo
     // Broj porudžbine (numerički unos).
     if (/^\d+$/.test(term)) orParts.push(`woo_order_id.eq.${term}`);
 
-    // Kupci po imenu / telefonu → filter porudžbina po customer_id.
+    // Snapshot adrese na samoj porudžbini — hvata i porudžbine čiji vezani
+    // `customers` red ima drugačije ime (npr. isti kupac, dva telefona).
+    if (term) orParts.push(`ship_name.ilike.%${term}%`);
+    if (digits.length >= 3) orParts.push(`ship_phone.ilike.%${digits}%`);
+
+    // Dodatno: kupci po imenu / telefonu → filter porudžbina po customer_id.
     const custOr: string[] = [];
     if (term) custOr.push(`name.ilike.%${term}%`);
     if (digits.length >= 3) custOr.push(`phone.ilike.%${digits}%`);
@@ -112,14 +131,16 @@ export async function getOrders(filters: OrderFilters = {}): Promise<OrderListRo
     }
 
     // Nijedan uslov ne odgovara → prazna lista (bez skupljanja svih redova).
-    if (orParts.length === 0) return [];
+    if (orParts.length === 0) return { rows: [], total: 0 };
     query = query.or(orParts.join(","));
   }
 
-  const { data } = await query
+  const fromIdx = (page - 1) * perPage;
+  const { data, count } = await query
     .order("ordered_at", { ascending: false, nullsFirst: false })
-    .limit(filters.limit ?? 200);
-  return (data as unknown as OrderListRow[]) ?? [];
+    .range(fromIdx, fromIdx + perPage - 1);
+
+  return { rows: (data as unknown as OrderListRow[]) ?? [], total: count ?? 0 };
 }
 
 export type OrderStatusRow = {

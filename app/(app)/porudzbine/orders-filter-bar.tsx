@@ -36,6 +36,8 @@ export function OrdersFilterBar({ statuses }: { statuses: OrderStatusRow[] }) {
       if (value == null || value === "" || value === ALL) sp.delete(key);
       else sp.set(key, value);
     }
+    // Promena filtera vraća na prvu stranu.
+    sp.delete("page");
     const query = sp.toString();
     router.replace(query ? `${pathname}?${query}` : pathname);
   }
