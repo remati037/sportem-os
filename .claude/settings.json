@@ -67,7 +67,28 @@
       "Bash(node --input-type=module -e ' *)",
       "Bash(node --env-file-if-exists=.env.local --input-type=module -e ' *)",
       "Bash(git --no-pager log --oneline -1)",
-      "Bash(node --env-file=.env.local -e ' *)"
+      "Bash(node --env-file=.env.local -e ' *)",
+      "Bash(node -e \"console.log\\(JSON.stringify\\(require\\('./package.json'\\).scripts,null,2\\)\\)\")",
+      "Bash(curl -sI --max-time 8 https://registry.npmjs.org/@fontsource/dejavu-sans)",
+      "Bash(node -e \"let p=require\\('/Users/marko/Desktop/Marko/sportem-os/node_modules/geist/package.json'\\); console.log\\('files dir:'\\); \")",
+      "Bash(curl -s --max-time 20 \"https://gwfh.mranftl.com/api/fonts/geist?subsets=latin-ext\")",
+      "Bash(node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\).on\\('end',\\(\\)=>{try{let j=JSON.parse\\(d\\);console.log\\('variants:',j.variants?.map\\(v=>v.id\\).join\\(','\\)\\);let reg=j.variants.find\\(v=>v.id==='regular'\\),b=j.variants.find\\(v=>v.id==='700'\\);console.log\\('reg ttf:',reg?.ttf\\);console.log\\('700 ttf:',b?.ttf\\);}catch\\(e\\){console.log\\('ERR',e.message,d.slice\\(0,200\\)\\)}}\\)\")",
+      "Bash(curl -s --max-time 30 -o assets/fonts/Geist-Regular.ttf \"https://fonts.gstatic.com/s/geist/v5/gyBhhwUxId8gMGYQMKR3pzfaWI_RnOMIlJnf.ttf\")",
+      "Bash(curl -s --max-time 30 -o assets/fonts/Geist-Bold.ttf \"https://fonts.gstatic.com/s/geist/v5/gyBhhwUxId8gMGYQMKR3pzfaWI_Re-QIlJnf.ttf\")",
+      "Bash(file assets/fonts/*.ttf)",
+      "Bash(echo \"=== tsc exit: $? ===\")",
+      "Bash(echo \"=== eslint exit: $? ===\")",
+      "Bash(grep -iE \"^tsx$|^esbuild$|^ts-node$\")",
+      "Bash(node -e \"console.log\\('esbuild:', !!require.resolve\\('esbuild'\\)\\)\")",
+      "Bash(node ./_pdf-smoke.cjs)",
+      "Bash(command -v pdftotext)",
+      "Bash(pdftotext /private/tmp/claude-501/-Users-marko-Desktop-Marko-sportem-os/8a112457-9207-4e61-9170-37afac4a2fc6/scratchpad/smoke.pdf -)",
+      "Bash(echo \"=== tsc: $? ===\")",
+      "Bash(echo \"=== eslint: $? ===\")",
+      "Bash(node -e \"const {z}=require\\('zod'\\); console.log\\('zod', require\\('zod/package.json'\\).version\\); const s=z.string\\(\\).uuid\\('Izaberite status.'\\); for \\(const v of ['0b5f...','a3164bbc-d750-5787-a000-000000000000','018f9a2b-1c2d-7e3f-8a4b-5c6d7e8f9a0b','123e4567-e89b-12d3-a456-426614174000']\\) { const r=s.safeParse\\(v\\); console.log\\(r.success, v\\); }\")",
+      "Bash(node -e \"const {z}=require\\('zod'\\); const s=z.string\\(\\).uuid\\(\\); ['f47ac10b-58cc-4372-a567-0e02b2c3d479','d9428888-122b-11e1-b85c-61cd3cbb3210','00000000-0000-0000-0000-000000000000'].forEach\\(v=>console.log\\(s.safeParse\\(v\\).success, v\\)\\);\")",
+      "Bash(node -e ' *)",
+      "Bash(npx next *)"
     ]
   }
 }

@@ -1,13 +1,12 @@
 "use client";
 
+import { AlertTriangle, CheckCircle2, FileUp, Upload } from "lucide-react";
 import Link from "next/link";
 import Papa from "papaparse";
 import { type ChangeEvent, useState, useTransition } from "react";
-import { AlertTriangle, CheckCircle2, FileUp, Upload } from "lucide-react";
 import { toast } from "sonner";
 
-import { IMPORT_FIELDS, type ImportFieldKey } from "@/lib/validation/catalog";
-import { cn } from "@/lib/utils";
+import { EmptyState } from "@/components/patterns/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,7 +24,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { EmptyState } from "@/components/patterns/empty-state";
+import { cn } from "@/lib/utils";
+import { IMPORT_FIELDS, type ImportFieldKey } from "@/lib/validation/catalog";
 
 import { commitImport, previewImport } from "./actions";
 import type { ImportItem, ImportReport } from "./types";
@@ -280,7 +280,7 @@ export function ImportWizard() {
               {report.updatedVariants} postojećih varijanti{" "}
               {done ? "je ažurirano" : "će biti ažurirano"} (MP/VP/stanje/naziv se prepisuju).
             </p>
-            <p className="text-ink-soft break-words">
+            <p className="text-ink-soft wrap-break-word">
               SKU: {report.updatedSkus.slice(0, 30).join(", ")}
               {report.updatedSkus.length > 30 ? ` … +${report.updatedSkus.length - 30}` : ""}
             </p>

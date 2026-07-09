@@ -3,13 +3,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { signOut } from "@/app/prijava/actions";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import type { Profile } from "@/lib/auth";
 import { isNavItemActive, navForRole } from "@/lib/nav";
 import { ROLE_LABEL } from "@/lib/roles";
 import { cn } from "@/lib/utils";
-import { signOut } from "@/app/prijava/actions";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 
 /* Sidebar (desktop) — docs/Sportem-Dizajn-Sistem.md sekcija 4.
    Aktivna stavka: green-soft pozadina + green-deep tekst + leva zelena traka. */
@@ -45,7 +45,7 @@ export function Sidebar({ profile }: { profile: Profile }) {
               {active ? (
                 <span className="bg-green absolute top-1.5 bottom-1.5 left-0 w-0.5 rounded-full" />
               ) : null}
-              <Icon className="size-[18px] shrink-0" aria-hidden />
+              <Icon className="size-4.5 shrink-0" aria-hidden />
               {item.label}
             </Link>
           );
