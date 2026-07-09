@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { isUuid, uuid } from "./uuid";
+
 /*
  * Zod šeme za katalog (Korak 1.1a). Deljeno između client RHF formi i server
  * akcija. Cene su integer RSD (CLAUDE.md 5) — `z.coerce.number()` radi i sa
@@ -20,7 +22,7 @@ const optionalCategoryId = z
   .transform((v) => (v === "" || v === "none" ? null : v))
   .nullable()
   .optional()
-  .refine((v) => v == null || z.string().uuid().safeParse(v).success, {
+  .refine((v) => v == null || isUuid(v), {
     message: "Neispravna kategorija.",
   });
 
@@ -90,7 +92,7 @@ export const productSchema = z.object({
 });
 
 export const variantSchema = z.object({
-  product_id: z.string().uuid("Neispravan proizvod."),
+  product_id: uuid("Neispravan proizvod."),
   sku: z.string().trim().min(1, "Unesite SKU."),
   variant_name: optionalText,
   mp_price: price,

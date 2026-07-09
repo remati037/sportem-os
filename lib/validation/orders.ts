@@ -1,11 +1,11 @@
 import { z } from "zod";
 
+import { uuid } from "./uuid";
+
 /*
  * Zod šeme za edit stavki porudžbine (Korak 1.2). Sve izmene diraju SAMO
  * zamrznute vrednosti konkretne stavke — katalog se nikad ne menja odavde.
  */
-
-const uuid = (msg: string) => z.string().uuid(msg);
 
 /** Zamrznuta cena stavke: ceo broj RSD ≥ 0 (0 = poklon/gratis). */
 const frozenPrice = (label: string) =>

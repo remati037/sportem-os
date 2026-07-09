@@ -6,6 +6,7 @@ import { Banknote, Send, PackageCheck, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 
 import type { OrderStatusRow } from "@/db/orders";
+import { ConfirmDialog } from "@/components/patterns/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -74,6 +75,13 @@ export function OrderStatusControl({
   }
 
   const isCancelled = currentStatusId === flow.cancelled;
+  const selectedName = statuses.find((s) => s.id === manualStatus)?.name;
+
+  function cashSale() {
+    const fd = new FormData();
+    fd.set("order_id", orderId);
+    run(() => markCashSale(initial, fd));
+  }
 
   return (
     <section className="border-border bg-surface shadow-soft rounded-lg border p-4">
@@ -82,51 +90,61 @@ export function OrderStatusControl({
       {/* Brze akcije toka */}
       <div className="flex flex-wrap gap-2">
         {flow.sent && currentStatusId !== flow.sent && !isCancelled ? (
-          <Button size="sm" disabled={pending} onClick={() => changeTo(flow.sent!)}>
-            <Send /> Označi poslato
-          </Button>
+          <ConfirmDialog
+            title="Označiti kao poslato?"
+            description="Porudžbina prelazi u status Poslato."
+            confirmLabel="Označi poslato"
+            onConfirm={() => changeTo(flow.sent!)}
+            trigger={
+              <Button size="sm" disabled={pending}>
+                <Send /> Označi poslato
+              </Button>
+            }
+          />
         ) : null}
         {flow.delivered && currentStatusId !== flow.delivered && !isCancelled ? (
-          <Button
-            size="sm"
-            variant={currentStatusId === flow.sent ? "primary" : "subtle"}
-            disabled={pending}
-            onClick={() => changeTo(flow.delivered!)}
-          >
-            <PackageCheck /> Označi isporučeno
-          </Button>
+          <ConfirmDialog
+            title="Označiti kao isporučeno?"
+            description="Porudžbina prelazi u status Isporučeno."
+            confirmLabel="Označi isporučeno"
+            onConfirm={() => changeTo(flow.delivered!)}
+            trigger={
+              <Button
+                size="sm"
+                variant={currentStatusId === flow.sent ? "primary" : "subtle"}
+                disabled={pending}
+              >
+                <PackageCheck /> Označi isporučeno
+              </Button>
+            }
+          />
         ) : null}
         {flow.cancelled && !isCancelled ? (
-          <Button
-            size="sm"
+          <ConfirmDialog
+            title="Otkazati/vratiti porudžbinu?"
+            description="Porudžbina prelazi u status Otkazano/Vraćeno."
+            confirmLabel="Otkaži/Vrati"
             variant="danger"
-            disabled={pending}
-            onClick={() => {
-              if (confirm("Otkazati/vratiti porudžbinu?")) changeTo(flow.cancelled!);
-            }}
-          >
-            <Undo2 /> Otkaži/Vrati
-          </Button>
+            onConfirm={() => changeTo(flow.cancelled!)}
+            trigger={
+              <Button size="sm" variant="danger" disabled={pending}>
+                <Undo2 /> Otkaži/Vrati
+              </Button>
+            }
+          />
         ) : null}
         {canCashSale ? (
-          <Button
-            size="sm"
-            variant="subtle"
-            disabled={pending}
-            onClick={() => {
-              if (
-                confirm(
-                  "Označiti kao keš/ličnu prodaju? Postavlja Lično + Isplaćeno + Isporučeno i ne ulazi u fakturu.",
-                )
-              ) {
-                const fd = new FormData();
-                fd.set("order_id", orderId);
-                run(() => markCashSale(initial, fd));
-              }
-            }}
-          >
-            <Banknote /> Keš / Isplaćeno
-          </Button>
+          <ConfirmDialog
+            title="Označiti kao keš/ličnu prodaju?"
+            description="Postavlja Lično + Isplaćeno + Isporučeno i ne ulazi u fakturu."
+            confirmLabel="Keš / Isplaćeno"
+            onConfirm={cashSale}
+            trigger={
+              <Button size="sm" variant="subtle" disabled={pending}>
+                <Banknote /> Keš / Isplaćeno
+              </Button>
+            }
+          />
         ) : null}
       </div>
 
@@ -152,15 +170,25 @@ export function OrderStatusControl({
             placeholder="Napomena (opciono)"
             className="h-9 w-full sm:flex-1"
           />
-          <Button
-            size="sm"
-            variant="subtle"
-            disabled={pending || !manualStatus || manualStatus === currentStatusId}
-            onClick={() => changeTo(manualStatus, note.trim() || undefined)}
-            className="w-full sm:w-auto"
-          >
-            Sačuvaj
-          </Button>
+          <ConfirmDialog
+            title="Promeniti status?"
+            description={
+              selectedName ? `Novi status: „${selectedName}".` : "Izaberite status iz liste."
+            }
+            confirmLabel="Sačuvaj"
+            disabled={!manualStatus || manualStatus === currentStatusId}
+            onConfirm={() => changeTo(manualStatus, note.trim() || undefined)}
+            trigger={
+              <Button
+                size="sm"
+                variant="subtle"
+                disabled={pending || !manualStatus || manualStatus === currentStatusId}
+                className="w-full sm:w-auto"
+              >
+                Sačuvaj
+              </Button>
+            }
+          />
         </div>
       </div>
     </section>
