@@ -31,6 +31,51 @@ const price = z.coerce
 
 const nonNegativeInt = (msg: string) => z.coerce.number({ message: msg }).int(msg).min(0, msg);
 
+/** Hidden JSON polje iz FormData → parsirana vrednost (prazno/loše → undefined). */
+const parseJsonField = (v: unknown): unknown => {
+  if (typeof v !== "string" || v.trim() === "") return undefined;
+  try {
+    return JSON.parse(v);
+  } catch {
+    return undefined;
+  }
+};
+
+/** Atributi proizvoda: lista naziva (max 5), trim, dedup (case-insensitive). */
+const attributeNames = z.preprocess(
+  parseJsonField,
+  z
+    .array(z.string().trim().min(1))
+    .max(5, "Najviše 5 atributa po proizvodu.")
+    .transform((names) => {
+      const seen = new Set<string>();
+      return names.filter((n) => {
+        const key = n.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    })
+    .optional()
+    .default([]),
+);
+
+/** Vrednosti atributa varijante: mapa naziv → vrednost; prazne vrednosti ispadaju. */
+const attributeValues = z.preprocess(
+  parseJsonField,
+  z
+    .record(z.string(), z.string())
+    .transform((rec) =>
+      Object.fromEntries(
+        Object.entries(rec)
+          .map(([k, v]) => [k.trim(), v.trim()])
+          .filter(([k, v]) => k !== "" && v !== ""),
+      ),
+    )
+    .optional()
+    .default({}),
+);
+
 export const categorySchema = z.object({
   name: z.string().trim().min(1, "Unesite naziv kategorije."),
   sort_order: z.coerce.number().int().min(0).optional().default(0),
@@ -41,6 +86,7 @@ export const productSchema = z.object({
   description: optionalText,
   brand: optionalText,
   category_id: optionalCategoryId,
+  attribute_names: attributeNames,
 });
 
 export const variantSchema = z.object({
@@ -58,6 +104,7 @@ export const variantSchema = z.object({
     .positive("Težina mora biti veća od 0.")
     .nullable()
     .optional(),
+  attributes: attributeValues,
 });
 
 /* ── Uvoz iz CSV-a (Korak 1.1b) ─────────────────────────────────────────────

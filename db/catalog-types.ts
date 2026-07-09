@@ -16,6 +16,8 @@ export type VariantRow = {
   weight_grams: number | null;
   image: string | null;
   archived_at: string | null;
+  /** Vrednosti atributa po nazivu (npr. {"Težina": "1 kg"}). Vidi i Logistika. */
+  attributes: Record<string, string>;
   // Samo Admin/Menadžer (Logistika: undefined — kolone ne postoje):
   mp_price?: number;
   vp_price?: number;
@@ -29,6 +31,8 @@ export type ProductRow = {
   brand: string | null;
   image: string | null;
   category_id: string | null;
+  /** Atributi koje varijante ovog proizvoda imaju (npr. ["Težina"]). */
+  attribute_names: string[];
   archived_at: string | null;
   updated_at: string;
 };

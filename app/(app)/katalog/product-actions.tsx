@@ -21,6 +21,7 @@ type ProductData = {
   description: string | null;
   brand: string | null;
   category_id: string | null;
+  attribute_names: string[];
   image: string | null;
   archived: boolean;
 };

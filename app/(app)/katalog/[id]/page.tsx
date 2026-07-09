@@ -82,6 +82,7 @@ export default async function ProizvodPage({ params }: { params: Promise<{ id: s
               description: product.description,
               brand: product.brand,
               category_id: product.category_id,
+              attribute_names: product.attribute_names,
               image: product.image,
               archived: product.archived_at != null,
             }}
@@ -96,6 +97,7 @@ export default async function ProizvodPage({ params }: { params: Promise<{ id: s
           <VariantFormDialog
             mode="create"
             productId={product.id}
+            attributeNames={product.attribute_names}
             trigger={
               <Button size="sm">
                 <Plus /> Dodaj varijantu
@@ -118,6 +120,7 @@ export default async function ProizvodPage({ params }: { params: Promise<{ id: s
       ) : (
         <VariantsTable
           productId={product.id}
+          attributeNames={product.attribute_names}
           variants={product.variants}
           canSeeFinance={canSeeFinance}
           isAdmin={isAdmin}

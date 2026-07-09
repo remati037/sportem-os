@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { type ReactNode, useState, useTransition } from "react";
+import { X } from "lucide-react";
 import { toast } from "sonner";
 
 import { catalogImageUrl } from "@/lib/image-url";
@@ -38,8 +39,11 @@ type ProductData = {
   description: string | null;
   brand: string | null;
   category_id: string | null;
+  attribute_names: string[];
   image: string | null;
 };
+
+const MAX_ATTRIBUTES = 5;
 
 export function ProductFormDialog({
   mode,
@@ -55,7 +59,24 @@ export function ProductFormDialog({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [category, setCategory] = useState(product?.category_id ?? NO_CATEGORY);
+  const [attrs, setAttrs] = useState<string[]>(product?.attribute_names ?? []);
+  const [attrInput, setAttrInput] = useState("");
   const [pending, startTransition] = useTransition();
+
+  function addAttr() {
+    const name = attrInput.trim();
+    if (!name) return;
+    if (attrs.some((a) => a.toLowerCase() === name.toLowerCase())) {
+      toast.error(`Atribut „${name}“ već postoji.`);
+      return;
+    }
+    if (attrs.length >= MAX_ATTRIBUTES) {
+      toast.error(`Najviše ${MAX_ATTRIBUTES} atributa po proizvodu.`);
+      return;
+    }
+    setAttrs((a) => [...a, name]);
+    setAttrInput("");
+  }
 
   function onSubmit(formData: FormData) {
     startTransition(async () => {
@@ -119,6 +140,51 @@ export function ProductFormDialog({
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="attr_input">Atributi varijanti</Label>
+            <input type="hidden" name="attribute_names" value={JSON.stringify(attrs)} />
+            {attrs.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                {attrs.map((a) => (
+                  <span
+                    key={a}
+                    className="bg-green-soft text-green-deep rounded-pill inline-flex h-6 items-center gap-1 px-2.5 text-xs font-semibold"
+                  >
+                    {a}
+                    <button
+                      type="button"
+                      onClick={() => setAttrs((list) => list.filter((x) => x !== a))}
+                      aria-label={`Ukloni atribut ${a}`}
+                      className="hover:text-danger -mr-0.5 cursor-pointer"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            <div className="flex gap-2">
+              <Input
+                id="attr_input"
+                value={attrInput}
+                onChange={(e) => setAttrInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addAttr();
+                  }
+                }}
+                placeholder="npr. Težina, Boja, Dužina…"
+              />
+              <Button type="button" variant="ghost" onClick={addAttr}>
+                Dodaj
+              </Button>
+            </div>
+            <p className="text-ink-faint text-xs">
+              Svaka varijanta dobija polje za vrednost (npr. Težina → „1 kg“).
+            </p>
           </div>
 
           <div className="space-y-2">

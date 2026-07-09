@@ -19,9 +19,10 @@ import type { CategoryRow, ProductRow, ProductWithVariants, VariantRow } from "@
 export type { CategoryRow, ProductRow, ProductWithVariants, VariantRow };
 export { isVariantLowStock } from "@/db/catalog-types";
 
-const PRODUCT_COLS = "id, name, description, brand, image, category_id, archived_at, updated_at";
+const PRODUCT_COLS =
+  "id, name, description, brand, image, category_id, attribute_names, archived_at, updated_at";
 const VARIANT_PUBLIC_COLS =
-  "id, product_id, sku, variant_name, stock_quantity, low_stock_threshold, supplier_sku, weight_grams, image, archived_at";
+  "id, product_id, sku, variant_name, stock_quantity, low_stock_threshold, supplier_sku, weight_grams, image, archived_at, attributes";
 const VARIANT_STAFF_COLS = `${VARIANT_PUBLIC_COLS}, mp_price, vp_price, profit`;
 
 function canSeeFinance(role: Role): boolean {

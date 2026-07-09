@@ -33,23 +33,49 @@ type VariantData = {
   low_stock_threshold: number;
   supplier_sku: string | null;
   weight_grams: number | null;
+  attributes: Record<string, string>;
   image: string | null;
 };
+
+/** Naziv varijante sastavljen iz vrednosti atributa: „Crvena · 2.4 m". */
+function composeName(values: Record<string, string>, names: string[]): string {
+  return names
+    .map((n) => values[n]?.trim())
+    .filter(Boolean)
+    .join(" · ");
+}
 
 export function VariantFormDialog({
   mode,
   productId,
+  attributeNames,
   variant,
   trigger,
 }: {
   mode: "create" | "edit";
   productId: string;
+  attributeNames: string[];
   variant?: VariantData;
   trigger: ReactNode;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
+
+  const initialValues = variant?.attributes ?? {};
+  const [attrValues, setAttrValues] = useState<Record<string, string>>(initialValues);
+  const [name, setName] = useState(variant?.variant_name ?? "");
+  // Naziv se auto-sastavlja iz atributa dok ga korisnik ne izmeni ručno.
+  const [nameDirty, setNameDirty] = useState(
+    Boolean(variant?.variant_name) &&
+      variant?.variant_name !== composeName(initialValues, attributeNames),
+  );
+
+  function setAttr(attrName: string, value: string) {
+    const next = { ...attrValues, [attrName]: value };
+    setAttrValues(next);
+    if (!nameDirty) setName(composeName(next, attributeNames));
+  }
 
   function onSubmit(formData: FormData) {
     startTransition(async () => {
@@ -61,6 +87,11 @@ export function VariantFormDialog({
       }
       toast.success(result.success ?? "Sačuvano.");
       setOpen(false);
+      if (mode === "create") {
+        setAttrValues({});
+        setName("");
+        setNameDirty(false);
+      }
       router.refresh();
     });
   }
@@ -95,11 +126,35 @@ export function VariantFormDialog({
               <Input
                 id="variant_name"
                 name="variant_name"
-                defaultValue={variant?.variant_name ?? ""}
-                placeholder="Broj 42"
+                value={name}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  setNameDirty(true);
+                }}
+                placeholder={attributeNames.length > 0 ? "sastavlja se iz atributa" : "Broj 42"}
               />
             </div>
           </div>
+
+          {attributeNames.length > 0 ? (
+            <div className="border-border bg-surface-2/50 space-y-3 rounded-md border p-3">
+              <span className="eyebrow">Atributi</span>
+              <input type="hidden" name="attributes" value={JSON.stringify(attrValues)} />
+              <div className="grid grid-cols-2 gap-3">
+                {attributeNames.map((attrName) => (
+                  <div key={attrName} className="space-y-2">
+                    <Label htmlFor={`attr_${attrName}`}>{attrName}</Label>
+                    <Input
+                      id={`attr_${attrName}`}
+                      value={attrValues[attrName] ?? ""}
+                      onChange={(e) => setAttr(attrName, e.target.value)}
+                      placeholder="vrednost"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">

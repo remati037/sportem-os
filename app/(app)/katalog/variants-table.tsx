@@ -29,11 +29,13 @@ import { VariantFormDialog } from "./variant-form";
 
 export function VariantsTable({
   productId,
+  attributeNames,
   variants,
   canSeeFinance,
   isAdmin,
 }: {
   productId: string;
+  attributeNames: string[];
   variants: VariantRow[];
   canSeeFinance: boolean;
   isAdmin: boolean;
@@ -60,6 +62,11 @@ export function VariantsTable({
             <TableHead className="eyebrow bg-surface-2 h-9 px-4">Slika</TableHead>
             <TableHead className="eyebrow bg-surface-2 h-9 px-4">SKU</TableHead>
             <TableHead className="eyebrow bg-surface-2 h-9 px-4">Varijanta</TableHead>
+            {attributeNames.map((a) => (
+              <TableHead key={a} className="eyebrow bg-surface-2 h-9 px-4">
+                {a}
+              </TableHead>
+            ))}
             {canSeeFinance ? (
               <>
                 <TableHead className="eyebrow bg-surface-2 h-9 px-4 text-right">MP</TableHead>
@@ -97,6 +104,11 @@ export function VariantsTable({
                   ) : null}
                 </TableCell>
                 <TableCell className="text-ink-soft px-4 py-2.5">{v.variant_name ?? "—"}</TableCell>
+                {attributeNames.map((a) => (
+                  <TableCell key={a} className="text-ink px-4 py-2.5">
+                    {v.attributes?.[a] || "—"}
+                  </TableCell>
+                ))}
                 {canSeeFinance ? (
                   <>
                     <TableCell className="num px-4 py-2.5 text-right">
@@ -125,6 +137,7 @@ export function VariantsTable({
                       <VariantFormDialog
                         mode="edit"
                         productId={productId}
+                        attributeNames={attributeNames}
                         variant={v}
                         trigger={
                           <Button variant="ghost" size="icon-sm" aria-label="Izmeni varijantu">

@@ -127,6 +127,7 @@ export async function createProduct(
     description: formData.get("description"),
     brand: formData.get("brand"),
     category_id: formData.get("category_id"),
+    attribute_names: formData.get("attribute_names"),
   });
   if (!parsed.success) return { error: firstZodError(parsed.error) };
 
@@ -163,6 +164,7 @@ export async function updateProduct(
     description: formData.get("description"),
     brand: formData.get("brand"),
     category_id: formData.get("category_id"),
+    attribute_names: formData.get("attribute_names"),
   });
   if (!parsed.success) return { error: firstZodError(parsed.error) };
 
@@ -276,6 +278,7 @@ export async function createVariant(
     low_stock_threshold: formData.get("low_stock_threshold") ?? undefined,
     supplier_sku: formData.get("supplier_sku"),
     weight_grams: formData.get("weight_grams") || undefined,
+    attributes: formData.get("attributes"),
   });
   if (!parsed.success) return { error: firstZodError(parsed.error) };
 
@@ -316,6 +319,7 @@ export async function updateVariant(
     low_stock_threshold: formData.get("low_stock_threshold") ?? undefined,
     supplier_sku: formData.get("supplier_sku"),
     weight_grams: formData.get("weight_grams") || undefined,
+    attributes: formData.get("attributes"),
   });
   if (!parsed.success) return { error: firstZodError(parsed.error) };
 
