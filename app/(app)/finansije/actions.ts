@@ -1,0 +1,218 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { z } from "zod";
+
+import { firstZodError } from "@/lib/actions";
+import { requireRole } from "@/lib/auth";
+import { createClient } from "@/lib/supabase/server";
+import { previousWorkingDay } from "@/lib/date-belgrade";
+import { APP_STATUS } from "@/lib/woo";
+import { createPayoutSchema, updatePayoutSchema } from "@/lib/validation/finance";
+
+/*
+ * Server akcije finansija (Korak 1.6, Admin-only — dira novac). Pišu kroz RLS
+ * klijent (Admin ima *_admin_write politiku). Snapshot cene (order_items) se
+ * NIKAD ne diraju. Eligibility se rekompjutuje u akciji (ne veruje se klijentu).
+ */
+
+export type FinanceActionState = {
+  error: string | null;
+  success?: string | null;
+};
+
+function revalidatePayouts(id?: string) {
+  revalidatePath("/finansije");
+  revalidatePath("/finansije/uplate");
+  if (id) revalidatePath(`/finansije/uplate/${id}`);
+}
+
+/** id statusa „Isporučeno" (lookup po imenu, nikad hardkodovan UUID). */
+async function deliveredStatusId(): Promise<string | null> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("order_statuses")
+    .select("id")
+    .eq("name", APP_STATUS.delivered)
+    .maybeSingle();
+  return data?.id ?? null;
+}
+
+/**
+ * Provera da su SVE porudžbine i dalje eligible za vezivanje uz uplatu:
+ * xexpress + isporučeno + neuplaceno + payout_id null. Guard protiv stale
+ * klijent liste / konkurentnog vezivanja. Vraća poruku greške ili null.
+ */
+async function assertLinkable(orderIds: string[]): Promise<string | null> {
+  if (orderIds.length === 0) return null;
+  const delivered = await deliveredStatusId();
+  if (!delivered) return "Status „Isporučeno“ nije pronađen.";
+
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("orders")
+    .select("id")
+    .in("id", orderIds)
+    .eq("delivery_method", "xexpress")
+    .eq("payment_status", "neuplaceno")
+    .eq("status_id", delivered)
+    .is("payout_id", null);
+
+  if ((data?.length ?? 0) !== orderIds.length) {
+    return "Neke porudžbine više nisu dostupne za vezivanje (isporučene + neuplaćene). Osveži i pokušaj ponovo.";
+  }
+  return null;
+}
+
+export type CreatePayoutInput = z.input<typeof createPayoutSchema>;
+
+/** Nova uplata druga (T+1). Vezane porudžbine → „uplaćeno" + paid_at + payout_id. */
+export async function createPayout(input: CreatePayoutInput): Promise<FinanceActionState> {
+  await requireRole("admin");
+
+  const parsed = createPayoutSchema.safeParse(input);
+  if (!parsed.success) return { error: firstZodError(parsed.error) };
+  const { amount, payout_date, delivery_date, notes, order_ids } = parsed.data;
+
+  const blocked = await assertLinkable(order_ids);
+  if (blocked) return { error: blocked };
+
+  const supabase = await createClient();
+
+  const { data: payout, error: insErr } = await supabase
+    .from("payouts")
+    .insert({
+      amount,
+      payout_date,
+      delivery_date: delivery_date ?? previousWorkingDay(payout_date),
+      notes,
+    })
+    .select("id")
+    .single();
+  if (insErr || !payout) return { error: "Čuvanje uplate nije uspelo." };
+
+  if (order_ids.length > 0) {
+    const { error: updErr } = await supabase
+      .from("orders")
+      .update({
+        payout_id: payout.id,
+        payment_status: "uplaceno",
+        paid_at: new Date().toISOString(),
+      })
+      .in("id", order_ids);
+    if (updErr) {
+      // Rollback uplate da ne ostane „prazan" red bez porudžbina.
+      await supabase.from("payouts").delete().eq("id", payout.id);
+      return { error: "Vezivanje porudžbina nije uspelo." };
+    }
+  }
+
+  revalidatePayouts(payout.id);
+  return {
+    error: null,
+    success:
+      order_ids.length > 0
+        ? `Uplata sačuvana, vezano porudžbina: ${order_ids.length}.`
+        : "Uplata sačuvana.",
+  };
+}
+
+export type UpdatePayoutInput = z.input<typeof updatePayoutSchema>;
+
+/**
+ * Izmena uplate: iznos/datumi/napomena + rekonfiguracija vezanih porudžbina.
+ * Uklonjene se vraćaju na „neuplaćeno"; dodate se vezuju. Fakturisane vezane
+ * porudžbine se ne smeju od-vezati (poremetile bi izdatu fakturu).
+ */
+export async function updatePayout(input: UpdatePayoutInput): Promise<FinanceActionState> {
+  await requireRole("admin");
+
+  const parsed = updatePayoutSchema.safeParse(input);
+  if (!parsed.success) return { error: firstZodError(parsed.error) };
+  const { id, amount, payout_date, delivery_date, notes, order_ids } = parsed.data;
+
+  const supabase = await createClient();
+
+  // Trenutno vezane porudžbine.
+  const { data: current } = await supabase
+    .from("orders")
+    .select("id, invoice_id")
+    .eq("payout_id", id);
+  const currentIds = new Set((current ?? []).map((o) => o.id));
+  const nextIds = new Set(order_ids);
+
+  const toUnlink = [...currentIds].filter((oid) => !nextIds.has(oid));
+  const toLink = order_ids.filter((oid) => !currentIds.has(oid));
+
+  // Fakturisane porudžbine se ne diraju.
+  const invoicedUnlink = (current ?? []).filter(
+    (o) => toUnlink.includes(o.id) && o.invoice_id !== null,
+  );
+  if (invoicedUnlink.length > 0) {
+    return { error: "Vezana porudžbina je fakturisana — ne može se ukloniti sa uplate." };
+  }
+
+  const blocked = await assertLinkable(toLink);
+  if (blocked) return { error: blocked };
+
+  const { error: payErr } = await supabase
+    .from("payouts")
+    .update({
+      amount,
+      payout_date,
+      delivery_date: delivery_date ?? previousWorkingDay(payout_date),
+      notes,
+    })
+    .eq("id", id);
+  if (payErr) return { error: "Izmena uplate nije uspela." };
+
+  if (toUnlink.length > 0) {
+    await supabase
+      .from("orders")
+      .update({ payout_id: null, payment_status: "neuplaceno", paid_at: null })
+      .in("id", toUnlink);
+  }
+  if (toLink.length > 0) {
+    await supabase
+      .from("orders")
+      .update({ payout_id: id, payment_status: "uplaceno", paid_at: new Date().toISOString() })
+      .in("id", toLink);
+  }
+
+  revalidatePayouts(id);
+  return { error: null, success: "Uplata izmenjena." };
+}
+
+/**
+ * Brisanje uplate. FK je ON DELETE SET NULL → nulira samo payout_id, pa akcija
+ * EKSPLICITNO vraća payment_status/paid_at. Odbija se ako je neka vezana
+ * porudžbina fakturisana (uplata je preduslov fakture).
+ */
+export async function deletePayout(id: string): Promise<FinanceActionState> {
+  await requireRole("admin");
+  if (!id) return { error: "Neispravan unos." };
+
+  const supabase = await createClient();
+
+  const { data: linked } = await supabase
+    .from("orders")
+    .select("id, invoice_id")
+    .eq("payout_id", id);
+
+  if ((linked ?? []).some((o) => o.invoice_id !== null)) {
+    return { error: "Uplata ima fakturisanu porudžbinu — ne može se obrisati." };
+  }
+
+  if ((linked ?? []).length > 0) {
+    await supabase
+      .from("orders")
+      .update({ payout_id: null, payment_status: "neuplaceno", paid_at: null })
+      .eq("payout_id", id);
+  }
+
+  const { error } = await supabase.from("payouts").delete().eq("id", id);
+  if (error) return { error: "Brisanje uplate nije uspelo." };
+
+  revalidatePayouts();
+  return { error: null, success: "Uplata obrisana." };
+}
