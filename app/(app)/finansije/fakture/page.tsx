@@ -57,7 +57,7 @@ export default async function FakturePage() {
       {/* „Drug mi duguje" */}
       <div className="border-green/30 bg-green-soft mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-4 py-3">
         <div>
-          <div className="eyebrow text-green">Drug mi duguje</div>
+          <div className="eyebrow text-green">Za fakturisanje</div>
           <p className="text-ink-soft text-xs">
             {num(candidates.orders.length)} nefakturisanih porudžbina (uplaćeno, bez čekanja VP)
           </p>

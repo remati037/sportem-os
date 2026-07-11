@@ -68,7 +68,7 @@ export default async function FinansijePage({
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         {/* Drug mi duguje */}
         <div className="border-green/30 bg-green-soft rounded-lg border px-4 py-4">
-          <div className="eyebrow text-green">Drug mi duguje</div>
+          <div className="eyebrow text-green">Za fakturisanje</div>
           <div className="text-green num mt-1 text-2xl font-bold">{rsd(drug.total)}</div>
           <p className="text-ink-soft mt-1 text-xs">
             {num(drug.orderCount)} nefakturisanih porudžbina (uplaćeno, bez čekanja VP)

@@ -106,7 +106,7 @@ export default async function DashboardPage({
           href="/finansije"
           className="border-green/30 bg-green-soft hover:bg-green/10 rounded-lg border px-4 py-4 transition-colors"
         >
-          <div className="eyebrow text-green">Drug mi duguje</div>
+          <div className="eyebrow text-green">Za fakturisanje</div>
           <div className="text-green num mt-1 text-2xl font-bold">{rsd(drug.total)}</div>
           <p className="text-ink-soft mt-1 text-xs">
             {num(drug.orderCount)} nefakturisanih porudžbina (uplaćeno, bez čekanja VP)
