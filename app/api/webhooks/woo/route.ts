@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { notifyRoles } from "@/lib/push";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   APP_STATUS,
@@ -248,6 +249,15 @@ async function insertOrder(
       .eq("id", created.id)
       .single();
     if (fresh) await syncExistingOrder(supabase, order, fresh);
+  } else {
+    // Push „nova porudžbina" (Korak 1.9) — best-effort, dedup po woo_order_id;
+    // ne šaljemo za odmah-otkazane. notifyRoles nikad ne baca.
+    await notifyRoles("new_order", String(order.id), ["admin", "manager"], {
+      title: "Nova porudžbina",
+      body: `#${order.id}${shipName ? ` — ${shipName}` : ""} · ${goodsTotal.toLocaleString("sr-RS")} RSD`,
+      url: `/porudzbine/${created.id}`,
+      tag: `order-${order.id}`,
+    });
   }
 
   return { ok: true };

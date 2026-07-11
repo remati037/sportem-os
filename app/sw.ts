@@ -10,7 +10,7 @@
 // SAMO immutable, content-hash-ovani build asseti. Sve ostalo (navigacije,
 // Supabase, /api/*, Sentry tunel) nema handler → ide network-only.
 //
-// Push handler NIJE ovde (Korak 1.9) — 0.7 samo postavlja infrastrukturu.
+// Push handleri su na dnu fajla (Korak 1.9).
 
 import {
   CacheFirst,
@@ -70,3 +70,50 @@ const serwist = new Serwist({
 });
 
 serwist.addEventListeners();
+
+// ── Push notifikacije (Korak 1.9) ───────────────────────────────────────────
+// Serwist ne pokriva `push`/`notificationclick` — dodajemo ih ručno. Payload je
+// JSON { title, body, url?, tag? } iz lib/push.ts. Ne dira caching (online-only).
+
+type PushPayload = { title: string; body: string; url?: string; tag?: string };
+
+self.addEventListener("push", (event) => {
+  let data: PushPayload;
+  try {
+    data = event.data?.json() as PushPayload;
+  } catch {
+    data = { title: "Sportem", body: event.data?.text() ?? "" };
+  }
+  const url = data.url ?? "/";
+  event.waitUntil(
+    self.registration.showNotification(data.title || "Sportem", {
+      body: data.body,
+      icon: "/icons/icon-192.png",
+      badge: "/icons/icon-192.png",
+      tag: data.tag,
+      data: { url },
+    }),
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = (event.notification.data as { url?: string } | undefined)?.url ?? "/";
+  event.waitUntil(
+    (async () => {
+      const clientsList = await self.clients.matchAll({
+        type: "window",
+        includeUncontrolled: true,
+      });
+      for (const client of clientsList) {
+        // Fokusiraj postojeći prozor app-a (bilo koja ruta) i navigiraj ga.
+        if ("focus" in client) {
+          await client.focus();
+          if ("navigate" in client && target) await client.navigate(target).catch(() => {});
+          return;
+        }
+      }
+      await self.clients.openWindow(target);
+    })(),
+  );
+});
