@@ -66,7 +66,14 @@ type Admin = ReturnType<typeof createAdminClient>;
  */
 async function sendOnePush(supabase: Admin, row: SubscriptionRow, payload: string): Promise<void> {
   try {
-    await webpush.sendNotification(row.subscription, payload);
+    // `urgency: "high"` → push servis (FCM/APNs) isporučuje ODMAH, ne čeka da se
+    // telefon probudi zbog nečeg drugog (Doze/štednja baterije). Bez ovoga default
+    // je „normal" pa obaveštenje ume da stigne sa velikim zakašnjenjem. `TTL`
+    // (24h) = koliko dugo servis pokušava ako je uređaj offline.
+    await webpush.sendNotification(row.subscription, payload, {
+      urgency: "high",
+      TTL: 60 * 60 * 24,
+    });
   } catch (err) {
     if (err instanceof WebPushError && (err.statusCode === 410 || err.statusCode === 404)) {
       await supabase.from("push_subscriptions").delete().eq("id", row.id);
