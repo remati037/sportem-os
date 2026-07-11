@@ -34,8 +34,11 @@ const serwist = new Serwist({
   // Precache: samo content-hash-ovani static asseti koje ubaci build plugin.
   // Uz `cacheOnNavigation: false` (next.config) nijedan HTML se ne precache-uje.
   precacheEntries: self.__SW_MANIFEST,
-  skipWaiting: true,
-  clientsClaim: true,
+  // Kontrolisani update (obaveštenje o novoj verziji): novi SW ostaje u
+  // „waiting" fazi dok mu klijent (update-toast) ne pošalje SKIP_WAITING —
+  // tako korisnik dobija toast „Dostupna je nova verzija" umesto tihe smene.
+  skipWaiting: false,
+  clientsClaim: false,
   navigationPreload: false,
   runtimeCaching: [
     {
@@ -70,6 +73,16 @@ const serwist = new Serwist({
 });
 
 serwist.addEventListeners();
+
+// ── Obaveštenje o novoj verziji ─────────────────────────────────────────────
+// Kad klijent (components/pwa) klikne „Osveži", pošalje SKIP_WAITING → novi SW
+// preuzme kontrolu → `controllerchange` na klijentu → reload na najnoviju
+// verziju. Ne dira `runtimeCaching` (online-only ustav ostaje).
+self.addEventListener("message", (event) => {
+  if ((event.data as { type?: string } | undefined)?.type === "SKIP_WAITING") {
+    void self.skipWaiting();
+  }
+});
 
 // ── Push notifikacije (Korak 1.9) ───────────────────────────────────────────
 // Serwist ne pokriva `push`/`notificationclick` — dodajemo ih ručno. Payload je
