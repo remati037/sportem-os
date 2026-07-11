@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
+import { UpdateToast } from "@/components/pwa/update-toast";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -46,6 +47,7 @@ export default function RootLayout({
       <body className="bg-paper text-ink flex min-h-full flex-col font-sans">
         {children}
         <Toaster position="top-right" />
+        <UpdateToast />
       </body>
     </html>
   );
