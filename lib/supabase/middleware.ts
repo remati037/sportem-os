@@ -1,8 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
-/** Javne rute — dostupne bez sesije (prijava + prihvat invite-a + webhookovi). */
-const PUBLIC_PATHS = ["/prijava", "/postavi-lozinku", "/auth", "/api/webhooks"];
+/**
+ * Javne rute — dostupne bez sesije (prijava + prihvat invite-a + webhookovi +
+ * cron). `/api/webhooks` i `/api/cron` se sami autentifikuju (HMAC / CRON_SECRET),
+ * pa ne smeju biti redirektovani na /prijava. Push subscribe/unsubscribe NISU
+ * javni — traže sesiju (svaki korisnik svoje uređaje).
+ */
+const PUBLIC_PATHS = ["/prijava", "/postavi-lozinku", "/auth", "/api/webhooks", "/api/cron"];
 
 function isPublic(pathname: string) {
   return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));

@@ -1,4 +1,5 @@
 import {
+  Bell,
   LayoutDashboard,
   Package,
   Receipt,
@@ -32,6 +33,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/finansije", label: "Finansije", icon: Wallet, roles: STAFF, primary: true },
   { href: "/troskovi", label: "Troškovi", icon: Receipt, roles: STAFF, primary: false },
   { href: "/korisnici", label: "Korisnici", icon: Users, roles: ["admin"], primary: false },
+  { href: "/obavestenja", label: "Obaveštenja", icon: Bell, roles: ALL, primary: false },
   { href: "/podesavanja", label: "Podešavanja", icon: Settings, roles: ["admin"], primary: false },
 ];
 
