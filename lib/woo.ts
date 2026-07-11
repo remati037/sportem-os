@@ -128,3 +128,23 @@ export const APP_STATUS = {
   delivered: "Isporučeno",
   cancelled: "Otkazano/Vraćeno",
 } as const;
+
+/**
+ * App status ime (`order_statuses.name`) → Woo status slug (app → Woo push).
+ * `null` = status se ne gura u Woo (custom, ne-seed status). Woo nema poseban
+ * status za „Poslato" → mapira se na `processing` (odluka korisnika).
+ */
+export function wooStatusForApp(appStatusName: string): string | null {
+  switch (appStatusName) {
+    case APP_STATUS.created:
+      return "processing";
+    case APP_STATUS.sent:
+      return "processing";
+    case APP_STATUS.delivered:
+      return "completed";
+    case APP_STATUS.cancelled:
+      return "cancelled";
+    default:
+      return null;
+  }
+}
