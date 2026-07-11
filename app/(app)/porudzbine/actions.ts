@@ -1,12 +1,14 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import * as Sentry from "@sentry/nextjs";
 
 import { firstZodError } from "@/lib/actions";
 import { requireRole } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { APP_STATUS } from "@/lib/woo";
+import { APP_STATUS, wooStatusForApp } from "@/lib/woo";
+import { updateWooOrderStatus } from "@/lib/woo-client";
 import {
   addItemSchema,
   changeOrderStatusSchema,
@@ -33,6 +35,27 @@ export type OrderActionState = {
 function revalidateOrder(orderId: string) {
   revalidatePath("/porudzbine");
   revalidatePath(`/porudzbine/${orderId}`);
+}
+
+/**
+ * Gurni novi status u WooCommerce (app → Woo). Best-effort: app je izvor istine,
+ * pa svaka Woo greška ide u Sentry i vraća `false` (pozivalac blago upozori) —
+ * nikad ne obara promenu statusa. Vraća `true` i kad nema šta da se gura
+ * (custom status bez mapiranja ili porudžbina bez `woo_order_id`).
+ */
+async function pushWooStatus(
+  wooOrderId: number | null,
+  appStatusName: string,
+): Promise<boolean> {
+  const wooStatus = wooStatusForApp(appStatusName);
+  if (!wooOrderId || !wooStatus) return true;
+  try {
+    await updateWooOrderStatus(wooOrderId, wooStatus);
+    return true;
+  } catch (e) {
+    Sentry.captureException(e);
+    return false;
+  }
 }
 
 /** Porudžbina sme da se menja samo dok nije fakturisana. */
@@ -243,7 +266,9 @@ export async function changeOrderStatus(
 
   const { data: order } = await supabase
     .from("orders")
-    .select("id, status_id, payment_status, invoice_id, shipped_at, delivered_at, cancelled_at")
+    .select(
+      "id, status_id, payment_status, invoice_id, shipped_at, delivered_at, cancelled_at, woo_order_id",
+    )
     .eq("id", parsed.data.order_id)
     .maybeSingle();
   if (!order) return { error: "Porudžbina nije pronađena." };
@@ -309,8 +334,15 @@ export async function changeOrderStatus(
     note: parsed.data.note,
   });
 
+  const wooOk = await pushWooStatus(order.woo_order_id, target.name);
+
   revalidateOrder(order.id);
-  return { error: null, success: `Status promenjen: ${target.name}.` };
+  return {
+    error: null,
+    success: `Status promenjen: ${target.name}.${
+      wooOk ? "" : " (WooCommerce nije ažuriran — proveri kasnije.)"
+    }`,
+  };
 }
 
 /**
@@ -330,7 +362,7 @@ export async function markCashSale(
 
   const { data: order } = await supabase
     .from("orders")
-    .select("id, status_id, invoice_id, payment_status")
+    .select("id, status_id, invoice_id, payment_status, woo_order_id")
     .eq("id", parsed.data.order_id)
     .maybeSingle();
   if (!order) return { error: "Porudžbina nije pronađena." };
@@ -369,8 +401,15 @@ export async function markCashSale(
     note: "Keš/lična prodaja — isplaćeno.",
   });
 
+  const wooOk = await pushWooStatus(order.woo_order_id, APP_STATUS.delivered);
+
   revalidateOrder(order.id);
-  return { error: null, success: "Označeno kao keš/lična prodaja (isplaćeno)." };
+  return {
+    error: null,
+    success: `Označeno kao keš/lična prodaja (isplaćeno).${
+      wooOk ? "" : " (WooCommerce nije ažuriran — proveri kasnije.)"
+    }`,
+  };
 }
 
 /** Ručno razrešavanje „za proveru" (Admin + Menadžer). */
@@ -424,13 +463,14 @@ export async function markOrdersShipped(orderIds: string[]): Promise<OrderAction
 
   const { data: orders } = await supabase
     .from("orders")
-    .select("id, status_id, shipped_at, needs_review")
+    .select("id, status_id, shipped_at, needs_review, woo_order_id")
     .in("id", parsed.data.order_ids);
   if (!orders || orders.length === 0) return { error: "Nijedna porudžbina nije pronađena." };
 
   const now = new Date().toISOString();
   let shipped = 0;
   let skipped = 0;
+  let wooFailed = 0;
 
   for (const order of orders) {
     if (order.needs_review || blockedIds.has(order.status_id)) {
@@ -462,6 +502,8 @@ export async function markOrdersShipped(orderIds: string[]): Promise<OrderAction
       note: "Bulk slanje (Poslato).",
     });
     shipped += 1;
+
+    if (!(await pushWooStatus(order.woo_order_id, APP_STATUS.sent))) wooFailed += 1;
   }
 
   // Porudžbine koje uopšte nisu pronađene (npr. loš id) računamo u preskočene.
@@ -469,12 +511,13 @@ export async function markOrdersShipped(orderIds: string[]): Promise<OrderAction
 
   revalidatePath("/porudzbine");
   if (shipped === 0) return { error: "Nijedna porudžbina nije označena poslato (sve preskočene)." };
+  const wooNote = wooFailed > 0 ? ` (WooCommerce nije ažuriran za ${wooFailed}.)` : "";
   return {
     error: null,
     success:
       skipped > 0
-        ? `Označeno poslato: ${shipped} (preskočeno: ${skipped}).`
-        : `Označeno poslato: ${shipped}.`,
+        ? `Označeno poslato: ${shipped} (preskočeno: ${skipped}).${wooNote}`
+        : `Označeno poslato: ${shipped}.${wooNote}`,
   };
 }
 
