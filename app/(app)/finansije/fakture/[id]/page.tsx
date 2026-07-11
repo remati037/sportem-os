@@ -34,9 +34,14 @@ export default async function FakturaPage({ params }: { params: Promise<{ id: st
 
   const { invoice, orders, computedTotal, isBackfill } = detail;
   const frozen = invoice.total_amount ?? 0;
-  const period = `${invoice.period_from ? datum(invoice.period_from) : "—"} – ${
-    invoice.period_to ? datum(invoice.period_to) : "—"
-  }`;
+  // period_from == period_to za nove fakture (jedan datum); istorijske mogu imati
+  // opseg — prikaži jedan datum ako se poklapaju, inače opseg.
+  const dateLabel =
+    invoice.period_from && invoice.period_to && invoice.period_from !== invoice.period_to
+      ? `${datum(invoice.period_from)} – ${datum(invoice.period_to)}`
+      : invoice.period_from
+        ? datum(invoice.period_from)
+        : "—";
   const mismatch = computedTotal !== frozen;
 
   return (
@@ -59,7 +64,7 @@ export default async function FakturaPage({ params }: { params: Promise<{ id: st
               <Badge variant="warning">Izdato</Badge>
             )}
           </h1>
-          <p className="text-ink-soft text-sm">Period: {period}</p>
+          <p className="text-ink-soft text-sm">Datum: {dateLabel}</p>
         </div>
         {isAdmin ? (
           <InvoiceActions id={invoice.id} status={invoice.status} isBackfill={isBackfill} />
@@ -84,7 +89,7 @@ export default async function FakturaPage({ params }: { params: Promise<{ id: st
         <h2 className="text-ink text-sm font-semibold">Porudžbine ({num(orders.length)})</h2>
         <InvoicePrint
           invoiceNumber={invoice.invoice_number ?? "—"}
-          period={period}
+          date={dateLabel}
           total={frozen}
           orders={orders}
         />

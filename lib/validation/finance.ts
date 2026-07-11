@@ -50,8 +50,8 @@ export const issueInvoiceSchema = z.object({
     .trim()
     .min(1, "Unesite broj fakture.")
     .max(100, "Broj fakture je predugačak."),
-  period_from: isoDate("period od"),
-  period_to: isoDate("period do"),
+  // Jedan datum fakture (default danas); puni obe period kolone u bazi.
+  invoice_date: isoDate("datum fakture"),
   // Bar jedna porudžbina — faktura bez stavki nema smisla.
   order_ids: z
     .array(uuid("Neispravna porudžbina."))

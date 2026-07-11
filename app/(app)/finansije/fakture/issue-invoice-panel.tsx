@@ -7,7 +7,7 @@ import { toast } from "sonner";
 
 import type { InvoiceCandidate } from "@/db/finance";
 import { rsd, num, datum } from "@/lib/format";
-import { belgradeDate, todayBelgrade } from "@/lib/date-belgrade";
+import { todayBelgrade } from "@/lib/date-belgrade";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -26,7 +26,7 @@ import { issueInvoice } from "../actions";
 /*
  * Nova faktura drugu (Korak 1.6b, Admin). Kandidati (uplaćene nefakturisane
  * XExpress porudžbine) su podrazumevano svi čekirani; total = Σ zamrznute zarade.
- * Broj fakture je ručni; period se predlaže iz datuma isporuke izabranih.
+ * Broj fakture je ručni; datum fakture je podrazumevano danas (izdaj kad hoćeš).
  */
 export function IssueInvoicePanel({ candidates }: { candidates: InvoiceCandidate[] }) {
   const router = useRouter();
@@ -35,10 +35,7 @@ export function IssueInvoicePanel({ candidates }: { candidates: InvoiceCandidate
 
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [periodFrom, setPeriodFrom] = useState("");
-  const [periodTo, setPeriodTo] = useState("");
-  // Da li je korisnik ručno menjao period (ne prepisuj ga tada iz selekcije).
-  const [periodTouched, setPeriodTouched] = useState(false);
+  const [invoiceDate, setInvoiceDate] = useState(todayBelgrade());
   const [presetDone, setPresetDone] = useState(false);
 
   // Pri otvaranju pred-čekiraj sve kandidate (React obrazac za izvedeni preset).
@@ -53,19 +50,6 @@ export function IssueInvoicePanel({ candidates }: { candidates: InvoiceCandidate
     [candidates, selected],
   );
 
-  // Predloži period iz min/max datuma isporuke izabranih (dok ga korisnik ne dotakne).
-  const suggestedPeriod = useMemo(() => {
-    const days = candidates
-      .filter((c) => selected.has(c.id) && c.delivered_at)
-      .map((c) => belgradeDate(c.delivered_at!))
-      .sort();
-    if (days.length === 0) return null;
-    return { from: days[0], to: days[days.length - 1] };
-  }, [candidates, selected]);
-
-  const effFrom = periodTouched ? periodFrom : (suggestedPeriod?.from ?? periodFrom);
-  const effTo = periodTouched ? periodTo : (suggestedPeriod?.to ?? periodTo);
-
   function toggle(id: string) {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -79,8 +63,7 @@ export function IssueInvoicePanel({ candidates }: { candidates: InvoiceCandidate
     startTransition(async () => {
       const result = await issueInvoice({
         invoice_number: invoiceNumber,
-        period_from: effFrom || todayBelgrade(),
-        period_to: effTo || todayBelgrade(),
+        invoice_date: invoiceDate || todayBelgrade(),
         order_ids: [...selected],
       });
       if (result.error) {
@@ -91,7 +74,7 @@ export function IssueInvoicePanel({ candidates }: { candidates: InvoiceCandidate
       setOpen(false);
       setInvoiceNumber("");
       setSelected(new Set());
-      setPeriodTouched(false);
+      setInvoiceDate(todayBelgrade());
       router.refresh();
     });
   }
@@ -119,7 +102,7 @@ export function IssueInvoicePanel({ candidates }: { candidates: InvoiceCandidate
         </DialogHeader>
 
         <div className="space-y-4">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="invoice_number">Broj fakture</Label>
               <Input
@@ -130,27 +113,12 @@ export function IssueInvoicePanel({ candidates }: { candidates: InvoiceCandidate
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="period_from">Period od</Label>
+              <Label htmlFor="invoice_date">Datum fakture</Label>
               <Input
-                id="period_from"
+                id="invoice_date"
                 type="date"
-                value={effFrom}
-                onChange={(e) => {
-                  setPeriodTouched(true);
-                  setPeriodFrom(e.target.value);
-                }}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="period_to">Period do</Label>
-              <Input
-                id="period_to"
-                type="date"
-                value={effTo}
-                onChange={(e) => {
-                  setPeriodTouched(true);
-                  setPeriodTo(e.target.value);
-                }}
+                value={invoiceDate}
+                onChange={(e) => setInvoiceDate(e.target.value)}
               />
             </div>
           </div>

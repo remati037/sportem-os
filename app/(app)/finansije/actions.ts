@@ -271,7 +271,7 @@ export async function issueInvoice(input: IssueInvoiceInput): Promise<FinanceAct
 
   const parsed = issueInvoiceSchema.safeParse(input);
   if (!parsed.success) return { error: firstZodError(parsed.error) };
-  const { invoice_number, period_from, period_to, order_ids } = parsed.data;
+  const { invoice_number, invoice_date, order_ids } = parsed.data;
 
   const blocked = await assertInvoiceable(order_ids);
   if (blocked) return { error: blocked };
@@ -292,8 +292,8 @@ export async function issueInvoice(input: IssueInvoiceInput): Promise<FinanceAct
     .from("invoices")
     .insert({
       invoice_number,
-      period_from,
-      period_to,
+      period_from: invoice_date,
+      period_to: invoice_date,
       total_amount: total,
       status: "izdato",
     })

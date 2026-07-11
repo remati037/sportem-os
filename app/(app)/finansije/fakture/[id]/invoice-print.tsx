@@ -13,19 +13,19 @@ import { Button } from "@/components/ui/button";
  */
 export function InvoicePrint({
   invoiceNumber,
-  period,
+  date,
   total,
   orders,
 }: {
   invoiceNumber: string;
-  period: string;
+  date: string;
   total: number;
   orders: InvoiceDetailOrder[];
 }) {
   function buildText(): string {
     const lines: string[] = [
       `Faktura ${invoiceNumber}`,
-      `Period: ${period}`,
+      `Datum: ${date}`,
       "",
       "PORUDŽBINE (zarada):",
     ];
@@ -68,7 +68,7 @@ export function InvoicePrint({
         `td,th{padding:4px 6px;border-bottom:1px solid #ddd;font-size:12px;text-align:left}` +
         `td.a,th.a{text-align:right;font-weight:600}td.n{font-weight:600}td.d{color:#555}` +
         `tfoot td{border-top:2px solid #111;font-weight:700;font-size:13px}</style></head><body>` +
-        `<h1>Faktura ${esc(invoiceNumber)}</h1><p>Period: ${esc(period)}</p>` +
+        `<h1>Faktura ${esc(invoiceNumber)}</h1><p>Datum: ${esc(date)}</p>` +
         `<table><thead><tr><th>Br.</th><th>Kupac</th><th>Isporučeno</th><th class="a">Zarada</th></tr></thead>` +
         `<tbody>${rows}</tbody>` +
         `<tfoot><tr><td colspan="3">UKUPNO</td><td class="a">${esc(rsd(total))}</td></tr></tfoot></table>` +
