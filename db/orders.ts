@@ -72,6 +72,8 @@ export type OrderFilters = {
   deliveryMethod?: string;
   paymentStatus?: string;
   needsVp?: boolean;
+  /** Samo porudžbine označene za pregled (otkazano posle fakture i sl. — Korak 1.2). */
+  needsReview?: boolean;
   /** Opseg `ordered_at` — YYYY-MM-DD stringovi (uključivi). */
   from?: string;
   to?: string;
@@ -98,7 +100,8 @@ function sanitizeTerm(term: string): string {
 
 export async function getOrders(filters: OrderFilters = {}): Promise<OrdersResult> {
   const supabase = await createClient();
-  const { statusId, deliveryMethod, paymentStatus, needsVp, from, to, search } = filters;
+  const { statusId, deliveryMethod, paymentStatus, needsVp, needsReview, from, to, search } =
+    filters;
   const page = Math.max(1, filters.page ?? 1);
   const perPage = filters.perPage ?? DEFAULT_PER_PAGE;
 
@@ -109,6 +112,7 @@ export async function getOrders(filters: OrderFilters = {}): Promise<OrdersResul
   if (deliveryMethod) query = query.eq("delivery_method", deliveryMethod);
   if (paymentStatus) query = query.eq("payment_status", paymentStatus);
   if (needsVp) query = query.eq("needs_vp", true);
+  if (needsReview) query = query.eq("needs_review", true);
   if (from) query = query.gte("ordered_at", from);
   if (to) query = query.lte("ordered_at", `${to}T23:59:59.999Z`);
 
