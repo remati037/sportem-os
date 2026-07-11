@@ -92,6 +92,61 @@ export async function getCatalog({
   }));
 }
 
+export type LowStockVariant = {
+  variant_id: string;
+  product_id: string;
+  sku: string;
+  product_name: string;
+  variant_name: string | null;
+  stock_quantity: number;
+  low_stock_threshold: number;
+};
+
+/**
+ * Varijante na niskom stanju (aktivne, `stock_quantity ≤ low_stock_threshold`,
+ * proizvod nearhiviran) — za Dashboard (Korak 1.8). Poređenje dve kolone se ne
+ * može kroz PostgREST filter, pa se aktivne varijante filtriraju u JS-u (dataset
+ * kataloga je mali). Samo Admin/Menadžer čitaju base tabelu (Dashboard je STAFF).
+ */
+export async function getLowStockVariants(): Promise<LowStockVariant[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("product_variants")
+    .select(
+      "id, product_id, sku, variant_name, stock_quantity, low_stock_threshold, archived_at, products(name, archived_at)",
+    )
+    .is("archived_at", null);
+
+  const rows =
+    (data as unknown as {
+      id: string;
+      product_id: string;
+      sku: string;
+      variant_name: string | null;
+      stock_quantity: number;
+      low_stock_threshold: number;
+      products: { name: string; archived_at: string | null } | null;
+    }[]) ?? [];
+
+  return rows
+    .filter(
+      (r) =>
+        r.products != null &&
+        r.products.archived_at == null &&
+        r.stock_quantity <= r.low_stock_threshold,
+    )
+    .map((r) => ({
+      variant_id: r.id,
+      product_id: r.product_id,
+      sku: r.sku,
+      product_name: r.products!.name,
+      variant_name: r.variant_name,
+      stock_quantity: r.stock_quantity,
+      low_stock_threshold: r.low_stock_threshold,
+    }))
+    .sort((a, b) => a.stock_quantity - b.stock_quantity || a.sku.localeCompare(b.sku));
+}
+
 /** Jedan proizvod sa svim varijantama (uklj. arhivirane — za detalj/edit). */
 export async function getProductWithVariants(
   id: string,
