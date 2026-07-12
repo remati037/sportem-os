@@ -32,7 +32,7 @@ export default async function UplataPage({ params }: { params: Promise<{ id: str
   if (!detail) notFound();
   const spisak = await getPayoutSpisak(id);
 
-  const { payout, orders, otkupTotal, difference } = detail;
+  const { payout, orders, otkupTotal, postageTotal, difference } = detail;
 
   return (
     <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-10 sm:px-6">
@@ -64,9 +64,10 @@ export default async function UplataPage({ params }: { params: Promise<{ id: str
       </div>
 
       {/* Sažetak iznosa */}
-      <div className="mb-6 grid grid-cols-3 gap-3">
+      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
         <SummaryCard label="Uplaćeno" value={rsd(payout.amount)} />
         <SummaryCard label="Σ otkupnina" value={rsd(otkupTotal)} />
+        <SummaryCard label="Poštarina" value={rsd(postageTotal)} />
         <SummaryCard
           label="Razlika"
           value={difference === 0 ? "0" : `${difference > 0 ? "+" : ""}${rsd(difference)}`}

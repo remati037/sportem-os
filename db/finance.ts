@@ -1,8 +1,8 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
-import { belgradeDate } from "@/lib/date-belgrade";
 import { APP_STATUS } from "@/lib/woo";
+import { computePeriodMetrics } from "@/db/metrics";
 
 /*
  * Upiti finansija (Korak 1.6). Čitaju kroz RLS klijent: Admin/Menadžer vide sve,
@@ -108,6 +108,7 @@ export type PayoutDetail = {
   payout: PayoutRow;
   orders: PayoutCandidate[];
   otkupTotal: number;
+  postageTotal: number; // Σ shipping_charged (poštarina naplaćena kupcima; deo otkupa)
   difference: number; // amount − otkupTotal (0 = poklapa se)
 };
 
@@ -134,6 +135,7 @@ export async function getPayoutDetail(id: string): Promise<PayoutDetail | null> 
       delivered_at: string | null;
     }[];
   };
+  const postageTotal = row.orders.reduce((sum, o) => sum + (o.shipping_charged ?? 0), 0);
   const orders: PayoutCandidate[] = [...row.orders]
     .sort((a, b) => (a.woo_order_id ?? 0) - (b.woo_order_id ?? 0))
     .map(({ goods_total, shipping_charged, ...o }) => ({
@@ -154,6 +156,7 @@ export async function getPayoutDetail(id: string): Promise<PayoutDetail | null> 
     },
     orders,
     otkupTotal,
+    postageTotal,
     difference: row.amount - otkupTotal,
   };
 }
@@ -481,45 +484,14 @@ function monthBounds(monthStr: string) {
 }
 
 /**
- * Neto profit za izabrani mesec (po Belgrade datumu na delivered_at). Zarada =
- * Σ zamrznute profit_at_sale za realizovane porudžbine (uplaćeno ili keš, bez
- * needs_vp). Troškovi = Σ expenses.amount u periodu (prazno do Koraka 1.7 → 0).
+ * Neto profit za izabrani mesec — ISTA osnova kao Dashboard
+ * (`computePeriodMetrics`): sve porudžbine kreirane u mesecu (`ordered_at`),
+ * OSIM Otkazano/Vraćeno, bez gledanja isporuke/plaćanja. Zarada iz zamrznutih
+ * stavki; troškovi po `expenses.date`. (Ranije: realizovano po `delivered_at` +
+ * plaćeno — promenjeno na zahtev korisnika radi poklapanja sa Dashboardom.)
  */
 export async function getNetoProfit(monthStr: string): Promise<NetoProfit> {
-  const delivered = await deliveredStatusId();
-  if (!delivered) return { zarada: 0, troskovi: 0, neto: 0 };
-  const { firstDay, lastDay, gteUtc, ltUtc } = monthBounds(monthStr);
-  const supabase = await createClient();
-
-  const { data } = await supabase
-    .from("orders")
-    .select("id, delivered_at")
-    .eq("status_id", delivered)
-    .eq("needs_vp", false)
-    .in("payment_status", ["uplaceno", "kes"])
-    .not("delivered_at", "is", null)
-    .gte("delivered_at", gteUtc)
-    .lt("delivered_at", ltUtc);
-
-  const inMonth = (
-    (data as { id: string; delivered_at: string }[]) ?? []
-  ).filter((o) => {
-    const d = belgradeDate(o.delivered_at);
-    return d >= firstDay && d <= lastDay;
-  });
-
-  const profits = await profitByOrder(inMonth.map((o) => o.id));
-  const zarada = inMonth.reduce((sum, o) => sum + (profits.get(o.id) ?? 0), 0);
-
-  const { data: expRows } = await supabase
-    .from("expenses")
-    .select("amount")
-    .gte("date", firstDay)
-    .lte("date", lastDay);
-  const troskovi = ((expRows as { amount: number }[]) ?? []).reduce(
-    (sum, e) => sum + e.amount,
-    0,
-  );
-
-  return { zarada, troskovi, neto: zarada - troskovi };
+  const { firstDay, lastDay } = monthBounds(monthStr);
+  const { zarada, troskovi, neto } = await computePeriodMetrics({ from: firstDay, to: lastDay });
+  return { zarada, troskovi, neto };
 }
