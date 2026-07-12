@@ -134,11 +134,13 @@ export function CatalogTable({
             </div>
           </div>
         ),
+        meta: { wrap: true },
       },
       {
         accessorKey: "categoryName",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Kategorija" />,
         cell: ({ row }) => row.original.categoryName ?? <span className="text-ink-faint">—</span>,
+        meta: { wrap: true },
       },
       {
         accessorKey: "variantCount",
@@ -213,6 +215,7 @@ export function CatalogTable({
         columns={columns}
         data={rows}
         initialSorting={[{ id: "name", desc: false }]}
+        pagination={{ pageSize: 25, itemsLabel: "proizvoda" }}
         empty={
           <EmptyState
             icon={<Package />}

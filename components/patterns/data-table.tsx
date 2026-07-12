@@ -9,11 +9,13 @@ import {
   flexRender,
   getCoreRowModel,
   getFilteredRowModel,
+  getPaginationRowModel,
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table";
 
 import { cn } from "@/lib/utils";
+import { DataTablePagination } from "@/components/patterns/data-table-pagination";
 import {
   Table,
   TableBody,
@@ -33,6 +35,8 @@ declare module "@tanstack/react-table" {
   interface ColumnMeta<TData extends RowData, TValue> {
     align?: "left" | "right";
     numeric?: boolean;
+    /** Dozvoli prelamanje sadržaja ćelije (podrazumevano je nowrap). */
+    wrap?: boolean;
   }
 }
 
@@ -49,6 +53,8 @@ type DataTableProps<TData, TValue> = {
   maxHeight?: string;
   /** Ako je zadat, na mobilnom (`md:hidden`) prikazuje kartice umesto horizontalnog skrola. */
   renderMobileCard?: (row: Row<TData>) => React.ReactNode;
+  /** Klijentska paginacija (kao lista porudžbina). Isključuje interni vertikalni scroll. */
+  pagination?: { pageSize?: number; itemsLabel?: string };
 };
 
 function cellAlign(align?: "left" | "right", numeric?: boolean) {
@@ -64,6 +70,7 @@ function DataTable<TData, TValue>({
   empty,
   maxHeight = "24rem",
   renderMobileCard,
+  pagination,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = React.useState<SortingState>(initialSorting);
   const [globalFilter, setGlobalFilter] = React.useState("");
@@ -72,11 +79,15 @@ function DataTable<TData, TValue>({
     data,
     columns,
     state: { sorting, ...(searchKey ? { globalFilter } : {}) },
+    initialState: pagination
+      ? { pagination: { pageIndex: 0, pageSize: pagination.pageSize ?? 25 } }
+      : undefined,
     onSortingChange: setSorting,
     onGlobalFilterChange: setGlobalFilter,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
+    ...(pagination ? { getPaginationRowModel: getPaginationRowModel(), autoResetPageIndex: true } : {}),
   });
 
   const rows = table.getRowModel().rows;
@@ -116,7 +127,7 @@ function DataTable<TData, TValue>({
           renderMobileCard && "hidden md:block",
         )}
       >
-        <div className="overflow-auto" style={{ maxHeight }}>
+        <div className="overflow-auto" style={pagination ? undefined : { maxHeight }}>
           <Table>
             <TableHeader className="[&_tr]:border-border">
               {table.getHeaderGroups().map((group) => (
@@ -151,6 +162,7 @@ function DataTable<TData, TValue>({
                           key={cell.id}
                           className={cn(
                             "text-ink px-4 py-2.5 text-[0.9375rem]",
+                            meta?.wrap && "whitespace-normal",
                             cellAlign(meta?.align, meta?.numeric),
                           )}
                         >
@@ -177,6 +189,8 @@ function DataTable<TData, TValue>({
           </Table>
         </div>
       </div>
+
+      {pagination ? <DataTablePagination table={table} itemsLabel={pagination.itemsLabel} /> : null}
     </div>
   );
 }

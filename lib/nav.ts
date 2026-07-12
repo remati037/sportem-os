@@ -34,7 +34,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/troskovi", label: "Troškovi", icon: Receipt, roles: STAFF, primary: false },
   { href: "/korisnici", label: "Korisnici", icon: Users, roles: ["admin"], primary: false },
   { href: "/obavestenja", label: "Obaveštenja", icon: Bell, roles: ALL, primary: false },
-  { href: "/podesavanja", label: "Podešavanja", icon: Settings, roles: ["admin"], primary: false },
+  { href: "/podesavanja", label: "Podešavanja", icon: Settings, roles: ALL, primary: false },
 ];
 
 /** Stavke vidljive datoj roli. */
