@@ -71,14 +71,14 @@ export default async function UplatePage() {
                   <TableHead className="eyebrow bg-surface-2 h-9 px-4">Datum uplate</TableHead>
                   <TableHead className="eyebrow bg-surface-2 h-9 px-4">Isporuka (T−1)</TableHead>
                   <TableHead className="eyebrow bg-surface-2 h-9 px-4 text-right">Porudžbina</TableHead>
-                  <TableHead className="eyebrow bg-surface-2 h-9 px-4 text-right">Σ COD</TableHead>
+                  <TableHead className="eyebrow bg-surface-2 h-9 px-4 text-right">Σ otkup</TableHead>
                   <TableHead className="eyebrow bg-surface-2 h-9 px-4 text-right">Uplaćeno</TableHead>
                   <TableHead className="eyebrow bg-surface-2 h-9 px-4 text-right">Razlika</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {payouts.map((p) => {
-                  const diff = p.amount - p.linkedCod;
+                  const diff = p.amount - p.linkedOtkup;
                   return (
                     <TableRow key={p.id} className="border-border hover:bg-green-soft relative">
                       <TableCell className="num text-ink px-4 py-2.5 font-medium">
@@ -93,7 +93,7 @@ export default async function UplatePage() {
                         {p.delivery_date ? datum(p.delivery_date) : "—"}
                       </TableCell>
                       <TableCell className="num px-4 py-2.5 text-right">{num(p.linkedCount)}</TableCell>
-                      <TableCell className="num px-4 py-2.5 text-right">{rsd(p.linkedCod)}</TableCell>
+                      <TableCell className="num px-4 py-2.5 text-right">{rsd(p.linkedOtkup)}</TableCell>
                       <TableCell className="num px-4 py-2.5 text-right">{rsd(p.amount)}</TableCell>
                       <TableCell
                         className={
@@ -113,7 +113,7 @@ export default async function UplatePage() {
           {/* Mobilne kartice */}
           <MobileCardList>
             {payouts.map((p) => {
-              const diff = p.amount - p.linkedCod;
+              const diff = p.amount - p.linkedOtkup;
               return (
                 <MobileCard
                   key={p.id}
@@ -126,8 +126,8 @@ export default async function UplatePage() {
                     trailing={<span className="num font-medium">{rsd(p.amount)}</span>}
                   />
                   <div className="mt-3 space-y-1.5">
-                    <MobileCardField label="Σ COD">
-                      <span className="num">{rsd(p.linkedCod)}</span>
+                    <MobileCardField label="Σ otkup">
+                      <span className="num">{rsd(p.linkedOtkup)}</span>
                     </MobileCardField>
                     <MobileCardField label="Razlika">
                       <span className={"num " + (diff === 0 ? "text-success" : "text-warning")}>

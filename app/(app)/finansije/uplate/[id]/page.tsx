@@ -32,7 +32,7 @@ export default async function UplataPage({ params }: { params: Promise<{ id: str
   if (!detail) notFound();
   const spisak = await getPayoutSpisak(id);
 
-  const { payout, orders, codTotal, difference } = detail;
+  const { payout, orders, otkupTotal, difference } = detail;
 
   return (
     <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-10 sm:px-6">
@@ -66,7 +66,7 @@ export default async function UplataPage({ params }: { params: Promise<{ id: str
       {/* Sažetak iznosa */}
       <div className="mb-6 grid grid-cols-3 gap-3">
         <SummaryCard label="Uplaćeno" value={rsd(payout.amount)} />
-        <SummaryCard label="Σ COD porudžbina" value={rsd(codTotal)} />
+        <SummaryCard label="Σ otkupnina" value={rsd(otkupTotal)} />
         <SummaryCard
           label="Razlika"
           value={difference === 0 ? "0" : `${difference > 0 ? "+" : ""}${rsd(difference)}`}
@@ -85,7 +85,7 @@ export default async function UplataPage({ params }: { params: Promise<{ id: str
               <TableHead className="eyebrow bg-surface-2 h-9 px-4">Br.</TableHead>
               <TableHead className="eyebrow bg-surface-2 h-9 px-4">Kupac</TableHead>
               <TableHead className="eyebrow bg-surface-2 h-9 px-4">Isporučeno</TableHead>
-              <TableHead className="eyebrow bg-surface-2 h-9 px-4 text-right">COD</TableHead>
+              <TableHead className="eyebrow bg-surface-2 h-9 px-4 text-right">Otkup</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -100,7 +100,7 @@ export default async function UplataPage({ params }: { params: Promise<{ id: str
                 <TableRow key={o.id} className="border-border">
                   <TableCell className="num text-ink px-4 py-2.5 font-medium">
                     {o.woo_order_id != null ? (
-                      <Link href={`/porudzbine/${o.id}`} className="hover:text-green underline-offset-2 hover:underline">
+                      <Link href={`/porudzbine/${o.woo_order_id ?? o.id}`} className="hover:text-green underline-offset-2 hover:underline">
                         #{o.woo_order_id}
                       </Link>
                     ) : (
@@ -111,7 +111,7 @@ export default async function UplataPage({ params }: { params: Promise<{ id: str
                   <TableCell className="num text-ink-soft px-4 py-2.5">
                     {o.delivered_at ? datum(o.delivered_at) : "—"}
                   </TableCell>
-                  <TableCell className="num px-4 py-2.5 text-right">{rsd(o.cod_amount ?? 0)}</TableCell>
+                  <TableCell className="num px-4 py-2.5 text-right">{rsd(o.otkup)}</TableCell>
                 </TableRow>
               ))
             )}

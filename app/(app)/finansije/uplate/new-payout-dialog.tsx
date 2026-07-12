@@ -61,16 +61,16 @@ export function NewPayoutDialog({
     );
   }
 
-  const codTotal = useMemo(
+  const otkupTotal = useMemo(
     () =>
       candidates
         .filter((c) => selected.has(c.id))
-        .reduce((sum, c) => sum + (c.cod_amount ?? 0), 0),
+        .reduce((sum, c) => sum + c.otkup, 0),
     [candidates, selected],
   );
 
   const amountNum = Number(amount) || 0;
-  const diff = amountNum - codTotal;
+  const diff = amountNum - otkupTotal;
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -163,8 +163,8 @@ export function NewPayoutDialog({
             }
           >
             <span>
-              Izabrano: <span className="num font-medium">{num(selected.size)}</span> · Σ COD{" "}
-              <span className="num font-medium">{rsd(codTotal)}</span>
+              Izabrano: <span className="num font-medium">{num(selected.size)}</span> · Σ otkup{" "}
+              <span className="num font-medium">{rsd(otkupTotal)}</span>
             </span>
             <span className="num font-semibold">
               Razlika: {diff === 0 ? "0 — poklapa se" : `${diff > 0 ? "+" : ""}${rsd(diff)}`}
@@ -201,7 +201,7 @@ export function NewPayoutDialog({
                       {c.delivered_at ? datum(c.delivered_at) : "—"}
                       {isT1 ? " · T−1" : ""}
                     </span>
-                    <span className="num text-ink text-sm">{rsd(c.cod_amount ?? 0)}</span>
+                    <span className="num text-ink text-sm">{rsd(c.otkup)}</span>
                   </label>
                 );
               })
