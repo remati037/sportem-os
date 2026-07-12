@@ -9,6 +9,14 @@ import type { OrderStatusRow } from "@/db/orders";
 import { ConfirmDialog } from "@/components/patterns/confirm-dialog";
 import { ReasonDialog } from "@/components/patterns/reason-dialog";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -54,6 +62,8 @@ export function OrderStatusControl({
   const [pending, startTransition] = useTransition();
   const [manualStatus, setManualStatus] = useState(currentStatusId ?? "");
   const [note, setNote] = useState("");
+  // Kad je porudžbina plaćena/fakturisana, server traži izričitu potvrdu Admina.
+  const [forcePrompt, setForcePrompt] = useState<{ statusId: string; note?: string } | null>(null);
 
   function run(fn: () => Promise<OrderActionState>, onOk?: () => void) {
     startTransition(async () => {
@@ -68,13 +78,31 @@ export function OrderStatusControl({
     });
   }
 
-  function changeTo(statusId: string, statusNote?: string) {
+  function changeTo(statusId: string, statusNote?: string, force?: boolean) {
     const fd = new FormData();
     fd.set("order_id", orderId);
     fd.set("status_id", statusId);
     if (statusNote) fd.set("note", statusNote);
-    run(() => changeOrderStatus(initial, fd));
+    if (force) fd.set("force", "true");
+    startTransition(async () => {
+      const result = await changeOrderStatus(initial, fd);
+      // Plaćena/fakturisana → otvori dijalog za izričitu Admin potvrdu (force).
+      if (result.requiresForce) {
+        setForcePrompt({ statusId, note: statusNote });
+        return;
+      }
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success(result.success ?? "Sačuvano.");
+      router.refresh();
+    });
   }
+
+  const forceStatusName = forcePrompt
+    ? statuses.find((s) => s.id === forcePrompt.statusId)?.name
+    : null;
 
   const isCancelled = currentStatusId === flow.cancelled || currentStatusId === flow.returned;
   const selectedName = statuses.find((s) => s.id === manualStatus)?.name;
@@ -223,6 +251,42 @@ export function OrderStatusControl({
           />
         </div>
       </div>
+
+      {/* Izričita potvrda: vraćanje/otkazivanje plaćene ili fakturisane porudžbine. */}
+      <Dialog
+        open={forcePrompt !== null}
+        onOpenChange={(o) => {
+          if (!o) setForcePrompt(null);
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Plaćena porudžbina</DialogTitle>
+            <DialogDescription>
+              Ova porudžbina je označena kao plaćena/fakturisana. Prelazak u status
+              {forceStatusName ? ` „${forceStatusName}"` : ""} je finansijski događaj — oznaka
+              „plaćeno“ ostaje, menja se samo status. Nastaviti?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="subtle" onClick={() => setForcePrompt(null)}>
+              Odustani
+            </Button>
+            <Button
+              type="button"
+              variant="danger"
+              disabled={pending}
+              onClick={() => {
+                const p = forcePrompt;
+                setForcePrompt(null);
+                if (p) changeTo(p.statusId, p.note, true);
+              }}
+            >
+              Ipak nastavi
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

@@ -30,6 +30,9 @@ import {
 export type OrderActionState = {
   error: string | null;
   success?: string | null;
+  // Signal klijentu: porudžbina je plaćena/fakturisana — traži se izričita
+  // Admin potvrda („ipak vrati/otkaži") koja ponovo šalje akciju sa force=true.
+  requiresForce?: boolean;
 };
 
 function revalidateOrder(orderId: string) {
@@ -253,12 +256,13 @@ export async function changeOrderStatus(
   _prev: OrderActionState,
   formData: FormData,
 ): Promise<OrderActionState> {
-  const { userId } = await requireRole("admin", "manager");
+  const { userId, profile } = await requireRole("admin", "manager");
 
   const parsed = changeOrderStatusSchema.safeParse({
     order_id: formData.get("order_id"),
     status_id: formData.get("status_id"),
     note: formData.get("note") ?? undefined,
+    force: formData.get("force") ?? undefined,
   });
   if (!parsed.success) return { error: firstZodError(parsed.error) };
 
@@ -292,22 +296,21 @@ export async function changeOrderStatus(
       return { error: "Unesite razlog otkazivanja/vraćanja." };
     }
     const locked = order.invoice_id !== null || order.payment_status !== "neuplaceno";
-    if (locked) {
-      // Ne otkazuj automatski fakturisanu/uplaćenu — traži ručnu odluku (kao webhook).
-      await supabase
-        .from("orders")
-        .update({
-          needs_review: true,
-          review_reason:
-            "Otkazivanje zatraženo za fakturisanu/uplaćenu porudžbinu — potrebna ručna provera.",
-        })
-        .eq("id", order.id);
-      revalidateOrder(order.id);
+    if (locked && !parsed.data.force) {
+      // Plaćena/fakturisana porudžbina se NE otkazuje jednim klikom (zaštita
+      // finansija). Traži se izričita Admin potvrda — klijent ponavlja sa force.
       return {
         error:
-          "Porudžbina je fakturisana/uplaćena — označena je za ručnu proveru umesto otkazivanja.",
+          "Porudžbina je plaćena/fakturisana. Potrebna je izričita potvrda Admina za vraćanje/otkazivanje.",
+        requiresForce: true,
       };
     }
+    if (locked && profile.role !== "admin") {
+      // „Ipak vrati/otkaži" plaćene/fakturisane dira novac → samo Admin.
+      return { error: "Samo Admin može da vrati/otkaže plaćenu ili fakturisanu porudžbinu." };
+    }
+    // Snapshot/„plaćeno" se NE dira (odluka korisnika): menja se samo status +
+    // cancelled_at. Porudžbina automatski ispada iz neto profita (status ≠ Isporučeno).
     patch.cancelled_at = order.cancelled_at ?? now;
   } else if (target.name === APP_STATUS.sent) {
     patch.shipped_at = order.shipped_at ?? now;

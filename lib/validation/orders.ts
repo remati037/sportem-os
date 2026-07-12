@@ -56,6 +56,11 @@ export const changeOrderStatusSchema = z.object({
   order_id: uuid("Neispravna porudžbina."),
   status_id: uuid("Izaberite status."),
   note: optionalNote,
+  // Admin „ipak vrati/otkaži" preko zaštite za plaćenu/fakturisanu porudžbinu.
+  force: z
+    .union([z.boolean(), z.literal("true"), z.literal("false")])
+    .optional()
+    .transform((v) => v === true || v === "true"),
 });
 
 export const markCashSaleSchema = z.object({
