@@ -61,8 +61,8 @@ const STATUS_MAP = {
   Completed: "Isporučeno",
   Poslato: "Poslato",
   Processing: "Kreirano",
-  Returned: "Otkazano/Vraćeno",
-  Cancelled: "Otkazano/Vraćeno",
+  Returned: "Vraćeno",
+  Cancelled: "Otkazano",
 };
 const CANCELLED_RAW = new Set(["Returned", "Cancelled"]);
 const LICNO_DELIVERY = new Set(["Miša", "Marko", "Vozač"]);
@@ -579,7 +579,7 @@ async function applyGap(wooOrders) {
     for (const v of data ?? []) variants.set(v.sku, v);
   }
   const createdName = "Kreirano";
-  const cancelledName = "Otkazano/Vraćeno";
+  const cancelledName = "Otkazano";
   const CANCEL = new Set(["cancelled", "refunded", "failed", "trash"]);
   let inserted = 0;
 

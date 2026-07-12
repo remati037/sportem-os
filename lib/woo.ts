@@ -126,13 +126,29 @@ export const APP_STATUS = {
   created: "Kreirano",
   sent: "Poslato",
   delivered: "Isporučeno",
-  cancelled: "Otkazano/Vraćeno",
+  cancelled: "Otkazano",
+  returned: "Vraćeno",
 } as const;
+
+/**
+ * „Otkazna" logika (gašenje toka, `cancelled_at`, blokada bulk slanja, Woo
+ * `cancelled` push) važi za OBA statusa — „Otkazano" i „Vraćeno". Interno se
+ * razlikuju, ka Woo-u su isti (`cancelled`).
+ */
+export const CANCELLED_STATUS_NAMES: readonly string[] = [
+  APP_STATUS.cancelled,
+  APP_STATUS.returned,
+];
+
+export function isCancelStatusName(name: string): boolean {
+  return CANCELLED_STATUS_NAMES.includes(name);
+}
 
 /**
  * App status ime (`order_statuses.name`) → Woo status slug (app → Woo push).
  * `null` = status se ne gura u Woo (custom, ne-seed status). Woo nema poseban
- * status za „Poslato" → mapira se na `processing` (odluka korisnika).
+ * status za „Poslato" → mapira se na `processing` (odluka korisnika). „Otkazano"
+ * i „Vraćeno" oba idu na Woo `cancelled` (Woo ne razlikuje).
  */
 export function wooStatusForApp(appStatusName: string): string | null {
   switch (appStatusName) {
@@ -143,6 +159,8 @@ export function wooStatusForApp(appStatusName: string): string | null {
     case APP_STATUS.delivered:
       return "completed";
     case APP_STATUS.cancelled:
+      return "cancelled";
+    case APP_STATUS.returned:
       return "cancelled";
     default:
       return null;

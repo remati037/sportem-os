@@ -2,11 +2,12 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { Banknote, Send, PackageCheck, Undo2 } from "lucide-react";
+import { Banknote, Send, PackageCheck, Undo2, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 
 import type { OrderStatusRow } from "@/db/orders";
 import { ConfirmDialog } from "@/components/patterns/confirm-dialog";
+import { ReasonDialog } from "@/components/patterns/reason-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,6 +29,7 @@ export type FlowIds = {
   sent?: string;
   delivered?: string;
   cancelled?: string;
+  returned?: string;
 };
 
 /*
@@ -74,8 +76,11 @@ export function OrderStatusControl({
     run(() => changeOrderStatus(initial, fd));
   }
 
-  const isCancelled = currentStatusId === flow.cancelled;
+  const isCancelled = currentStatusId === flow.cancelled || currentStatusId === flow.returned;
   const selectedName = statuses.find((s) => s.id === manualStatus)?.name;
+  // Otkazivanje/vraćanje traži obavezan razlog (isto važi na serveru).
+  const manualNeedsReason =
+    manualStatus === flow.cancelled || manualStatus === flow.returned;
 
   function cashSale() {
     const fd = new FormData();
@@ -120,15 +125,33 @@ export function OrderStatusControl({
           />
         ) : null}
         {flow.cancelled && !isCancelled ? (
-          <ConfirmDialog
-            title="Otkazati/vratiti porudžbinu?"
-            description="Porudžbina prelazi u status Otkazano/Vraćeno."
-            confirmLabel="Otkaži/Vrati"
+          <ReasonDialog
+            title="Otkazati porudžbinu?"
+            description="Porudžbina prelazi u status Otkazano. Unesite razlog otkazivanja."
+            label="Razlog otkazivanja"
+            placeholder="Zašto se porudžbina otkazuje?"
+            confirmLabel="Otkaži"
             variant="danger"
-            onConfirm={() => changeTo(flow.cancelled!)}
+            onConfirm={(reason) => changeTo(flow.cancelled!, reason)}
             trigger={
               <Button size="sm" variant="danger" disabled={pending}>
-                <Undo2 /> Otkaži/Vrati
+                <Undo2 /> Otkaži
+              </Button>
+            }
+          />
+        ) : null}
+        {flow.returned && !isCancelled ? (
+          <ReasonDialog
+            title="Vratiti porudžbinu?"
+            description="Porudžbina prelazi u status Vraćeno. Unesite razlog vraćanja."
+            label="Razlog vraćanja"
+            placeholder="Zašto se porudžbina vraća?"
+            confirmLabel="Vrati"
+            variant="danger"
+            onConfirm={(reason) => changeTo(flow.returned!, reason)}
+            trigger={
+              <Button size="sm" variant="danger" disabled={pending}>
+                <RotateCcw /> Vrati
               </Button>
             }
           />
@@ -167,7 +190,7 @@ export function OrderStatusControl({
           <Input
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder="Napomena (opciono)"
+            placeholder={manualNeedsReason ? "Razlog (obavezno)" : "Napomena (opciono)"}
             className="h-9 w-full sm:flex-1"
           />
           <ConfirmDialog
@@ -176,13 +199,22 @@ export function OrderStatusControl({
               selectedName ? `Novi status: „${selectedName}".` : "Izaberite status iz liste."
             }
             confirmLabel="Sačuvaj"
-            disabled={!manualStatus || manualStatus === currentStatusId}
+            disabled={
+              !manualStatus ||
+              manualStatus === currentStatusId ||
+              (manualNeedsReason && !note.trim())
+            }
             onConfirm={() => changeTo(manualStatus, note.trim() || undefined)}
             trigger={
               <Button
                 size="sm"
                 variant="subtle"
-                disabled={pending || !manualStatus || manualStatus === currentStatusId}
+                disabled={
+                  pending ||
+                  !manualStatus ||
+                  manualStatus === currentStatusId ||
+                  (manualNeedsReason && !note.trim())
+                }
                 className="w-full sm:w-auto"
               >
                 Sačuvaj

@@ -177,7 +177,8 @@ export default function StilPage() {
             <Badge variant="info">Kreirano</Badge>
             <Badge variant="sent">Poslato</Badge>
             <Badge variant="success">Isporučeno</Badge>
-            <Badge variant="danger">Otkazano / Vraćeno</Badge>
+            <Badge variant="danger">Otkazano</Badge>
+            <Badge variant="warning">Vraćeno</Badge>
           </div>
           <div className="flex flex-wrap gap-2">
             <Badge variant="success">Uplaćeno</Badge>

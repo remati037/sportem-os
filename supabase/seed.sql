@@ -13,7 +13,8 @@ insert into public.order_statuses (id, name, sort_order, color) values
   ('00000000-0000-0000-0000-000000000a01'::uuid, 'Kreirano',          1, '#6B7280'),
   ('00000000-0000-0000-0000-000000000a02'::uuid, 'Poslato',           2, '#2563EB'),
   ('00000000-0000-0000-0000-000000000a03'::uuid, 'Isporučeno',        3, '#1B7A45'),
-  ('00000000-0000-0000-0000-000000000a04'::uuid, 'Otkazano/Vraćeno',  4, '#DC2626')
+  ('00000000-0000-0000-0000-000000000a04'::uuid, 'Otkazano',          4, '#DC2626'),
+  ('00000000-0000-0000-0000-000000000a05'::uuid, 'Vraćeno',           5, '#D97706')
 on conflict (id) do nothing;
 
 -- ── Kategorije troškova ─────────────────────────────────────────────────────
