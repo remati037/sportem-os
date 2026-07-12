@@ -2,9 +2,10 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { X } from "lucide-react";
+import { SlidersHorizontal, X } from "lucide-react";
 
 import type { OrderStatusRow } from "@/db/orders";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,13 +16,29 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 
 /*
- * Filter/pretraga porudžbina (Korak 1.4) — URL-driven (searchParams su izvor
- * istine, server refiltrira). Pretraga se debounce-uje; ostali filteri odmah.
+ * Filter/pretraga porudžbina — URL-driven (searchParams su izvor istine, server
+ * refiltrira). Pretraga se debounce-uje; ostali filteri odmah. Kompaktno:
+ * uvek vidljivi su polje za pretragu + izbor atributa; ostali filteri su iza
+ * dugmeta „Filteri" (panel), pa ne zauzimaju prostor (posebno na telefonu).
  */
 
 const ALL = "all";
+
+const SEARCH_PLACEHOLDER: Record<string, string> = {
+  all: "Pretraga po broju, imenu, e-mailu ili telefonu…",
+  name: "Pretraga po imenu…",
+  email: "Pretraga po e-mailu…",
+  phone: "Pretraga po telefonu…",
+};
 
 export function OrdersFilterBar({ statuses }: { statuses: OrderStatusRow[] }) {
   const router = useRouter();
@@ -29,6 +46,7 @@ export function OrdersFilterBar({ statuses }: { statuses: OrderStatusRow[] }) {
   const params = useSearchParams();
 
   const [search, setSearch] = useState(params.get("q") ?? "");
+  const [open, setOpen] = useState(false);
 
   function apply(next: Record<string, string | null>) {
     const sp = new URLSearchParams(params.toString());
@@ -51,6 +69,7 @@ export function OrdersFilterBar({ statuses }: { statuses: OrderStatusRow[] }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
 
+  const searchField = params.get("qf") ?? ALL;
   const statusId = params.get("status") ?? ALL;
   const delivery = params.get("delivery") ?? ALL;
   const payment = params.get("payment") ?? ALL;
@@ -58,111 +77,158 @@ export function OrdersFilterBar({ statuses }: { statuses: OrderStatusRow[] }) {
   const from = params.get("from") ?? "";
   const to = params.get("to") ?? "";
 
-  const hasFilters =
-    Boolean(search) ||
-    statusId !== ALL ||
-    delivery !== ALL ||
-    payment !== ALL ||
-    needsVp ||
-    Boolean(from) ||
-    Boolean(to);
+  // Broj aktivnih sekundarnih filtera (za bedž na dugmetu „Filteri").
+  const activeCount =
+    (statusId !== ALL ? 1 : 0) +
+    (delivery !== ALL ? 1 : 0) +
+    (payment !== ALL ? 1 : 0) +
+    (needsVp ? 1 : 0) +
+    (from ? 1 : 0) +
+    (to ? 1 : 0);
+
+  const hasFilters = Boolean(search) || searchField !== ALL || activeCount > 0;
+
+  function resetAll() {
+    setSearch("");
+    setOpen(false);
+    router.replace(pathname);
+  }
 
   return (
-    <div className="mb-5 space-y-3">
-      <div className="flex flex-wrap items-center gap-3">
-        <Input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Pretraga po broju, imenu ili telefonu…"
-          className="max-w-xs"
-        />
+    <div className="mb-5 flex flex-wrap items-center gap-2">
+      <Input
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder={SEARCH_PLACEHOLDER[searchField] ?? SEARCH_PLACEHOLDER.all}
+        className="min-w-0 flex-1 sm:max-w-xs"
+      />
 
-        <Select value={statusId} onValueChange={(v) => apply({ status: v })}>
-          <SelectTrigger className="h-10 w-44">
-            <SelectValue placeholder="Status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>Svi statusi</SelectItem>
-            {statuses.map((s) => (
-              <SelectItem key={s.id} value={s.id}>
-                {s.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <Select value={searchField} onValueChange={(v) => apply({ qf: v })}>
+        <SelectTrigger className="h-10 w-28">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={ALL}>Sve</SelectItem>
+          <SelectItem value="name">Ime</SelectItem>
+          <SelectItem value="email">E-mail</SelectItem>
+          <SelectItem value="phone">Telefon</SelectItem>
+        </SelectContent>
+      </Select>
 
-        <Select value={delivery} onValueChange={(v) => apply({ delivery: v })}>
-          <SelectTrigger className="h-10 w-40">
-            <SelectValue placeholder="Isporuka" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>Sve isporuke</SelectItem>
-            <SelectItem value="xexpress">XExpress</SelectItem>
-            <SelectItem value="licno">Lično</SelectItem>
-          </SelectContent>
-        </Select>
-
-        <Select value={payment} onValueChange={(v) => apply({ payment: v })}>
-          <SelectTrigger className="h-10 w-40">
-            <SelectValue placeholder="Plaćanje" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>Sva plaćanja</SelectItem>
-            <SelectItem value="neuplaceno">Neuplaćeno</SelectItem>
-            <SelectItem value="uplaceno">Uplaćeno</SelectItem>
-            <SelectItem value="kes">Keš/Isplaćeno</SelectItem>
-          </SelectContent>
-        </Select>
-
-        <label className="text-ink-soft flex cursor-pointer items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={needsVp}
-            onChange={(e) => apply({ needs_vp: e.target.checked ? "1" : null })}
-            className="accent-green size-4"
-          />
-          Samo „Nedostaje VP“
-        </label>
-      </div>
-
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="space-y-1">
-          <Label htmlFor="from" className="text-ink-faint text-xs">
-            Od datuma
-          </Label>
-          <Input
-            id="from"
-            type="date"
-            value={from}
-            onChange={(e) => apply({ from: e.target.value || null })}
-            className="h-10 w-40"
-          />
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="to" className="text-ink-faint text-xs">
-            Do datuma
-          </Label>
-          <Input
-            id="to"
-            type="date"
-            value={to}
-            onChange={(e) => apply({ to: e.target.value || null })}
-            className="h-10 w-40"
-          />
-        </div>
-        {hasFilters ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setSearch("");
-              router.replace(pathname);
-            }}
-          >
-            <X /> Poništi filtere
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetTrigger asChild>
+          <Button variant="subtle" className="h-10">
+            <SlidersHorizontal /> Filteri
+            {activeCount > 0 ? (
+              <Badge variant="info" className="ml-1">
+                {activeCount}
+              </Badge>
+            ) : null}
           </Button>
-        ) : null}
-      </div>
+        </SheetTrigger>
+        <SheetContent side="right" className="w-full sm:max-w-sm">
+          <SheetHeader>
+            <SheetTitle>Filteri</SheetTitle>
+          </SheetHeader>
+
+          <div className="space-y-4 overflow-y-auto">
+            <div className="space-y-1">
+              <Label className="text-ink-faint text-xs">Status</Label>
+              <Select value={statusId} onValueChange={(v) => apply({ status: v })}>
+                <SelectTrigger className="h-10 w-full">
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>Svi statusi</SelectItem>
+                  {statuses.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-ink-faint text-xs">Isporuka</Label>
+              <Select value={delivery} onValueChange={(v) => apply({ delivery: v })}>
+                <SelectTrigger className="h-10 w-full">
+                  <SelectValue placeholder="Isporuka" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>Sve isporuke</SelectItem>
+                  <SelectItem value="xexpress">XExpress</SelectItem>
+                  <SelectItem value="licno">Lično</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-ink-faint text-xs">Plaćanje</Label>
+              <Select value={payment} onValueChange={(v) => apply({ payment: v })}>
+                <SelectTrigger className="h-10 w-full">
+                  <SelectValue placeholder="Plaćanje" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>Sva plaćanja</SelectItem>
+                  <SelectItem value="neuplaceno">Neuplaćeno</SelectItem>
+                  <SelectItem value="uplaceno">Uplaćeno</SelectItem>
+                  <SelectItem value="kes">Keš/Isplaćeno</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <label className="text-ink-soft flex cursor-pointer items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={needsVp}
+                onChange={(e) => apply({ needs_vp: e.target.checked ? "1" : null })}
+                className="accent-green size-4"
+              />
+              Samo „Nedostaje VP“
+            </label>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="from" className="text-ink-faint text-xs">
+                  Od datuma
+                </Label>
+                <Input
+                  id="from"
+                  type="date"
+                  value={from}
+                  onChange={(e) => apply({ from: e.target.value || null })}
+                  className="h-10 w-full"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="to" className="text-ink-faint text-xs">
+                  Do datuma
+                </Label>
+                <Input
+                  id="to"
+                  type="date"
+                  value={to}
+                  onChange={(e) => apply({ to: e.target.value || null })}
+                  className="h-10 w-full"
+                />
+              </div>
+            </div>
+
+            {hasFilters ? (
+              <Button variant="ghost" size="sm" onClick={resetAll}>
+                <X /> Poništi filtere
+              </Button>
+            ) : null}
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {hasFilters ? (
+        <Button variant="ghost" size="sm" onClick={resetAll}>
+          <X /> Poništi
+        </Button>
+      ) : null}
     </div>
   );
 }

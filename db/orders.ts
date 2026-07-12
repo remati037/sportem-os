@@ -83,6 +83,8 @@ export type OrderFilters = {
   to?: string;
   /** Pretraga: broj porudžbine / ime kupca / telefon. */
   search?: string;
+  /** Polje pretrage: „all" (default) / „name" / „email" / „phone". */
+  searchField?: "all" | "name" | "email" | "phone";
   /** Paginacija (1-based). */
   page?: number;
   perPage?: number;
@@ -106,6 +108,7 @@ export async function getOrders(filters: OrderFilters = {}): Promise<OrdersResul
   const supabase = await createClient();
   const { statusId, deliveryMethod, paymentStatus, needsVp, needsReview, from, to, search } =
     filters;
+  const searchField = filters.searchField ?? "all";
   const page = Math.max(1, filters.page ?? 1);
   const perPage = filters.perPage ?? DEFAULT_PER_PAGE;
 
@@ -124,19 +127,28 @@ export async function getOrders(filters: OrderFilters = {}): Promise<OrdersResul
     const term = sanitizeTerm(search);
     const digits = term.replace(/\D/g, "");
     const orParts: string[] = [];
+    // Kupci → filter porudžbina po customer_id (ime / telefon / e-mail).
+    const custOr: string[] = [];
 
-    // Broj porudžbine (numerički unos).
-    if (/^\d+$/.test(term)) orParts.push(`woo_order_id.eq.${term}`);
+    const wantName = searchField === "all" || searchField === "name";
+    const wantPhone = searchField === "all" || searchField === "phone";
+    const wantEmail = searchField === "all" || searchField === "email";
+
+    // Broj porudžbine (samo u „Sve", numerički unos).
+    if (searchField === "all" && /^\d+$/.test(term)) orParts.push(`woo_order_id.eq.${term}`);
 
     // Snapshot adrese na samoj porudžbini — hvata i porudžbine čiji vezani
     // `customers` red ima drugačije ime (npr. isti kupac, dva telefona).
-    if (term) orParts.push(`ship_name.ilike.%${term}%`);
-    if (digits.length >= 3) orParts.push(`ship_phone.ilike.%${digits}%`);
+    if (wantName && term) {
+      orParts.push(`ship_name.ilike.%${term}%`);
+      custOr.push(`name.ilike.%${term}%`);
+    }
+    if (wantPhone && digits.length >= 3) {
+      orParts.push(`ship_phone.ilike.%${digits}%`);
+      custOr.push(`phone.ilike.%${digits}%`);
+    }
+    if (wantEmail && term) custOr.push(`email.ilike.%${term}%`);
 
-    // Dodatno: kupci po imenu / telefonu → filter porudžbina po customer_id.
-    const custOr: string[] = [];
-    if (term) custOr.push(`name.ilike.%${term}%`);
-    if (digits.length >= 3) custOr.push(`phone.ilike.%${digits}%`);
     if (custOr.length > 0) {
       const { data: custs } = await supabase.from("customers").select("id").or(custOr.join(","));
       const ids = (custs ?? []).map((c) => c.id);

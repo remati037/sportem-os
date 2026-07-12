@@ -33,9 +33,17 @@ export default async function PorudzbinePage({
     : 25;
   const page = Math.max(1, Number(one(sp.page)) || 1);
 
+  const qfRaw = one(sp.qf);
+  const searchField = (["name", "email", "phone"] as const).includes(
+    qfRaw as "name" | "email" | "phone",
+  )
+    ? (qfRaw as "name" | "email" | "phone")
+    : "all";
+
   const [{ rows: orders, total }, statuses] = await Promise.all([
     getOrders({
       search: one(sp.q),
+      searchField,
       statusId: one(sp.status),
       deliveryMethod: one(sp.delivery),
       paymentStatus: one(sp.payment),
