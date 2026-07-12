@@ -1,6 +1,11 @@
 import * as Sentry from "@sentry/nextjs";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import {
+  buildCancellationIndex,
+  matchCancellations,
+  porudzbinePlural,
+} from "@/db/customer-risk";
 import { notifyRoles } from "@/lib/push";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
@@ -258,6 +263,23 @@ async function insertOrder(
       url: `/porudzbine/${created.id}`,
       tag: `order-${order.id}`,
     });
+
+    // Rizičan kupac: kupac koji je ranije otkazao/vratio porudžbinu (poklapanje
+    // po telefonu ili e-mailu). Best-effort, dedup po woo_order_id.
+    const riskIndex = await buildCancellationIndex(supabase);
+    const prior = matchCancellations(riskIndex, {
+      phone: normalizePhone(shipping?.phone || billing?.phone),
+      email: billing?.email,
+      excludeId: created.id,
+    });
+    if (prior.length > 0) {
+      await notifyRoles("risky_customer", String(order.id), ["admin", "manager"], {
+        title: "Rizičan kupac",
+        body: `#${order.id}${shipName ? ` — ${shipName}` : ""} je ranije otkazao/vratio ${prior.length} ${porudzbinePlural(prior.length)}`,
+        url: `/porudzbine/${created.id}`,
+        tag: `risky-${order.id}`,
+      });
+    }
   }
 
   return { ok: true };

@@ -151,6 +151,11 @@ export function OrdersBulkTable({ orders }: { orders: OrderListRow[] }) {
                   <span className="flex items-center justify-end gap-1.5">
                     {o.needs_vp ? <Badge variant="warning">Nedostaje VP</Badge> : null}
                     {o.needs_review ? <Badge variant="danger">Za proveru</Badge> : null}
+                    {o.risky_cancel_count > 0 ? (
+                      <Badge variant="danger">
+                        Rizičan kupac{o.risky_cancel_count > 1 ? ` (${o.risky_cancel_count})` : ""}
+                      </Badge>
+                    ) : null}
                   </span>
                 </TableCell>
               </TableRow>
@@ -190,10 +195,15 @@ export function OrdersBulkTable({ orders }: { orders: OrderListRow[] }) {
               <MobileCardField label="Iznos">
                 <span className="num font-medium">{o.goods_total != null ? rsd(o.goods_total) : "—"}</span>
               </MobileCardField>
-              {o.needs_vp || o.needs_review ? (
+              {o.needs_vp || o.needs_review || o.risky_cancel_count > 0 ? (
                 <div className="relative z-10 flex flex-wrap gap-1.5">
                   {o.needs_vp ? <Badge variant="warning">Nedostaje VP</Badge> : null}
                   {o.needs_review ? <Badge variant="danger">Za proveru</Badge> : null}
+                  {o.risky_cancel_count > 0 ? (
+                    <Badge variant="danger">
+                      Rizičan kupac{o.risky_cancel_count > 1 ? ` (${o.risky_cancel_count})` : ""}
+                    </Badge>
+                  ) : null}
                 </div>
               ) : null}
             </div>

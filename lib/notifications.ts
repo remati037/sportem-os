@@ -25,6 +25,11 @@ export const NOTIFICATION_TYPES = [
     label: "Podsetnik za fakturu",
     roles: ["admin", "manager"] as Role[],
   },
+  {
+    key: "risky_customer",
+    label: "Rizičan kupac",
+    roles: ["admin", "manager"] as Role[],
+  },
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number]["key"];
