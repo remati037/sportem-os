@@ -117,7 +117,7 @@ export default async function FakturaPage({ params }: { params: Promise<{ id: st
                   <TableCell className="num text-ink px-4 py-2.5 font-medium">
                     {o.woo_order_id != null ? (
                       <Link
-                        href={`/porudzbine/${o.id}`}
+                        href={`/porudzbine/${o.woo_order_id ?? o.id}`}
                         className="hover:text-green underline-offset-2 hover:underline"
                       >
                         #{o.woo_order_id}

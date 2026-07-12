@@ -3,7 +3,7 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { belgradeDate } from "@/lib/date-belgrade";
 import { rangeToUtcPrefilter } from "@/lib/period";
-import { APP_STATUS } from "@/lib/woo";
+import { APP_STATUS, CANCELLED_STATUS_NAMES } from "@/lib/woo";
 import { getUnpaidDeliveredXexpress } from "@/db/finance";
 
 /*
@@ -44,25 +44,31 @@ export async function getDashboardMetrics({
   from: string;
   to: string;
 }): Promise<DashboardMetrics> {
-  const empty: DashboardMetrics = { zarada: 0, troskovi: 0, neto: 0, brojPorudzbina: 0, marza: 0 };
-  const delivered = await statusIdByName(APP_STATUS.delivered);
-  if (!delivered) return empty;
+  const supabase = await createClient();
+
+  // Porudžbine se broje po datumu KREIRANJA (`ordered_at`) i uključuju SVE
+  // statuse osim Otkazano/Vraćeno — bez gledanja isporuke/plaćanja. Isključeni
+  // statusi se razrešavaju po IMENU (nikad hardkodovan UUID).
+  const { data: cancelStatuses } = await supabase
+    .from("order_statuses")
+    .select("id")
+    .in("name", CANCELLED_STATUS_NAMES);
+  const excludedIds = new Set(((cancelStatuses as { id: string }[]) ?? []).map((s) => s.id));
 
   const { gteUtc, ltUtc } = rangeToUtcPrefilter(from, to);
-  const supabase = await createClient();
 
   const { data: orderRows } = await supabase
     .from("orders")
-    .select("id, delivered_at")
-    .eq("status_id", delivered)
-    .eq("needs_vp", false)
-    .in("payment_status", ["uplaceno", "kes"])
-    .not("delivered_at", "is", null)
-    .gte("delivered_at", gteUtc)
-    .lt("delivered_at", ltUtc);
+    .select("id, ordered_at, status_id")
+    .not("ordered_at", "is", null)
+    .gte("ordered_at", gteUtc)
+    .lt("ordered_at", ltUtc);
 
-  const inRange = ((orderRows as { id: string; delivered_at: string }[]) ?? []).filter((o) => {
-    const d = belgradeDate(o.delivered_at);
+  const inRange = (
+    (orderRows as { id: string; ordered_at: string; status_id: string }[]) ?? []
+  ).filter((o) => {
+    if (excludedIds.has(o.status_id)) return false;
+    const d = belgradeDate(o.ordered_at);
     return d >= from && d <= to;
   });
 
