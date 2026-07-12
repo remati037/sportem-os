@@ -2,7 +2,7 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { SlidersHorizontal, X } from "lucide-react";
+import { SlidersHorizontal } from "lucide-react";
 
 import type { OrderStatusRow } from "@/db/orders";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +19,7 @@ import {
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
   SheetTrigger,
@@ -26,9 +27,9 @@ import {
 
 /*
  * Filter/pretraga porudžbina — URL-driven (searchParams su izvor istine, server
- * refiltrira). Pretraga se debounce-uje; ostali filteri odmah. Kompaktno:
- * uvek vidljivi su polje za pretragu + izbor atributa; ostali filteri su iza
- * dugmeta „Filteri" (panel), pa ne zauzimaju prostor (posebno na telefonu).
+ * refiltrira). Kompaktno: uvek vidljivi su polje za pretragu + izbor atributa;
+ * sekundarni filteri su u bottom-sheet panelu koji se primenjuje dugmetom
+ * „Primeni filtere" (staging), pa ne zauzimaju prostor na telefonu.
  */
 
 const ALL = "all";
@@ -40,6 +41,25 @@ const SEARCH_PLACEHOLDER: Record<string, string> = {
   phone: "Pretraga po telefonu…",
 };
 
+/** Sekundarni filteri koji se staginguju u panelu (ne pretraga/atribut). */
+type Draft = {
+  status: string;
+  delivery: string;
+  payment: string;
+  needsVp: boolean;
+  from: string;
+  to: string;
+};
+
+const EMPTY_DRAFT: Draft = {
+  status: ALL,
+  delivery: ALL,
+  payment: ALL,
+  needsVp: false,
+  from: "",
+  to: "",
+};
+
 export function OrdersFilterBar({ statuses }: { statuses: OrderStatusRow[] }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -47,6 +67,7 @@ export function OrdersFilterBar({ statuses }: { statuses: OrderStatusRow[] }) {
 
   const [search, setSearch] = useState(params.get("q") ?? "");
   const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
 
   function apply(next: Record<string, string | null>) {
     const sp = new URLSearchParams(params.toString());
@@ -69,29 +90,55 @@ export function OrdersFilterBar({ statuses }: { statuses: OrderStatusRow[] }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
 
-  const searchField = params.get("qf") ?? ALL;
-  const statusId = params.get("status") ?? ALL;
-  const delivery = params.get("delivery") ?? ALL;
-  const payment = params.get("payment") ?? ALL;
-  const needsVp = params.get("needs_vp") === "1";
-  const from = params.get("from") ?? "";
-  const to = params.get("to") ?? "";
+  // Kad se panel otvori, kreni od trenutno primenjenih (URL) vrednosti.
+  function handleOpenChange(next: boolean) {
+    if (next) {
+      setDraft({
+        status: params.get("status") ?? ALL,
+        delivery: params.get("delivery") ?? ALL,
+        payment: params.get("payment") ?? ALL,
+        needsVp: params.get("needs_vp") === "1",
+        from: params.get("from") ?? "",
+        to: params.get("to") ?? "",
+      });
+    }
+    setOpen(next);
+  }
 
-  // Broj aktivnih sekundarnih filtera (za bedž na dugmetu „Filteri").
+  const searchField = params.get("qf") ?? "name";
+
+  // Broj aktivnih (primenjenih) sekundarnih filtera — za bedž na dugmetu.
   const activeCount =
-    (statusId !== ALL ? 1 : 0) +
-    (delivery !== ALL ? 1 : 0) +
-    (payment !== ALL ? 1 : 0) +
-    (needsVp ? 1 : 0) +
-    (from ? 1 : 0) +
-    (to ? 1 : 0);
+    (params.get("status") ? 1 : 0) +
+    (params.get("delivery") ? 1 : 0) +
+    (params.get("payment") ? 1 : 0) +
+    (params.get("needs_vp") === "1" ? 1 : 0) +
+    (params.get("from") ? 1 : 0) +
+    (params.get("to") ? 1 : 0);
 
-  const hasFilters = Boolean(search) || searchField !== ALL || activeCount > 0;
-
-  function resetAll() {
-    setSearch("");
+  function applyDraft() {
+    apply({
+      status: draft.status,
+      delivery: draft.delivery,
+      payment: draft.payment,
+      needs_vp: draft.needsVp ? "1" : null,
+      from: draft.from || null,
+      to: draft.to || null,
+    });
     setOpen(false);
-    router.replace(pathname);
+  }
+
+  function resetDraft() {
+    setDraft(EMPTY_DRAFT);
+    apply({
+      status: null,
+      delivery: null,
+      payment: null,
+      needs_vp: null,
+      from: null,
+      to: null,
+    });
+    setOpen(false);
   }
 
   return (
@@ -99,23 +146,23 @@ export function OrdersFilterBar({ statuses }: { statuses: OrderStatusRow[] }) {
       <Input
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        placeholder={SEARCH_PLACEHOLDER[searchField] ?? SEARCH_PLACEHOLDER.all}
+        placeholder={SEARCH_PLACEHOLDER[searchField] ?? SEARCH_PLACEHOLDER.name}
         className="min-w-0 flex-1 sm:max-w-xs"
       />
 
-      <Select value={searchField} onValueChange={(v) => apply({ qf: v })}>
+      <Select value={searchField} onValueChange={(v) => apply({ qf: v === "name" ? null : v })}>
         <SelectTrigger className="h-10 w-28">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value={ALL}>Sve</SelectItem>
           <SelectItem value="name">Ime</SelectItem>
           <SelectItem value="email">E-mail</SelectItem>
           <SelectItem value="phone">Telefon</SelectItem>
+          <SelectItem value={ALL}>Sve</SelectItem>
         </SelectContent>
       </Select>
 
-      <Sheet open={open} onOpenChange={setOpen}>
+      <Sheet open={open} onOpenChange={handleOpenChange}>
         <SheetTrigger asChild>
           <Button variant="subtle" className="h-10">
             <SlidersHorizontal /> Filteri
@@ -126,15 +173,20 @@ export function OrdersFilterBar({ statuses }: { statuses: OrderStatusRow[] }) {
             ) : null}
           </Button>
         </SheetTrigger>
-        <SheetContent side="right" className="w-full sm:max-w-sm">
-          <SheetHeader>
+
+        <SheetContent side="bottom" className="max-h-[85vh] gap-0 rounded-t-2xl">
+          <SheetHeader className="pb-4">
             <SheetTitle>Filteri</SheetTitle>
+            <SheetDescription>Izaberi filtere pa klikni „Primeni filtere“.</SheetDescription>
           </SheetHeader>
 
-          <div className="space-y-4 overflow-y-auto">
+          <div className="mx-auto w-full max-w-md flex-1 space-y-4 overflow-y-auto pb-2">
             <div className="space-y-1">
               <Label className="text-ink-faint text-xs">Status</Label>
-              <Select value={statusId} onValueChange={(v) => apply({ status: v })}>
+              <Select
+                value={draft.status}
+                onValueChange={(v) => setDraft((d) => ({ ...d, status: v }))}
+              >
                 <SelectTrigger className="h-10 w-full">
                   <SelectValue placeholder="Status" />
                 </SelectTrigger>
@@ -151,7 +203,10 @@ export function OrdersFilterBar({ statuses }: { statuses: OrderStatusRow[] }) {
 
             <div className="space-y-1">
               <Label className="text-ink-faint text-xs">Isporuka</Label>
-              <Select value={delivery} onValueChange={(v) => apply({ delivery: v })}>
+              <Select
+                value={draft.delivery}
+                onValueChange={(v) => setDraft((d) => ({ ...d, delivery: v }))}
+              >
                 <SelectTrigger className="h-10 w-full">
                   <SelectValue placeholder="Isporuka" />
                 </SelectTrigger>
@@ -165,7 +220,10 @@ export function OrdersFilterBar({ statuses }: { statuses: OrderStatusRow[] }) {
 
             <div className="space-y-1">
               <Label className="text-ink-faint text-xs">Plaćanje</Label>
-              <Select value={payment} onValueChange={(v) => apply({ payment: v })}>
+              <Select
+                value={draft.payment}
+                onValueChange={(v) => setDraft((d) => ({ ...d, payment: v }))}
+              >
                 <SelectTrigger className="h-10 w-full">
                   <SelectValue placeholder="Plaćanje" />
                 </SelectTrigger>
@@ -181,54 +239,51 @@ export function OrdersFilterBar({ statuses }: { statuses: OrderStatusRow[] }) {
             <label className="text-ink-soft flex cursor-pointer items-center gap-2 text-sm">
               <input
                 type="checkbox"
-                checked={needsVp}
-                onChange={(e) => apply({ needs_vp: e.target.checked ? "1" : null })}
+                checked={draft.needsVp}
+                onChange={(e) => setDraft((d) => ({ ...d, needsVp: e.target.checked }))}
                 className="accent-green size-4"
               />
               Samo „Nedostaje VP“
             </label>
 
             <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
+              <div className="min-w-0 space-y-1">
                 <Label htmlFor="from" className="text-ink-faint text-xs">
                   Od datuma
                 </Label>
                 <Input
                   id="from"
                   type="date"
-                  value={from}
-                  onChange={(e) => apply({ from: e.target.value || null })}
+                  value={draft.from}
+                  onChange={(e) => setDraft((d) => ({ ...d, from: e.target.value }))}
                   className="h-10 w-full"
                 />
               </div>
-              <div className="space-y-1">
+              <div className="min-w-0 space-y-1">
                 <Label htmlFor="to" className="text-ink-faint text-xs">
                   Do datuma
                 </Label>
                 <Input
                   id="to"
                   type="date"
-                  value={to}
-                  onChange={(e) => apply({ to: e.target.value || null })}
+                  value={draft.to}
+                  onChange={(e) => setDraft((d) => ({ ...d, to: e.target.value }))}
                   className="h-10 w-full"
                 />
               </div>
             </div>
+          </div>
 
-            {hasFilters ? (
-              <Button variant="ghost" size="sm" onClick={resetAll}>
-                <X /> Poništi filtere
-              </Button>
-            ) : null}
+          <div className="border-border mx-auto mt-4 flex w-full max-w-md gap-2 border-t pt-4">
+            <Button variant="ghost" className="flex-1" onClick={resetDraft}>
+              Resetuj filtere
+            </Button>
+            <Button className="flex-1" onClick={applyDraft}>
+              Primeni filtere
+            </Button>
           </div>
         </SheetContent>
       </Sheet>
-
-      {hasFilters ? (
-        <Button variant="ghost" size="sm" onClick={resetAll}>
-          <X /> Poništi
-        </Button>
-      ) : null}
     </div>
   );
 }

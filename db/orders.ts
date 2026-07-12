@@ -108,7 +108,7 @@ export async function getOrders(filters: OrderFilters = {}): Promise<OrdersResul
   const supabase = await createClient();
   const { statusId, deliveryMethod, paymentStatus, needsVp, needsReview, from, to, search } =
     filters;
-  const searchField = filters.searchField ?? "all";
+  const searchField = filters.searchField ?? "name";
   const page = Math.max(1, filters.page ?? 1);
   const perPage = filters.perPage ?? DEFAULT_PER_PAGE;
 
