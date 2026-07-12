@@ -303,7 +303,9 @@ async function syncExistingOrder(
       patch.needs_review = true;
       patch.review_reason = `WooCommerce status „${order.status}" stigao posle fakturisanja/uplate — potrebna ručna odluka.`;
     } else {
-      patch.status_id = await getStatusId(supabase, APP_STATUS.cancelled);
+      // Woo `refunded` → interno „Vraćeno"; cancelled/failed/trash → „Otkazano".
+      const appStatus = order.status === "refunded" ? APP_STATUS.returned : APP_STATUS.cancelled;
+      patch.status_id = await getStatusId(supabase, appStatus);
       patch.cancelled_at = new Date().toISOString();
     }
   }

@@ -162,7 +162,7 @@ async function main() {
     (await post(makeOrder({ id: WOO_ID_A, sku: variant.sku, status: "cancelled" }))) === 200,
   );
   a = await getOrder(WOO_ID_A);
-  check("status Otkazano/Vraćeno", a?.order_statuses?.name === "Otkazano/Vraćeno");
+  check("status Otkazano", a?.order_statuses?.name === "Otkazano");
   check("cancelled_at upisan", Boolean(a?.cancelled_at));
   check("woo_status = cancelled", a?.woo_status === "cancelled");
   check("stavke netaknute", a?.order_items?.length === 1);

@@ -7,7 +7,7 @@ import { firstZodError } from "@/lib/actions";
 import { requireRole } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { APP_STATUS, wooStatusForApp } from "@/lib/woo";
+import { APP_STATUS, CANCELLED_STATUS_NAMES, isCancelStatusName, wooStatusForApp } from "@/lib/woo";
 import { updateWooOrderStatus } from "@/lib/woo-client";
 import {
   addItemSchema,
@@ -286,7 +286,11 @@ export async function changeOrderStatus(
 
   // Lifecycle timestamp-ovi se mapiraju SAMO na poznate (seed) statuse; custom
   // status menja samo status_id. Prelaz unazad čisti „buduće" timestamp-ove.
-  if (target.name === APP_STATUS.cancelled) {
+  if (isCancelStatusName(target.name)) {
+    // Razlog otkazivanja/vraćanja je OBAVEZAN (server je izvor istine).
+    if (!parsed.data.note) {
+      return { error: "Unesite razlog otkazivanja/vraćanja." };
+    }
     const locked = order.invoice_id !== null || order.payment_status !== "neuplaceno";
     if (locked) {
       // Ne otkazuj automatski fakturisanu/uplaćenu — traži ručnu odluku (kao webhook).
@@ -458,7 +462,7 @@ export async function markOrdersShipped(orderIds: string[]): Promise<OrderAction
   const { data: blockedStatuses } = await supabase
     .from("order_statuses")
     .select("id, name")
-    .in("name", [APP_STATUS.sent, APP_STATUS.delivered, APP_STATUS.cancelled]);
+    .in("name", [APP_STATUS.sent, APP_STATUS.delivered, ...CANCELLED_STATUS_NAMES]);
   const blockedIds = new Set((blockedStatuses ?? []).map((s) => s.id));
 
   const { data: orders } = await supabase

@@ -48,6 +48,7 @@ export default async function PorudzbinaPage({ params }: { params: Promise<{ id:
     sent: statuses.find((s) => s.name === APP_STATUS.sent)?.id,
     delivered: statuses.find((s) => s.name === APP_STATUS.delivered)?.id,
     cancelled: statuses.find((s) => s.name === APP_STATUS.cancelled)?.id,
+    returned: statuses.find((s) => s.name === APP_STATUS.returned)?.id,
   };
   const currentStatusId = statuses.find((s) => s.name === order.status?.name)?.id ?? null;
   const canCashSale = isAdmin && !order.invoice_id && order.payment_status === "neuplaceno";
