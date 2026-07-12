@@ -180,7 +180,7 @@ export function OrdersFilterBar({ statuses }: { statuses: OrderStatusRow[] }) {
             <SheetDescription>Izaberi filtere pa klikni „Primeni filtere“.</SheetDescription>
           </SheetHeader>
 
-          <div className="mx-auto w-full max-w-md flex-1 space-y-4 overflow-y-auto pb-2">
+          <div className="mx-auto w-full max-w-md flex-1 space-y-4 overflow-x-hidden overflow-y-auto pb-2">
             <div className="space-y-1">
               <Label className="text-ink-faint text-xs">Status</Label>
               <Select
@@ -246,7 +246,7 @@ export function OrdersFilterBar({ statuses }: { statuses: OrderStatusRow[] }) {
               Samo „Nedostaje VP“
             </label>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="min-w-0 space-y-1">
                 <Label htmlFor="from" className="text-ink-faint text-xs">
                   Od datuma
