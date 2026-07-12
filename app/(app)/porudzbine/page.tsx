@@ -34,11 +34,11 @@ export default async function PorudzbinePage({
   const page = Math.max(1, Number(one(sp.page)) || 1);
 
   const qfRaw = one(sp.qf);
-  const searchField = (["name", "email", "phone"] as const).includes(
-    qfRaw as "name" | "email" | "phone",
+  const searchField = (["all", "name", "email", "phone"] as const).includes(
+    qfRaw as "all" | "name" | "email" | "phone",
   )
-    ? (qfRaw as "name" | "email" | "phone")
-    : "all";
+    ? (qfRaw as "all" | "name" | "email" | "phone")
+    : "name";
 
   const [{ rows: orders, total }, statuses] = await Promise.all([
     getOrders({
