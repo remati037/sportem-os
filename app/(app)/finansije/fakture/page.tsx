@@ -58,9 +58,23 @@ export default async function FakturePage() {
       <div className="border-green/30 bg-green-soft mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-4 py-3">
         <div>
           <div className="eyebrow text-green">Za fakturisanje</div>
-          <p className="text-ink-soft text-xs">
-            {num(candidates.orders.length)} nefakturisanih porudžbina (uplaćeno, bez čekanja VP)
-          </p>
+          {candidates.orders.length === 0 ? (
+            <p className="text-ink-soft text-xs">
+              Nema porudžbina za fakturisanje. Faktura se pravi od isporučenih porudžbina koje su
+              označene kao plaćene —{" "}
+              <Link
+                href="/finansije/uplate"
+                className="text-green font-medium underline-offset-2 hover:underline"
+              >
+                obeleži uplatu
+              </Link>{" "}
+              pa se pojave ovde.
+            </p>
+          ) : (
+            <p className="text-ink-soft text-xs">
+              {num(candidates.orders.length)} nefakturisanih porudžbina (uplaćeno, bez čekanja VP)
+            </p>
+          )}
         </div>
         <div className="text-green num text-xl font-bold">{rsd(candidates.total)}</div>
       </div>

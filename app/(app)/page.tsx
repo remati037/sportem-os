@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import {
   AlertTriangle,
   ClipboardCheck,
+  Info,
   PackageCheck,
   Truck,
   Wallet,
@@ -99,6 +100,31 @@ export default async function DashboardPage({
         <MetricCard label="Porudžbine" value={num(metrics.brojPorudzbina)} hint="Realizovano" />
         <MetricCard label="Prosečna marža" value={`${marzaPct}%`} hint="Zarada / promet" />
       </div>
+
+      {/* Objašnjenje kad period nema realizovanih porudžbina (nule nisu kvar) */}
+      {metrics.brojPorudzbina === 0 ? (
+        <div className="border-border bg-surface text-ink-soft mb-8 flex items-start gap-2 rounded-lg border px-4 py-3 text-sm">
+          <Info className="text-ink-faint mt-0.5 size-4 shrink-0" />
+          <div>
+            Nema realizovanih porudžbina u ovom periodu ({period.label}). Metrike broje samo
+            porudžbine koje su <span className="font-medium">isporučene i plaćene</span> — probaj
+            drugi mesec.
+            {waiting.isporucenoNeuplaceno > 0 ? (
+              <>
+                {" "}
+                Imaš {num(waiting.isporucenoNeuplaceno)} isporučenih koje čekaju uplatu —{" "}
+                <Link
+                  href="/finansije/uplate"
+                  className="text-green font-medium underline-offset-2 hover:underline"
+                >
+                  obeleži uplatu
+                </Link>{" "}
+                da uđu u zaradu.
+              </>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       {/* Tekuće stanje */}
       <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2">
