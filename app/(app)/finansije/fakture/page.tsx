@@ -91,7 +91,7 @@ export default async function FakturePage() {
                 {i > 0 ? ", " : ""}
                 {o.woo_order_id != null ? (
                   <Link
-                    href={`/porudzbine/${o.id}`}
+                    href={`/porudzbine/${o.woo_order_id ?? o.id}`}
                     className="underline-offset-2 hover:underline"
                   >
                     #{o.woo_order_id}

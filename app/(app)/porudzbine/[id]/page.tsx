@@ -37,7 +37,7 @@ export default async function PorudzbinaPage({ params }: { params: Promise<{ id:
 
   const [statuses, history, variantOptions, riskyHistory] = await Promise.all([
     getOrderStatuses(),
-    getOrderStatusHistory(id),
+    getOrderStatusHistory(order.id),
     isAdmin && !order.invoice_id ? getActiveVariantOptions() : Promise.resolve([]),
     getOrderCancellationHistory(order),
   ]);
@@ -111,7 +111,7 @@ export default async function PorudzbinaPage({ params }: { params: Promise<{ id:
             <ul className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1">
               {riskyHistory.map((h) => (
                 <li key={h.id}>
-                  <Link href={`/porudzbine/${h.id}`} className="num font-medium underline">
+                  <Link href={`/porudzbine/${h.woo_order_id ?? h.id}`} className="num font-medium underline">
                     {h.woo_order_id != null ? `#${h.woo_order_id}` : "porudžbina"}
                   </Link>
                   {h.ordered_at ? (

@@ -27,9 +27,18 @@ export type PayoutCandidate = {
   id: string;
   woo_order_id: number | null;
   ship_name: string | null;
-  cod_amount: number | null;
+  otkup: number; // vrednost robe + naplaćena poštarina (otkupnina koju kurir vraća)
   delivered_at: string | null;
 };
+
+/**
+ * Otkupnina = vrednost robe (`goods_total`) + naplaćena poštarina
+ * (`shipping_charged`). `cod_amount` se NE koristi — NULL je na backfill i
+ * ne-COD porudžbinama; `goods_total` je pouzdano popunjen svuda.
+ */
+function otkupOf(goods_total: number | null, shipping_charged: number | null): number {
+  return (goods_total ?? 0) + (shipping_charged ?? 0);
+}
 
 /**
  * Sve XExpress porudžbine isporučene ali NEuplaćene i nevezane za uplatu —
@@ -41,13 +50,26 @@ export async function getUnpaidDeliveredXexpress(): Promise<PayoutCandidate[]> {
   const supabase = await createClient();
   const { data } = await supabase
     .from("orders")
-    .select("id, woo_order_id, ship_name, cod_amount, delivered_at")
+    .select("id, woo_order_id, ship_name, goods_total, shipping_charged, delivered_at")
     .eq("delivery_method", "xexpress")
     .eq("payment_status", "neuplaceno")
     .eq("status_id", delivered)
     .is("payout_id", null)
     .order("delivered_at", { ascending: true, nullsFirst: false });
-  return (data as unknown as PayoutCandidate[]) ?? [];
+
+  return (
+    (data as unknown as {
+      id: string;
+      woo_order_id: number | null;
+      ship_name: string | null;
+      goods_total: number | null;
+      shipping_charged: number | null;
+      delivered_at: string | null;
+    }[]) ?? []
+  ).map(({ goods_total, shipping_charged, ...o }) => ({
+    ...o,
+    otkup: otkupOf(goods_total, shipping_charged),
+  }));
 }
 
 export type PayoutRow = {
@@ -57,56 +79,68 @@ export type PayoutRow = {
   delivery_date: string | null;
   notes: string | null;
   linkedCount: number;
-  linkedCod: number;
+  linkedOtkup: number; // Σ otkupnina vezanih porudžbina
 };
 
-/** Lista uplata (sa brojem vezanih porudžbina i Σ COD-a). */
+/** Lista uplata (sa brojem vezanih porudžbina i Σ otkupnine). */
 export async function listPayouts(): Promise<PayoutRow[]> {
   const supabase = await createClient();
   const { data } = await supabase
     .from("payouts")
-    .select("id, amount, payout_date, delivery_date, notes, orders(cod_amount)")
+    .select(
+      "id, amount, payout_date, delivery_date, notes, orders(goods_total, shipping_charged)",
+    )
     .order("payout_date", { ascending: false })
     .order("created_at", { ascending: false });
 
   return (
-    (data as unknown as (Omit<PayoutRow, "linkedCount" | "linkedCod"> & {
-      orders: { cod_amount: number | null }[];
+    (data as unknown as (Omit<PayoutRow, "linkedCount" | "linkedOtkup"> & {
+      orders: { goods_total: number | null; shipping_charged: number | null }[];
     })[]) ?? []
   ).map(({ orders, ...p }) => ({
     ...p,
     linkedCount: orders.length,
-    linkedCod: orders.reduce((sum, o) => sum + (o.cod_amount ?? 0), 0),
+    linkedOtkup: orders.reduce((sum, o) => sum + otkupOf(o.goods_total, o.shipping_charged), 0),
   }));
 }
 
 export type PayoutDetail = {
   payout: PayoutRow;
   orders: PayoutCandidate[];
-  codTotal: number;
-  difference: number; // amount − codTotal (0 = poklapa se)
+  otkupTotal: number;
+  difference: number; // amount − otkupTotal (0 = poklapa se)
 };
 
-/** Detalj uplate: vezane porudžbine + Σ COD + razlika prema unetom iznosu. */
+/** Detalj uplate: vezane porudžbine + Σ otkupnina + razlika prema unetom iznosu. */
 export async function getPayoutDetail(id: string): Promise<PayoutDetail | null> {
   const supabase = await createClient();
   const { data } = await supabase
     .from("payouts")
     .select(
       `id, amount, payout_date, delivery_date, notes,
-       orders(id, woo_order_id, ship_name, cod_amount, delivered_at)`,
+       orders(id, woo_order_id, ship_name, goods_total, shipping_charged, delivered_at)`,
     )
     .eq("id", id)
     .maybeSingle();
   if (!data) return null;
 
-  const row = data as unknown as Omit<PayoutRow, "linkedCount" | "linkedCod"> & {
-    orders: PayoutCandidate[];
+  const row = data as unknown as Omit<PayoutRow, "linkedCount" | "linkedOtkup"> & {
+    orders: {
+      id: string;
+      woo_order_id: number | null;
+      ship_name: string | null;
+      goods_total: number | null;
+      shipping_charged: number | null;
+      delivered_at: string | null;
+    }[];
   };
-  const orders = [...row.orders].sort(
-    (a, b) => (a.woo_order_id ?? 0) - (b.woo_order_id ?? 0),
-  );
-  const codTotal = orders.reduce((sum, o) => sum + (o.cod_amount ?? 0), 0);
+  const orders: PayoutCandidate[] = [...row.orders]
+    .sort((a, b) => (a.woo_order_id ?? 0) - (b.woo_order_id ?? 0))
+    .map(({ goods_total, shipping_charged, ...o }) => ({
+      ...o,
+      otkup: otkupOf(goods_total, shipping_charged),
+    }));
+  const otkupTotal = orders.reduce((sum, o) => sum + o.otkup, 0);
 
   return {
     payout: {
@@ -116,11 +150,11 @@ export async function getPayoutDetail(id: string): Promise<PayoutDetail | null> 
       delivery_date: row.delivery_date,
       notes: row.notes,
       linkedCount: orders.length,
-      linkedCod: codTotal,
+      linkedOtkup: otkupTotal,
     },
     orders,
-    codTotal,
-    difference: row.amount - codTotal,
+    otkupTotal,
+    difference: row.amount - otkupTotal,
   };
 }
 

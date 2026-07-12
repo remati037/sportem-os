@@ -260,7 +260,7 @@ async function insertOrder(
     await notifyRoles("new_order", String(order.id), ["admin", "manager"], {
       title: "Nova porudžbina",
       body: `#${order.id}${shipName ? ` — ${shipName}` : ""} · ${goodsTotal.toLocaleString("sr-RS")} RSD`,
-      url: `/porudzbine/${created.id}`,
+      url: `/porudzbine/${order.id}`,
       tag: `order-${order.id}`,
     });
 
@@ -276,7 +276,7 @@ async function insertOrder(
       await notifyRoles("risky_customer", String(order.id), ["admin", "manager"], {
         title: "Rizičan kupac",
         body: `#${order.id}${shipName ? ` — ${shipName}` : ""} je ranije otkazao/vratio ${prior.length} ${porudzbinePlural(prior.length)}`,
-        url: `/porudzbine/${created.id}`,
+        url: `/porudzbine/${order.id}`,
         tag: `risky-${order.id}`,
       });
     }

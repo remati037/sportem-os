@@ -129,7 +129,7 @@ export function OrdersBulkTable({ orders }: { orders: OrderListRow[] }) {
                   />
                 </TableCell>
                 <TableCell className="px-4 py-2.5">
-                  <Link href={`/porudzbine/${o.id}`} className="after:absolute after:inset-0">
+                  <Link href={`/porudzbine/${o.woo_order_id ?? o.id}`} className="after:absolute after:inset-0">
                     <span className="num text-ink font-medium">
                       {o.woo_order_id != null ? `#${o.woo_order_id}` : "—"}
                     </span>
@@ -169,7 +169,7 @@ export function OrdersBulkTable({ orders }: { orders: OrderListRow[] }) {
         {orders.map((o) => (
           <MobileCard
             key={o.id}
-            href={`/porudzbine/${o.id}`}
+            href={`/porudzbine/${o.woo_order_id ?? o.id}`}
             ariaLabel={`Porudžbina ${o.woo_order_id ?? ""}`}
           >
             <MobileCardHeader

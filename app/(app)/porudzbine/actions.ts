@@ -35,9 +35,11 @@ export type OrderActionState = {
   requiresForce?: boolean;
 };
 
-function revalidateOrder(orderId: string) {
+function revalidateOrder() {
+  // Detalj porudžbine je `force-dynamic` (+ `router.refresh()` na klijentu), pa
+  // je revalidacija po URL-u nepotrebna — dovoljno je osvežiti listu. (URL sada
+  // koristi Woo broj, a akcije rade po UUID-u, pa se putanja ne poklapa.)
   revalidatePath("/porudzbine");
-  revalidatePath(`/porudzbine/${orderId}`);
 }
 
 /**
@@ -127,7 +129,7 @@ export async function updateItemPrice(
     .eq("id", parsed.data.item_id);
   if (error) return { error: "Izmena cene nije uspela." };
 
-  revalidateOrder(target.orderId);
+  revalidateOrder();
   return { error: null, success: "Cena stavke izmenjena." };
 }
 
@@ -153,7 +155,7 @@ export async function updateItemQuantity(
     .eq("id", parsed.data.item_id);
   if (error) return { error: "Izmena količine nije uspela." };
 
-  revalidateOrder(target.orderId);
+  revalidateOrder();
   return { error: null, success: "Količina izmenjena." };
 }
 
@@ -181,7 +183,7 @@ export async function setItemVp(
   if (error) return { error: "Unos VP cene nije uspeo." };
 
   await syncNeedsVp(target.orderId);
-  revalidateOrder(target.orderId);
+  revalidateOrder();
   return { error: null, success: "VP cena upisana." };
 }
 
@@ -197,7 +199,7 @@ export async function deleteItem(itemId: string): Promise<OrderActionState> {
   if (error) return { error: "Brisanje stavke nije uspelo." };
 
   await syncNeedsVp(target.orderId);
-  revalidateOrder(target.orderId);
+  revalidateOrder();
   return { error: null, success: "Stavka obrisana." };
 }
 
@@ -239,7 +241,7 @@ export async function addItemFromCatalog(
   if (error) return { error: "Dodavanje stavke nije uspelo." };
 
   await syncNeedsVp(parsed.data.order_id);
-  revalidateOrder(parsed.data.order_id);
+  revalidateOrder();
   return { error: null, success: "Stavka dodata." };
 }
 
@@ -343,7 +345,7 @@ export async function changeOrderStatus(
 
   const wooOk = await pushWooStatus(order.woo_order_id, target.name);
 
-  revalidateOrder(order.id);
+  revalidateOrder();
   return {
     error: null,
     success: `Status promenjen: ${target.name}.${
@@ -410,7 +412,7 @@ export async function markCashSale(
 
   const wooOk = await pushWooStatus(order.woo_order_id, APP_STATUS.delivered);
 
-  revalidateOrder(order.id);
+  revalidateOrder();
   return {
     error: null,
     success: `Označeno kao keš/lična prodaja (isplaćeno).${
@@ -431,7 +433,7 @@ export async function resolveReview(orderId: string): Promise<OrderActionState> 
     .eq("id", orderId);
   if (error) return { error: "Razrešavanje nije uspelo." };
 
-  revalidateOrder(orderId);
+  revalidateOrder();
   return { error: null, success: "Označeno kao razrešeno." };
 }
 
@@ -554,6 +556,6 @@ export async function updateShipping(
   const { error } = await supabase.from("orders").update(patch).eq("id", order_id);
   if (error) return { error: "Čuvanje podataka o paketu nije uspelo." };
 
-  revalidateOrder(order_id);
+  revalidateOrder();
   return { error: null, success: "Podaci o paketu sačuvani." };
 }

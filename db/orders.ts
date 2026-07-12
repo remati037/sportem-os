@@ -233,9 +233,14 @@ export async function getOrderStatusHistory(orderId: string): Promise<OrderStatu
   }));
 }
 
-export async function getOrderDetail(id: string): Promise<OrderDetail | null> {
+/**
+ * Detalj porudžbine po URL parametru: numerički param = Woo broj
+ * (`woo_order_id`), inače UUID (`id`, rezerva za stare linkove i retke
+ * porudžbine bez Woo broja).
+ */
+export async function getOrderDetail(param: string): Promise<OrderDetail | null> {
   const supabase = await createClient();
-  const { data } = await supabase
+  const query = supabase
     .from("orders")
     .select(
       `id, woo_order_id, delivery_method, payment_status, invoice_id, needs_vp, needs_review,
@@ -246,9 +251,11 @@ export async function getOrderDetail(id: string): Promise<OrderDetail | null> {
        status:order_statuses(name, color),
        customer:customers(name, phone, email),
        items:order_items(id, variant_id, sku, product_name, quantity, mp_at_sale, vp_at_sale, profit_at_sale)`,
-    )
-    .eq("id", id)
-    .maybeSingle();
+    );
+  const { data } = await (/^\d+$/.test(param)
+    ? query.eq("woo_order_id", Number(param))
+    : query.eq("id", param)
+  ).maybeSingle();
   if (!data) return null;
   const detail = data as unknown as OrderDetail;
   detail.items.sort((a, b) => a.sku.localeCompare(b.sku));

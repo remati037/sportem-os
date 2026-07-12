@@ -97,31 +97,18 @@ export default async function DashboardPage({
           hint={`Troškovi ${rsd(metrics.troskovi)}`}
           tone={metrics.neto >= 0 ? "ink" : "warning"}
         />
-        <MetricCard label="Porudžbine" value={num(metrics.brojPorudzbina)} hint="Realizovano" />
+        <MetricCard label="Porudžbine" value={num(metrics.brojPorudzbina)} hint="Kreirano u periodu" />
         <MetricCard label="Prosečna marža" value={`${marzaPct}%`} hint="Zarada / promet" />
       </div>
 
-      {/* Objašnjenje kad period nema realizovanih porudžbina (nule nisu kvar) */}
+      {/* Objašnjenje kad period nema porudžbina (nule nisu kvar) */}
       {metrics.brojPorudzbina === 0 ? (
         <div className="border-border bg-surface text-ink-soft mb-8 flex items-start gap-2 rounded-lg border px-4 py-3 text-sm">
           <Info className="text-ink-faint mt-0.5 size-4 shrink-0" />
           <div>
-            Nema realizovanih porudžbina u ovom periodu ({period.label}). Metrike broje samo
-            porudžbine koje su <span className="font-medium">isporučene i plaćene</span> — probaj
-            drugi mesec.
-            {waiting.isporucenoNeuplaceno > 0 ? (
-              <>
-                {" "}
-                Imaš {num(waiting.isporucenoNeuplaceno)} isporučenih koje čekaju uplatu —{" "}
-                <Link
-                  href="/finansije/uplate"
-                  className="text-green font-medium underline-offset-2 hover:underline"
-                >
-                  obeleži uplatu
-                </Link>{" "}
-                da uđu u zaradu.
-              </>
-            ) : null}
+            Nema porudžbina kreiranih u ovom periodu ({period.label}). Metrike broje sve porudžbine
+            napravljene u periodu, <span className="font-medium">osim otkazanih i vraćenih</span> —
+            probaj drugi period.
           </div>
         </div>
       ) : null}
