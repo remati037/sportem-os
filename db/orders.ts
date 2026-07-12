@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
+import { buildCancellationIndex, matchCancellations } from "@/db/customer-risk";
 
 /*
  * Upiti porudžbina (Korak 1.2 — minimalna lista + detalj; pun UX u 1.4).
@@ -17,8 +18,11 @@ export type OrderListRow = {
   needs_review: boolean;
   /** Ime primaoca (snapshot na porudžbini) — prikaz „Kupac" u listi. */
   ship_name: string | null;
+  ship_phone: string | null;
   status: { name: string; color: string | null } | null;
-  customer: { name: string | null } | null;
+  customer: { name: string | null; phone: string | null; email: string | null } | null;
+  /** Broj ranijih otkazanih/vraćenih porudžbina istog kupca (tel/e-mail). */
+  risky_cancel_count: number;
 };
 
 export type OrderItemRow = {
@@ -65,7 +69,7 @@ export type OrderDetail = {
 };
 
 const LIST_COLS =
-  "id, woo_order_id, ordered_at, goods_total, needs_vp, needs_review, ship_name, status:order_statuses(name, color), customer:customers(name)";
+  "id, woo_order_id, ordered_at, goods_total, needs_vp, needs_review, ship_name, ship_phone, status:order_statuses(name, color), customer:customers(name, phone, email)";
 
 export type OrderFilters = {
   statusId?: string;
@@ -149,7 +153,19 @@ export async function getOrders(filters: OrderFilters = {}): Promise<OrdersResul
     .order("ordered_at", { ascending: false, nullsFirst: false })
     .range(fromIdx, fromIdx + perPage - 1);
 
-  return { rows: (data as unknown as OrderListRow[]) ?? [], total: count ?? 0 };
+  const rows = (data as unknown as OrderListRow[]) ?? [];
+
+  // „Rizičan kupac" flag po redu (istorija otkazivanja/vraćanja po tel/e-mailu).
+  const riskIndex = await buildCancellationIndex(supabase);
+  for (const row of rows) {
+    row.risky_cancel_count = matchCancellations(riskIndex, {
+      phone: row.ship_phone ?? row.customer?.phone,
+      email: row.customer?.email,
+      excludeId: row.id,
+    }).length;
+  }
+
+  return { rows, total: count ?? 0 };
 }
 
 export type OrderStatusRow = {

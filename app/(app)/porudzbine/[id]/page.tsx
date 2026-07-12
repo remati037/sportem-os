@@ -9,7 +9,8 @@ import {
   getOrderStatuses,
   getOrderStatusHistory,
 } from "@/db/orders";
-import { rsd, datumVreme } from "@/lib/format";
+import { getOrderCancellationHistory, porudzbinePlural } from "@/db/customer-risk";
+import { rsd, datum, datumVreme } from "@/lib/format";
 import { APP_STATUS } from "@/lib/woo";
 import { Badge } from "@/components/ui/badge";
 
@@ -34,10 +35,11 @@ export default async function PorudzbinaPage({ params }: { params: Promise<{ id:
   const order = await getOrderDetail(id);
   if (!order) notFound();
 
-  const [statuses, history, variantOptions] = await Promise.all([
+  const [statuses, history, variantOptions, riskyHistory] = await Promise.all([
     getOrderStatuses(),
     getOrderStatusHistory(id),
     isAdmin && !order.invoice_id ? getActiveVariantOptions() : Promise.resolve([]),
+    getOrderCancellationHistory(order),
   ]);
 
   // Poznati (seed) statusi toka — razrešeni po imenu (nikad hardkodovan UUID).
@@ -73,6 +75,7 @@ export default async function PorudzbinaPage({ params }: { params: Promise<{ id:
             ) : null}
             {order.needs_vp ? <Badge variant="warning">Nedostaje VP</Badge> : null}
             {order.invoice_id ? <Badge variant="info">Fakturisana</Badge> : null}
+            {riskyHistory.length > 0 ? <Badge variant="danger">Rizičan kupac</Badge> : null}
           </div>
           {order.ordered_at ? (
             <div className="text-ink-soft text-sm">
@@ -92,6 +95,31 @@ export default async function PorudzbinaPage({ params }: { params: Promise<{ id:
             </div>
           </div>
           <ResolveReviewButton orderId={order.id} />
+        </div>
+      ) : null}
+
+      {riskyHistory.length > 0 ? (
+        <div className="bg-danger-soft text-danger mb-6 flex items-start gap-2.5 rounded-lg px-4 py-3 text-sm">
+          <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+          <div>
+            <p className="font-semibold">Rizičan kupac</p>
+            <p>
+              Ranije otkazao/vratio {riskyHistory.length} {porudzbinePlural(riskyHistory.length)}{" "}
+              (poklapanje po telefonu ili e-mailu):
+            </p>
+            <ul className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1">
+              {riskyHistory.map((h) => (
+                <li key={h.id}>
+                  <Link href={`/porudzbine/${h.id}`} className="num font-medium underline">
+                    {h.woo_order_id != null ? `#${h.woo_order_id}` : "porudžbina"}
+                  </Link>
+                  {h.ordered_at ? (
+                    <span className="text-danger/80 num"> · {datum(h.ordered_at)}</span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
       ) : null}
 
