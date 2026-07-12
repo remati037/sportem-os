@@ -18,7 +18,7 @@ export function Sidebar({ profile }: { profile: Profile }) {
   const items = navForRole(profile.role);
 
   return (
-    <aside className="border-border bg-surface hidden w-60 shrink-0 flex-col border-r md:flex">
+    <aside className="border-border bg-surface sticky top-0 hidden h-dvh w-60 shrink-0 flex-col self-start overflow-y-auto border-r md:flex">
       <div className="border-border flex flex-col gap-1 border-b px-5 py-5">
         <div className="eyebrow">Sportem</div>
         <Badge variant="info" className="w-fit">
