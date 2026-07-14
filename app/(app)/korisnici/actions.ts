@@ -153,11 +153,12 @@ export async function updateUser(_prev: ActionState, formData: FormData): Promis
     };
   }
 
-  // Profil: ime i rola.
+  // Profil: ime i rola. Upsert (ne update) jer neki auth korisnici možda nemaju
+  // `profiles` red (npr. pozivnica čiji upis role nije prošao) — update bi tada
+  // pogodio 0 redova bez greške i tiho ne bi sačuvao ništa.
   const { error: profileError } = await admin
     .from("profiles")
-    .update({ full_name, role })
-    .eq("id", userId);
+    .upsert({ id: userId, full_name, role }, { onConflict: "id" });
 
   if (profileError) {
     return { error: "Izmena profila nije uspela.", success: null };
