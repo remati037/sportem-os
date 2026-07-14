@@ -28,8 +28,9 @@ import {
 /*
  * Filter/pretraga porudžbina — URL-driven (searchParams su izvor istine, server
  * refiltrira). Kompaktno: uvek vidljivi su polje za pretragu + izbor atributa;
- * sekundarni filteri su u bottom-sheet panelu koji se primenjuje dugmetom
- * „Primeni filtere" (staging), pa ne zauzimaju prostor na telefonu.
+ * sekundarni filteri su u panelu koji se primenjuje dugmetom „Primeni filtere"
+ * (staging), pa ne zauzimaju prostor na telefonu. Panel izleti sa dna na
+ * telefonu, a kao drawer sa desne ivice na desktopu (md+).
  */
 
 const ALL = "all";
@@ -174,7 +175,10 @@ export function OrdersFilterBar({ statuses }: { statuses: OrderStatusRow[] }) {
           </Button>
         </SheetTrigger>
 
-        <SheetContent side="bottom" className="max-h-[85vh] gap-0 rounded-t-2xl">
+        <SheetContent
+          side="responsive"
+          className="max-h-[85vh] gap-0 rounded-t-2xl md:max-h-none md:rounded-t-none"
+        >
           <SheetHeader className="pb-4">
             <SheetTitle>Filteri</SheetTitle>
             <SheetDescription>Izaberi filtere pa klikni „Primeni filtere“.</SheetDescription>

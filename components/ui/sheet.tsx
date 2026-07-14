@@ -46,6 +46,10 @@ const sideClasses = {
   left: "inset-y-0 left-0 h-full w-3/4 max-w-sm border-r data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left",
   right:
     "inset-y-0 right-0 h-full w-3/4 max-w-sm border-l data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right",
+  // Telefon (< md): izleti sa dna. Desktop (md+): drawer sa desne ivice.
+  responsive:
+    "inset-x-0 bottom-0 border-t pb-[calc(1rem+env(safe-area-inset-bottom))] rounded-t-2xl data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom " +
+    "md:inset-x-auto md:inset-y-0 md:right-0 md:h-full md:w-3/4 md:max-w-md md:rounded-t-none md:border-t-0 md:border-l md:pb-4 md:[--tw-enter-translate-y:0] md:[--tw-exit-translate-y:0] md:data-[state=closed]:slide-out-to-right md:data-[state=open]:slide-in-from-right",
 } as const;
 
 function SheetContent({
