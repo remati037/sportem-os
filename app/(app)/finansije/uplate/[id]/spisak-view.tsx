@@ -29,14 +29,8 @@ export function SpisakView({
   const { byOrder, byArticle, totals } = spisak;
 
   function buildText(): string {
-    const lines: string[] = [`Spisak za druga — uplata ${payoutDate}`, ""];
-    lines.push("ZBIRNO PO ARTIKLU:");
+    const lines: string[] = [`Uplata ${payoutDate}`, ""];
     for (const a of byArticle) lines.push(`${a.product_name} x${a.quantity}`);
-    lines.push("", "PO PORUDŽBINI:");
-    for (const o of byOrder) {
-      lines.push(`#${o.woo_order_id ?? "—"} — ${o.ship_name ?? "—"}`);
-      for (const it of o.items) lines.push(`  ${it.product_name} x${it.quantity}`);
-    }
     lines.push(
       "",
       `MP ukupno: ${rsd(totals.mp)}`,
@@ -67,17 +61,6 @@ export function SpisakView({
     const articleRows = byArticle
       .map((a) => `<tr><td>${esc(a.product_name)}</td><td class="q">${a.quantity}</td></tr>`)
       .join("");
-    const orderBlocks = byOrder
-      .map(
-        (o) =>
-          `<h3>#${o.woo_order_id ?? "—"} — ${esc(o.ship_name ?? "—")}</h3><table>${o.items
-            .map(
-              (it) =>
-                `<tr><td>${esc(it.product_name)}</td><td class="q">${it.quantity}</td></tr>`,
-            )
-            .join("")}</table>`,
-      )
-      .join("");
     const totalsRows = [
       ["MP ukupno", rsd(totals.mp)],
       ["VP ukupno", rsd(totals.vp)],
@@ -87,11 +70,10 @@ export function SpisakView({
       .map(([label, value]) => `<tr><td>${esc(label)}</td><td class="v">${esc(value)}</td></tr>`)
       .join("");
     win.document.write(
-      `<!doctype html><html lang="sr"><head><meta charset="utf-8"><title>Spisak — uplata ${esc(payoutDate)}</title>` +
-        `<style>body{font-family:system-ui,sans-serif;margin:24px;color:#111}h1{font-size:18px}h2{font-size:14px;margin-top:20px}h3{font-size:13px;margin:14px 0 4px}table{border-collapse:collapse;width:100%;margin-bottom:8px}td{padding:2px 6px;border-bottom:1px solid #ddd;font-size:12px}td.q{width:40px;text-align:right;font-weight:600}table.totals{max-width:260px}table.totals td.v{text-align:right;font-weight:600}</style></head><body>` +
-        `<h1>Spisak za druga — uplata ${esc(payoutDate)}</h1>` +
-        `<h2>Zbirno po artiklu</h2><table>${articleRows}</table>` +
-        `<h2>Po porudžbini</h2>${orderBlocks}` +
+      `<!doctype html><html lang="sr"><head><meta charset="utf-8"><title>Uplata ${esc(payoutDate)}</title>` +
+        `<style>body{font-family:system-ui,sans-serif;margin:24px;color:#111}h1{font-size:18px}h2{font-size:14px;margin-top:20px}table{border-collapse:collapse;width:100%;margin-bottom:8px}td{padding:2px 6px;border-bottom:1px solid #ddd;font-size:12px}td.q{width:40px;text-align:right;font-weight:600}table.totals{max-width:260px}table.totals td.v{text-align:right;font-weight:600}</style></head><body>` +
+        `<h1>Uplata ${esc(payoutDate)}</h1>` +
+        `<table>${articleRows}</table>` +
         `<h2>Zbir</h2><table class="totals">${totalsRows}</table>` +
         `</body></html>`,
     );
