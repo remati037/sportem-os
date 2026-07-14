@@ -21,7 +21,7 @@ export const dynamic = "force-dynamic";
 
 /*
  * Detalj uplate (Korak 1.6a): iznos, datumi, vezane porudžbine, Σ COD + razlika,
- * i spisak za druga (po porudžbini + zbirno po artiklu, kopiraj/štampa).
+ * i spisak uplate (po porudžbini + zbirno po artiklu, kopiraj/štampa).
  */
 export default async function UplataPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -120,7 +120,7 @@ export default async function UplataPage({ params }: { params: Promise<{ id: str
         </Table>
       </div>
 
-      {/* Spisak za druga */}
+      {/* Spisak uplate */}
       <SpisakView spisak={spisak} payoutDate={datum(payout.payout_date)} />
     </main>
   );

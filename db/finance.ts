@@ -161,7 +161,7 @@ export async function getPayoutDetail(id: string): Promise<PayoutDetail | null> 
   };
 }
 
-/* ── Spisak za druga (po uplati) — 1.6a ──────────────────────────────────── */
+/* ── Spisak uplate (po uplati) — 1.6a ────────────────────────────────────── */
 
 export type SpisakArticleRow = { sku: string; product_name: string; quantity: number };
 export type SpisakOrderRow = {

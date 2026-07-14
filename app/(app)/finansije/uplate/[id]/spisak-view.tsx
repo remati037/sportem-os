@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/table";
 
 /*
- * Spisak za druga (Korak 1.6a): zbirno po artiklu (za kucanje u kasi) + razrada
+ * Spisak uplate (Korak 1.6a): zbirno po artiklu (za kucanje u kasi) + razrada
  * po porudžbini. Kopiraj (plain-text u clipboard) i Štampaj (čist prozor, bez PDF).
  */
 export function SpisakView({
@@ -85,7 +85,7 @@ export function SpisakView({
   return (
     <section>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-ink text-sm font-semibold">Spisak za druga</h2>
+        <h2 className="text-ink text-sm font-semibold">Spisak uplate</h2>
         <div className="flex gap-2">
           <Button size="sm" variant="subtle" onClick={copy}>
             <Copy /> Kopiraj
