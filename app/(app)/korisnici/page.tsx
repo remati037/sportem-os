@@ -16,6 +16,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
+import { EditUserDialog } from "./edit-user-dialog";
 import { InviteUserDialog } from "./invite-user-dialog";
 
 export const dynamic = "force-dynamic";
@@ -66,6 +67,7 @@ export default async function KorisniciPage() {
               <TableHead className="eyebrow bg-surface-2 h-9 px-4">E-mail</TableHead>
               <TableHead className="eyebrow bg-surface-2 h-9 px-4">Rola</TableHead>
               <TableHead className="eyebrow bg-surface-2 h-9 px-4">Status</TableHead>
+              <TableHead className="eyebrow bg-surface-2 h-9 px-4 text-right">Akcije</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -91,6 +93,11 @@ export default async function KorisniciPage() {
                     <Badge variant="warning">Pozvan — čeka</Badge>
                   )}
                 </TableCell>
+                <TableCell className="px-4 py-2.5 text-right">
+                  <EditUserDialog
+                    user={{ id: u.id, full_name: u.full_name, email: u.email, role: u.role }}
+                  />
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -112,12 +119,15 @@ export default async function KorisniciPage() {
                 )
               }
             />
-            <div className="mt-3">
+            <div className="mt-3 flex items-center justify-between gap-3">
               {u.role ? (
                 <Badge variant="info">{ROLE_LABEL[u.role]}</Badge>
               ) : (
                 <span className="text-ink-faint text-sm">bez role</span>
               )}
+              <EditUserDialog
+                user={{ id: u.id, full_name: u.full_name, email: u.email, role: u.role }}
+              />
             </div>
           </MobileCard>
         ))}
