@@ -169,31 +169,47 @@ export type SpisakOrderRow = {
   ship_name: string | null;
   items: SpisakArticleRow[];
 };
-export type PayoutSpisak = { byOrder: SpisakOrderRow[]; byArticle: SpisakArticleRow[] };
+/**
+ * Zbirovi za celu uplatu. Zarada (`profit`) je ZAMRZNUTA (order_profit view),
+ * nikad iz kataloga; `mp`/`vp` iz frozen order_items; `shipping` = Σ poštarina.
+ */
+export type PayoutTotals = { mp: number; vp: number; shipping: number; profit: number };
+export type PayoutSpisak = {
+  byOrder: SpisakOrderRow[];
+  byArticle: SpisakArticleRow[];
+  totals: PayoutTotals;
+};
 
 /**
  * Spisak porudžbina + artikala za jednu uplatu (drug ga kuca u kasi):
- * `byOrder` = po porudžbini, `byArticle` = zbirno po SKU-u.
+ * `byOrder` = po porudžbini, `byArticle` = zbirno po SKU-u. Uz zbirove
+ * MP/VP/Dostava/Zarada za celu uplatu (za kopiranje/štampu).
  */
 export async function getPayoutSpisak(payoutId: string): Promise<PayoutSpisak> {
   const supabase = await createClient();
   const { data } = await supabase
     .from("orders")
-    .select("woo_order_id, ship_name, order_items(sku, product_name, quantity)")
+    .select(
+      "id, woo_order_id, ship_name, shipping_charged, order_items(sku, product_name, quantity, mp_at_sale, vp_at_sale)",
+    )
     .eq("payout_id", payoutId)
     .order("woo_order_id", { ascending: true, nullsFirst: false });
 
   const rows =
     (data as unknown as {
+      id: string;
       woo_order_id: number | null;
       ship_name: string | null;
-      order_items: SpisakArticleRow[];
+      shipping_charged: number | null;
+      order_items: (SpisakArticleRow & { mp_at_sale: number; vp_at_sale: number | null })[];
     }[]) ?? [];
 
   const byOrder: SpisakOrderRow[] = rows.map((o) => ({
     woo_order_id: o.woo_order_id,
     ship_name: o.ship_name,
-    items: [...o.order_items].sort((a, b) => a.sku.localeCompare(b.sku)),
+    items: [...o.order_items]
+      .map(({ sku, product_name, quantity }) => ({ sku, product_name, quantity }))
+      .sort((a, b) => a.sku.localeCompare(b.sku)),
   }));
 
   // Zbir po SKU-u (isti artikal iz više porudžbina se sabira).
@@ -207,7 +223,23 @@ export async function getPayoutSpisak(payoutId: string): Promise<PayoutSpisak> {
   }
   const byArticle = [...map.values()].sort((a, b) => a.sku.localeCompare(b.sku));
 
-  return { byOrder, byArticle };
+  // Zbirovi za celu uplatu — MP/VP iz zamrznutih stavki, Dostava iz porudžbina,
+  // Zarada iz order_profit view-a (frozen profit_at_sale, ne mp−vp zbog needs_vp).
+  let mp = 0;
+  let vp = 0;
+  let shipping = 0;
+  for (const o of rows) {
+    shipping += o.shipping_charged ?? 0;
+    for (const it of o.order_items) {
+      mp += it.mp_at_sale * it.quantity;
+      vp += (it.vp_at_sale ?? 0) * it.quantity;
+    }
+  }
+  const profitMap = await profitByOrder(rows.map((o) => o.id));
+  let profit = 0;
+  for (const o of rows) profit += profitMap.get(o.id) ?? 0;
+
+  return { byOrder, byArticle, totals: { mp, vp, shipping, profit } };
 }
 
 /* ── Fakture (invoices) — 1.6b ───────────────────────────────────────────── */

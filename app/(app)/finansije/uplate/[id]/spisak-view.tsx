@@ -4,7 +4,7 @@ import { Copy, Printer } from "lucide-react";
 import { toast } from "sonner";
 
 import type { PayoutSpisak } from "@/db/finance";
-import { num } from "@/lib/format";
+import { num, rsd } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -26,17 +26,24 @@ export function SpisakView({
   spisak: PayoutSpisak;
   payoutDate: string;
 }) {
-  const { byOrder, byArticle } = spisak;
+  const { byOrder, byArticle, totals } = spisak;
 
   function buildText(): string {
     const lines: string[] = [`Spisak za druga — uplata ${payoutDate}`, ""];
     lines.push("ZBIRNO PO ARTIKLU:");
-    for (const a of byArticle) lines.push(`${a.quantity} × ${a.sku} — ${a.product_name}`);
+    for (const a of byArticle) lines.push(`${a.product_name} x${a.quantity}`);
     lines.push("", "PO PORUDŽBINI:");
     for (const o of byOrder) {
       lines.push(`#${o.woo_order_id ?? "—"} — ${o.ship_name ?? "—"}`);
-      for (const it of o.items) lines.push(`  ${it.quantity} × ${it.sku} — ${it.product_name}`);
+      for (const it of o.items) lines.push(`  ${it.product_name} x${it.quantity}`);
     }
+    lines.push(
+      "",
+      `MP ukupno: ${rsd(totals.mp)}`,
+      `VP ukupno: ${rsd(totals.vp)}`,
+      `Dostava: ${rsd(totals.shipping)}`,
+      `Zarada: ${rsd(totals.profit)}`,
+    );
     return lines.join("\n");
   }
 
@@ -50,7 +57,7 @@ export function SpisakView({
   }
 
   function print() {
-    const win = window.open("", "_blank", "noopener,width=800,height=900");
+    const win = window.open("", "_blank", "width=800,height=900");
     if (!win) {
       toast.error("Štampa nije uspela (blokiran pop-up).");
       return;
@@ -58,7 +65,7 @@ export function SpisakView({
     const esc = (s: string) =>
       s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]!);
     const articleRows = byArticle
-      .map((a) => `<tr><td class="q">${a.quantity}</td><td>${esc(a.sku)}</td><td>${esc(a.product_name)}</td></tr>`)
+      .map((a) => `<tr><td>${esc(a.product_name)}</td><td class="q">${a.quantity}</td></tr>`)
       .join("");
     const orderBlocks = byOrder
       .map(
@@ -66,17 +73,26 @@ export function SpisakView({
           `<h3>#${o.woo_order_id ?? "—"} — ${esc(o.ship_name ?? "—")}</h3><table>${o.items
             .map(
               (it) =>
-                `<tr><td class="q">${it.quantity}</td><td>${esc(it.sku)}</td><td>${esc(it.product_name)}</td></tr>`,
+                `<tr><td>${esc(it.product_name)}</td><td class="q">${it.quantity}</td></tr>`,
             )
             .join("")}</table>`,
       )
       .join("");
+    const totalsRows = [
+      ["MP ukupno", rsd(totals.mp)],
+      ["VP ukupno", rsd(totals.vp)],
+      ["Dostava", rsd(totals.shipping)],
+      ["Zarada", rsd(totals.profit)],
+    ]
+      .map(([label, value]) => `<tr><td>${esc(label)}</td><td class="v">${esc(value)}</td></tr>`)
+      .join("");
     win.document.write(
       `<!doctype html><html lang="sr"><head><meta charset="utf-8"><title>Spisak — uplata ${esc(payoutDate)}</title>` +
-        `<style>body{font-family:system-ui,sans-serif;margin:24px;color:#111}h1{font-size:18px}h2{font-size:14px;margin-top:20px}h3{font-size:13px;margin:14px 0 4px}table{border-collapse:collapse;width:100%;margin-bottom:8px}td{padding:2px 6px;border-bottom:1px solid #ddd;font-size:12px}td.q{width:40px;text-align:right;font-weight:600}</style></head><body>` +
+        `<style>body{font-family:system-ui,sans-serif;margin:24px;color:#111}h1{font-size:18px}h2{font-size:14px;margin-top:20px}h3{font-size:13px;margin:14px 0 4px}table{border-collapse:collapse;width:100%;margin-bottom:8px}td{padding:2px 6px;border-bottom:1px solid #ddd;font-size:12px}td.q{width:40px;text-align:right;font-weight:600}table.totals{max-width:260px}table.totals td.v{text-align:right;font-weight:600}</style></head><body>` +
         `<h1>Spisak za druga — uplata ${esc(payoutDate)}</h1>` +
         `<h2>Zbirno po artiklu</h2><table>${articleRows}</table>` +
         `<h2>Po porudžbini</h2>${orderBlocks}` +
+        `<h2>Zbir</h2><table class="totals">${totalsRows}</table>` +
         `</body></html>`,
     );
     win.document.close();
@@ -104,24 +120,30 @@ export function SpisakView({
         </p>
       ) : (
         <>
+          {/* Zbirovi za celu uplatu — MP/VP/Dostava/Zarada (zamrznute cene). */}
+          <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+            <TotalCard label="MP ukupno" value={rsd(totals.mp)} />
+            <TotalCard label="VP ukupno" value={rsd(totals.vp)} />
+            <TotalCard label="Dostava" value={rsd(totals.shipping)} />
+            <TotalCard label="Zarada" value={rsd(totals.profit)} tone="success" />
+          </div>
+
           <p className="text-ink-faint mb-1 text-xs">Zbirno po artiklu (za kasu):</p>
           <div className="border-border bg-surface shadow-soft mb-6 overflow-x-auto rounded-lg border">
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
-                  <TableHead className="eyebrow bg-surface-2 h-9 w-16 px-4 text-right">Kol.</TableHead>
-                  <TableHead className="eyebrow bg-surface-2 h-9 px-4">SKU</TableHead>
                   <TableHead className="eyebrow bg-surface-2 h-9 px-4">Artikal</TableHead>
+                  <TableHead className="eyebrow bg-surface-2 h-9 w-16 px-4 text-right">Kol.</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {byArticle.map((a) => (
                   <TableRow key={a.sku} className="border-border">
+                    <TableCell className="text-ink px-4 py-2">{a.product_name}</TableCell>
                     <TableCell className="num px-4 py-2 text-right font-semibold">
                       {num(a.quantity)}
                     </TableCell>
-                    <TableCell className="num text-ink px-4 py-2">{a.sku}</TableCell>
-                    <TableCell className="text-ink-soft px-4 py-2">{a.product_name}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -141,8 +163,7 @@ export function SpisakView({
                 <ul className="text-ink-soft space-y-0.5 text-sm">
                   {o.items.map((it) => (
                     <li key={it.sku}>
-                      <span className="num font-semibold">{it.quantity}×</span>{" "}
-                      <span className="num">{it.sku}</span> — {it.product_name}
+                      {it.product_name} <span className="num font-semibold">x{it.quantity}</span>
                     </li>
                   ))}
                 </ul>
@@ -152,5 +173,24 @@ export function SpisakView({
         </>
       )}
     </section>
+  );
+}
+
+function TotalCard({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: "success";
+}) {
+  return (
+    <div className="border-border bg-surface shadow-soft rounded-lg border px-4 py-3">
+      <div className="eyebrow">{label}</div>
+      <div className={"num mt-1 text-lg font-bold " + (tone === "success" ? "text-success" : "text-ink")}>
+        {value}
+      </div>
+    </div>
   );
 }
