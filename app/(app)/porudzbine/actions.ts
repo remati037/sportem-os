@@ -106,6 +106,25 @@ async function syncNeedsVp(orderId: string): Promise<void> {
     .eq("id", orderId);
 }
 
+/**
+ * Preračunaj `orders.goods_total` iz trenutnih stavki (Σ mp_at_sale × quantity) —
+ * ista formula kao webhook. Poziva se posle svake izmene stavki (cena/količina/
+ * brisanje/dodavanje) da vrednost robe ostane usklađena. Otkup u uplatama čita
+ * baš `goods_total`, pa nesklad kvari i finansije.
+ */
+async function recomputeGoodsTotal(orderId: string): Promise<void> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("order_items")
+    .select("mp_at_sale, quantity")
+    .eq("order_id", orderId);
+  const goodsTotal = (data ?? []).reduce(
+    (sum, i) => sum + (i.mp_at_sale ?? 0) * (i.quantity ?? 0),
+    0,
+  );
+  await supabase.from("orders").update({ goods_total: goodsTotal }).eq("id", orderId);
+}
+
 /** Izmena zamrznute MP (popust) — menja SAMO ovu stavku, katalog netaknut. */
 export async function updateItemPrice(
   _prev: OrderActionState,
@@ -129,6 +148,7 @@ export async function updateItemPrice(
     .eq("id", parsed.data.item_id);
   if (error) return { error: "Izmena cene nije uspela." };
 
+  await recomputeGoodsTotal(target.orderId);
   revalidateOrder();
   return { error: null, success: "Cena stavke izmenjena." };
 }
@@ -155,6 +175,7 @@ export async function updateItemQuantity(
     .eq("id", parsed.data.item_id);
   if (error) return { error: "Izmena količine nije uspela." };
 
+  await recomputeGoodsTotal(target.orderId);
   revalidateOrder();
   return { error: null, success: "Količina izmenjena." };
 }
@@ -199,6 +220,7 @@ export async function deleteItem(itemId: string): Promise<OrderActionState> {
   if (error) return { error: "Brisanje stavke nije uspelo." };
 
   await syncNeedsVp(target.orderId);
+  await recomputeGoodsTotal(target.orderId);
   revalidateOrder();
   return { error: null, success: "Stavka obrisana." };
 }
@@ -241,6 +263,7 @@ export async function addItemFromCatalog(
   if (error) return { error: "Dodavanje stavke nije uspelo." };
 
   await syncNeedsVp(parsed.data.order_id);
+  await recomputeGoodsTotal(parsed.data.order_id);
   revalidateOrder();
   return { error: null, success: "Stavka dodata." };
 }
