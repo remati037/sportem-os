@@ -101,11 +101,12 @@ export const xexpressInvoiceSchema = z.object({
   period_from: optionalIsoDate("period od"),
   period_to: optionalIsoDate("period do"),
   notes: optionalNote,
-  // Bar jedna porudžbina sa unetom osnovicom stvarne poštarine.
+  // Bar jedna porudžbina sa unetom naplaćenom + osnovicom stvarne poštarine.
   orders: z
     .array(
       z.object({
         order_id: uuid("Neispravna porudžbina."),
+        shipping_charged: nonNegInt,
         shipping_actual: nonNegInt,
       }),
     )

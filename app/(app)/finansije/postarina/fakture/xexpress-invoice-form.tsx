@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
+import { Search } from "lucide-react";
 import { toast } from "sonner";
 
 import type { XexpressCandidate, XexpressOrderLine } from "@/db/finance";
@@ -14,9 +15,9 @@ import { createXexpressInvoice, updateXexpressInvoice } from "../../actions";
 
 /*
  * Forma XExpress fakture poštarine (Admin). Odaberi porudžbine sa specifikacije,
- * unesi stvarnu poštarinu (osnovicu, bez PDV-a) po porudžbini. App dodaje 20% PDV
- * i računa zaradu/gubitak (naplaćeno kupcima vs osnovica + PDV). Radi u create i
- * edit modu (edit pred-čekira već vezane porudžbine sa njihovom osnovicom).
+ * unesi naplaćenu (kupcu) i stvarnu poštarinu (osnovicu, bez PDV-a) po porudžbini.
+ * App dodaje 20% PDV i računa zaradu/gubitak (naplaćeno vs osnovica + PDV). Radi
+ * u create i edit modu (edit pred-čekira već vezane porudžbine sa vrednostima).
  */
 
 const VAT_RATE = 20;
@@ -28,6 +29,7 @@ type SelectableOrder = {
   ordered_at: string | null;
   ship_name: string | null;
   shipping_charged: number | null;
+  shipping_actual: number | null;
 };
 
 type EditInvoice = {
@@ -38,6 +40,8 @@ type EditInvoice = {
   period_to: string | null;
   notes: string | null;
 };
+
+const toStr = (n: number | null | undefined) => (n != null ? String(n) : "");
 
 export function XexpressInvoiceForm({
   today,
@@ -63,6 +67,7 @@ export function XexpressInvoiceForm({
         ordered_at: l.ordered_at,
         ship_name: l.ship_name,
         shipping_charged: l.shipping_charged,
+        shipping_actual: l.shipping_actual,
       })),
       ...candidates,
     ],
@@ -74,14 +79,17 @@ export function XexpressInvoiceForm({
   const [periodFrom, setPeriodFrom] = useState(invoice?.period_from ?? "");
   const [periodTo, setPeriodTo] = useState(invoice?.period_to ?? "");
   const [notes, setNotes] = useState(invoice?.notes ?? "");
+  const [search, setSearch] = useState("");
 
   const [selected, setSelected] = useState<Set<string>>(
     () => new Set(linked.map((l) => l.id)),
   );
+  // Pred-popuni naplaćenu i osnovicu iz postojećih vrednosti porudžbine.
+  const [chargeds, setChargeds] = useState<Record<string, string>>(() =>
+    Object.fromEntries([...linked, ...candidates].map((o) => [o.id, toStr(o.shipping_charged)])),
+  );
   const [actuals, setActuals] = useState<Record<string, string>>(() =>
-    Object.fromEntries(
-      linked.map((l) => [l.id, l.shipping_actual != null ? String(l.shipping_actual) : ""]),
-    ),
+    Object.fromEntries([...linked, ...candidates].map((o) => [o.id, toStr(o.shipping_actual)])),
   );
 
   function toggle(id: string) {
@@ -99,18 +107,29 @@ export function XexpressInvoiceForm({
     let pdv = 0;
     for (const o of orders) {
       if (!selected.has(o.id)) continue;
-      naplaceno += o.shipping_charged ?? 0;
+      naplaceno += Number(chargeds[o.id]) || 0;
       const base = Number(actuals[o.id]) || 0;
       osnovica += base;
       pdv += pdvOf(base);
     }
     const ukupno = osnovica + pdv;
     return { naplaceno, osnovica, pdv, ukupno, rezultat: naplaceno - ukupno };
-  }, [orders, selected, actuals]);
+  }, [orders, selected, chargeds, actuals]);
+
+  const visible = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return orders;
+    return orders.filter(
+      (o) =>
+        String(o.woo_order_id ?? "").includes(q) ||
+        (o.ship_name ?? "").toLowerCase().includes(q),
+    );
+  }, [orders, search]);
 
   function submit() {
     const chosen = [...selected].map((id) => ({
       order_id: id,
+      shipping_charged: Number(chargeds[id]) || 0,
       shipping_actual: Number(actuals[id]) || 0,
     }));
     if (chosen.length === 0) {
@@ -205,69 +224,97 @@ export function XexpressInvoiceForm({
         />
       </section>
 
-      {/* Izbor porudžbina + unos osnovice */}
+      {/* Izbor porudžbina + unos poštarine */}
       <section className="border-border bg-surface shadow-soft rounded-lg border p-4">
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="eyebrow">Porudžbine sa specifikacije</h2>
           <span className="text-ink-faint text-xs">
-            Izabrano: <span className="num">{num(selected.size)}</span>
+            Izabrano: <span className="num">{num(selected.size)}</span> · Ukupno{" "}
+            <span className="num">{num(orders.length)}</span>
           </span>
         </div>
+
+        <div className="relative mb-3">
+          <Search className="text-ink-faint pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
+          <Input
+            className="pl-9"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Pretraga po broju porudžbine ili kupcu…"
+          />
+        </div>
+
         {orders.length === 0 ? (
           <p className="text-ink-soft py-4 text-sm">
-            Nema XExpress porudžbina sa unetom naplaćenom poštarinom koje već nisu na nekoj fakturi.
+            Nema dostavljenih XExpress porudžbina koje već nisu na nekoj fakturi.
           </p>
         ) : (
-          <div className="border-border divide-border max-h-[28rem] divide-y overflow-y-auto rounded-lg border">
-            {orders.map((o) => {
-              const isSel = selected.has(o.id);
-              const base = Number(actuals[o.id]) || 0;
-              return (
-                <div
-                  key={o.id}
-                  className={
-                    "flex flex-wrap items-center gap-3 px-3 py-2.5 " +
-                    (isSel ? "bg-green-soft" : "")
-                  }
-                >
-                  <input
-                    type="checkbox"
-                    className="accent-green size-4 cursor-pointer"
-                    checked={isSel}
-                    onChange={() => toggle(o.id)}
-                  />
-                  <span className="num text-ink w-16 font-medium">
-                    {o.woo_order_id != null ? `#${o.woo_order_id}` : "—"}
-                  </span>
-                  <span className="text-ink-soft min-w-0 flex-1 truncate text-sm">
-                    {o.ship_name ?? "—"}
-                  </span>
-                  <span className="num text-ink-faint hidden text-xs sm:inline">
-                    {o.ordered_at ? datum(o.ordered_at) : "—"}
-                  </span>
-                  <span className="num text-ink-soft text-xs">
-                    napl. {rsd(o.shipping_charged ?? 0)}
-                  </span>
-                  <div className="flex items-center gap-1.5">
-                    <Input
-                      type="number"
-                      inputMode="numeric"
-                      min={0}
-                      className="num h-8 w-24 text-right"
-                      value={actuals[o.id] ?? ""}
-                      onChange={(e) =>
-                        setActuals((prev) => ({ ...prev, [o.id]: e.target.value }))
-                      }
-                      placeholder="osnovica"
-                      disabled={!isSel}
-                    />
-                    <span className="text-ink-faint w-20 text-right text-xs">
-                      +PDV {rsd(pdvOf(base))}
-                    </span>
+          <div className="border-border divide-border max-h-128 divide-y overflow-y-auto rounded-lg border">
+            {visible.length === 0 ? (
+              <p className="text-ink-soft px-4 py-6 text-sm">Nema rezultata za pretragu.</p>
+            ) : (
+              visible.map((o) => {
+                const isSel = selected.has(o.id);
+                const base = Number(actuals[o.id]) || 0;
+                return (
+                  <div
+                    key={o.id}
+                    className={"px-3 py-2.5 " + (isSel ? "bg-green-soft" : "")}
+                  >
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="checkbox"
+                        className="accent-green size-4 cursor-pointer"
+                        checked={isSel}
+                        onChange={() => toggle(o.id)}
+                      />
+                      <span className="num text-ink w-16 font-medium">
+                        {o.woo_order_id != null ? `#${o.woo_order_id}` : "—"}
+                      </span>
+                      <span className="text-ink-soft min-w-0 flex-1 truncate text-sm">
+                        {o.ship_name ?? "—"}
+                      </span>
+                      <span className="num text-ink-faint hidden text-xs sm:inline">
+                        {o.ordered_at ? datum(o.ordered_at) : "—"}
+                      </span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 pl-7">
+                      <label className="flex items-center gap-1.5">
+                        <span className="text-ink-faint text-xs">Naplaćeno</span>
+                        <Input
+                          type="number"
+                          inputMode="numeric"
+                          min={0}
+                          className="num h-8 w-24 text-right"
+                          value={chargeds[o.id] ?? ""}
+                          onChange={(e) =>
+                            setChargeds((prev) => ({ ...prev, [o.id]: e.target.value }))
+                          }
+                          placeholder="0"
+                          disabled={!isSel}
+                        />
+                      </label>
+                      <label className="flex items-center gap-1.5">
+                        <span className="text-ink-faint text-xs">Osnovica</span>
+                        <Input
+                          type="number"
+                          inputMode="numeric"
+                          min={0}
+                          className="num h-8 w-24 text-right"
+                          value={actuals[o.id] ?? ""}
+                          onChange={(e) =>
+                            setActuals((prev) => ({ ...prev, [o.id]: e.target.value }))
+                          }
+                          placeholder="0"
+                          disabled={!isSel}
+                        />
+                      </label>
+                      <span className="text-ink-faint text-xs">+PDV {rsd(pdvOf(base))}</span>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
         )}
       </section>

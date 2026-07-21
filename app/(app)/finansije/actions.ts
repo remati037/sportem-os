@@ -437,21 +437,18 @@ async function assertXexpressLinkable(
   const supabase = await createClient();
   const { data } = await supabase
     .from("orders")
-    .select("id, delivery_method, shipping_charged, xexpress_invoice_id")
+    .select("id, delivery_method, xexpress_invoice_id")
     .in("id", orderIds);
   const rows =
     (data as {
       id: string;
       delivery_method: string | null;
-      shipping_charged: number | null;
       xexpress_invoice_id: string | null;
     }[]) ?? [];
   if (rows.length !== orderIds.length) return "Neke porudžbine nisu pronađene.";
   for (const r of rows) {
     if (r.delivery_method !== "xexpress")
       return "Samo XExpress porudžbine mogu biti na fakturi poštarine.";
-    if (r.shipping_charged == null)
-      return "Sve porudžbine moraju imati unetu naplaćenu poštarinu.";
     if (r.xexpress_invoice_id != null && r.xexpress_invoice_id !== allowInvoiceId)
       return "Neka porudžbina je već vezana za drugu XExpress fakturu.";
   }
@@ -489,7 +486,11 @@ export async function createXexpressInvoice(
   for (const o of orders) {
     const { error } = await admin
       .from("orders")
-      .update({ shipping_actual: o.shipping_actual, xexpress_invoice_id: created.id })
+      .update({
+        shipping_charged: o.shipping_charged,
+        shipping_actual: o.shipping_actual,
+        xexpress_invoice_id: created.id,
+      })
       .eq("id", o.order_id);
     if (error) return { error: "Vezivanje porudžbina nije uspelo." };
   }
@@ -546,7 +547,11 @@ export async function updateXexpressInvoice(
   for (const o of orders) {
     const { error } = await admin
       .from("orders")
-      .update({ shipping_actual: o.shipping_actual, xexpress_invoice_id: id })
+      .update({
+        shipping_charged: o.shipping_charged,
+        shipping_actual: o.shipping_actual,
+        xexpress_invoice_id: id,
+      })
       .eq("id", o.order_id);
     if (error) return { error: "Vezivanje porudžbina nije uspelo." };
   }

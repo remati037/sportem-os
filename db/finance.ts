@@ -536,21 +536,47 @@ export type XexpressCandidate = {
   ordered_at: string | null;
   ship_name: string | null;
   shipping_charged: number | null;
+  shipping_actual: number | null;
 };
 
 /**
- * Kandidati za XExpress fakturu: xexpress + naplaćena poštarina uneta + još
- * nevezani za neku fakturu. Ručna selekcija po specifikaciji koju XExpress šalje.
+ * Granica istorije: `ordered_at` najstarije porudžbine koja je već na nekoj
+ * XExpress fakturi. Sve pre nje = pred-app istorija (stare specifikacije koje
+ * se ne unose ponovo) i ne prikazuje se kao kandidat. Prva faktura postavlja
+ * granicu; dok nema nijedne, granice nema (null).
  */
-export async function getEligibleXexpressOrders(): Promise<XexpressCandidate[]> {
+async function xexpressHistoryBoundary(): Promise<string | null> {
   const supabase = await createClient();
   const { data } = await supabase
     .from("orders")
-    .select("id, woo_order_id, ordered_at, ship_name, shipping_charged")
+    .select("ordered_at")
+    .not("xexpress_invoice_id", "is", null)
+    .not("ordered_at", "is", null)
+    .order("ordered_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  return (data as { ordered_at: string | null } | null)?.ordered_at ?? null;
+}
+
+/**
+ * Kandidati za XExpress fakturu: xexpress + Isporučeno + još nevezani za neku
+ * fakturu, novije od granice istorije (v. `xexpressHistoryBoundary`). Ručna
+ * selekcija po specifikaciji koju XExpress šalje. Najnovije prvo.
+ */
+export async function getEligibleXexpressOrders(): Promise<XexpressCandidate[]> {
+  const delivered = await deliveredStatusId();
+  if (!delivered) return [];
+  const boundary = await xexpressHistoryBoundary();
+
+  const supabase = await createClient();
+  let query = supabase
+    .from("orders")
+    .select("id, woo_order_id, ordered_at, ship_name, shipping_charged, shipping_actual")
     .eq("delivery_method", "xexpress")
-    .not("shipping_charged", "is", null)
-    .is("xexpress_invoice_id", null)
-    .order("ordered_at", { ascending: true });
+    .eq("status_id", delivered)
+    .is("xexpress_invoice_id", null);
+  if (boundary) query = query.gte("ordered_at", boundary);
+  const { data } = await query.order("ordered_at", { ascending: false });
   return (data as XexpressCandidate[]) ?? [];
 }
 
