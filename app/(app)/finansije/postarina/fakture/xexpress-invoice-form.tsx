@@ -246,7 +246,7 @@ export function XexpressInvoiceForm({
 
         {orders.length === 0 ? (
           <p className="text-ink-soft py-4 text-sm">
-            Nema dostavljenih XExpress porudžbina koje već nisu na nekoj fakturi.
+            Nema isporučenih ili vraćenih XExpress porudžbina koje već nisu na nekoj fakturi.
           </p>
         ) : (
           <div className="border-border divide-border max-h-128 divide-y overflow-y-auto rounded-lg border">

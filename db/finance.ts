@@ -559,13 +559,27 @@ async function xexpressHistoryBoundary(): Promise<string | null> {
 }
 
 /**
- * Kandidati za XExpress fakturu: xexpress + Isporučeno + još nevezani za neku
- * fakturu, novije od granice istorije (v. `xexpressHistoryBoundary`). Ručna
+ * id-jevi statusa čije porudžbine ulaze u XExpress fakturu poštarine:
+ * „Isporučeno" i „Vraćeno" (vraćene su takođe slate → plaća se poštarina).
+ * „Otkazano" NE (nije poslato). Lookup po imenu, nikad hardkodovan UUID.
+ */
+async function eligibleXexpressStatusIds(): Promise<string[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("order_statuses")
+    .select("id")
+    .in("name", [APP_STATUS.delivered, APP_STATUS.returned]);
+  return ((data as { id: string }[]) ?? []).map((r) => r.id);
+}
+
+/**
+ * Kandidati za XExpress fakturu: xexpress + Isporučeno/Vraćeno + još nevezani za
+ * neku fakturu, novije od granice istorije (v. `xexpressHistoryBoundary`). Ručna
  * selekcija po specifikaciji koju XExpress šalje. Najnovije prvo.
  */
 export async function getEligibleXexpressOrders(): Promise<XexpressCandidate[]> {
-  const delivered = await deliveredStatusId();
-  if (!delivered) return [];
+  const statusIds = await eligibleXexpressStatusIds();
+  if (statusIds.length === 0) return [];
   const boundary = await xexpressHistoryBoundary();
 
   const supabase = await createClient();
@@ -573,7 +587,7 @@ export async function getEligibleXexpressOrders(): Promise<XexpressCandidate[]> 
     .from("orders")
     .select("id, woo_order_id, ordered_at, ship_name, shipping_charged, shipping_actual")
     .eq("delivery_method", "xexpress")
-    .eq("status_id", delivered)
+    .in("status_id", statusIds)
     .is("xexpress_invoice_id", null);
   if (boundary) query = query.gte("ordered_at", boundary);
   const { data } = await query.order("ordered_at", { ascending: false });
