@@ -6,6 +6,7 @@ import { z } from "zod";
 import { firstZodError } from "@/lib/actions";
 import { requireRole } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { previousWorkingDay } from "@/lib/date-belgrade";
 import { APP_STATUS } from "@/lib/woo";
 import { getSaldoPostarine } from "@/db/finance";
@@ -15,6 +16,8 @@ import {
   issueInvoiceSchema,
   markInvoicePaidSchema,
   settlePostageSchema,
+  xexpressInvoiceSchema,
+  updateXexpressInvoiceSchema,
 } from "@/lib/validation/finance";
 
 /*
@@ -410,4 +413,165 @@ export async function settlePostage(input: SettlePostageInput): Promise<FinanceA
   revalidatePath("/finansije");
   revalidatePath("/finansije/postarina");
   return { error: null, success: "Poravnanje poštarine sačuvano." };
+}
+
+/* ── XExpress fakture poštarine ──────────────────────────────────────────── */
+
+function revalidateXexpress(id?: string) {
+  revalidatePath("/finansije");
+  revalidatePath("/finansije/postarina");
+  revalidatePath("/porudzbine");
+  if (id) revalidatePath(`/finansije/postarina/fakture/${id}`);
+}
+
+/**
+ * Provera da su porudžbine i dalje eligible za XExpress fakturu: xexpress +
+ * uneta naplaćena poštarina + nevezane (ili vezane baš za `allowInvoiceId` kod
+ * izmene). Guard protiv stale klijent liste / konkurentnog vezivanja.
+ */
+async function assertXexpressLinkable(
+  orderIds: string[],
+  allowInvoiceId?: string,
+): Promise<string | null> {
+  if (orderIds.length === 0) return "Izaberite bar jednu porudžbinu.";
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("orders")
+    .select("id, delivery_method, shipping_charged, xexpress_invoice_id")
+    .in("id", orderIds);
+  const rows =
+    (data as {
+      id: string;
+      delivery_method: string | null;
+      shipping_charged: number | null;
+      xexpress_invoice_id: string | null;
+    }[]) ?? [];
+  if (rows.length !== orderIds.length) return "Neke porudžbine nisu pronađene.";
+  for (const r of rows) {
+    if (r.delivery_method !== "xexpress")
+      return "Samo XExpress porudžbine mogu biti na fakturi poštarine.";
+    if (r.shipping_charged == null)
+      return "Sve porudžbine moraju imati unetu naplaćenu poštarinu.";
+    if (r.xexpress_invoice_id != null && r.xexpress_invoice_id !== allowInvoiceId)
+      return "Neka porudžbina je već vezana za drugu XExpress fakturu.";
+  }
+  return null;
+}
+
+/**
+ * Nova XExpress faktura poštarine (Admin). Vezuje izabrane porudžbine i upisuje
+ * osnovicu stvarne poštarine u `orders.shipping_actual` (PDV se dodaje u
+ * prikazu). Prolazna stavka — ne dira snapshot cene ni neto profit.
+ */
+export async function createXexpressInvoice(
+  input: z.infer<typeof xexpressInvoiceSchema>,
+): Promise<FinanceActionState> {
+  const { userId } = await requireRole("admin");
+  const parsed = xexpressInvoiceSchema.safeParse(input);
+  if (!parsed.success) return { error: firstZodError(parsed.error) };
+  const { invoice_number, invoice_date, period_from, period_to, notes, orders } = parsed.data;
+
+  const err = await assertXexpressLinkable(orders.map((o) => o.order_id));
+  if (err) return { error: err };
+
+  const supabase = await createClient();
+  const { data: created, error: insErr } = await supabase
+    .from("xexpress_invoices")
+    .insert({ invoice_number, invoice_date, period_from, period_to, notes, created_by: userId })
+    .select("id")
+    .single();
+  if (insErr || !created) {
+    if (insErr?.code === "23505") return { error: "Broj fakture već postoji." };
+    return { error: "Čuvanje XExpress fakture nije uspelo." };
+  }
+
+  const admin = createAdminClient();
+  for (const o of orders) {
+    const { error } = await admin
+      .from("orders")
+      .update({ shipping_actual: o.shipping_actual, xexpress_invoice_id: created.id })
+      .eq("id", o.order_id);
+    if (error) return { error: "Vezivanje porudžbina nije uspelo." };
+  }
+
+  revalidateXexpress(created.id);
+  return { error: null, success: "XExpress faktura sačuvana." };
+}
+
+/**
+ * Izmena XExpress fakture (Admin): header + skup porudžbina. Dodate/postojeće
+ * dobijaju novu osnovicu + link; uklonjene se odvezuju i vraćaju `shipping_actual`
+ * na null (da global saldo ne broji odvezane).
+ */
+export async function updateXexpressInvoice(
+  input: z.infer<typeof updateXexpressInvoiceSchema>,
+): Promise<FinanceActionState> {
+  await requireRole("admin");
+  const parsed = updateXexpressInvoiceSchema.safeParse(input);
+  if (!parsed.success) return { error: firstZodError(parsed.error) };
+  const { id, invoice_number, invoice_date, period_from, period_to, notes, orders } = parsed.data;
+
+  const err = await assertXexpressLinkable(
+    orders.map((o) => o.order_id),
+    id,
+  );
+  if (err) return { error: err };
+
+  const supabase = await createClient();
+  const { error: updErr } = await supabase
+    .from("xexpress_invoices")
+    .update({ invoice_number, invoice_date, period_from, period_to, notes })
+    .eq("id", id);
+  if (updErr) {
+    if (updErr.code === "23505") return { error: "Broj fakture već postoji." };
+    return { error: "Izmena XExpress fakture nije uspela." };
+  }
+
+  const admin = createAdminClient();
+  const keepIds = orders.map((o) => o.order_id);
+  const { data: currentRows } = await admin
+    .from("orders")
+    .select("id")
+    .eq("xexpress_invoice_id", id);
+  const removed = ((currentRows as { id: string }[]) ?? [])
+    .map((r) => r.id)
+    .filter((oid) => !keepIds.includes(oid));
+  if (removed.length > 0) {
+    const { error } = await admin
+      .from("orders")
+      .update({ shipping_actual: null, xexpress_invoice_id: null })
+      .in("id", removed);
+    if (error) return { error: "Odvezivanje porudžbina nije uspelo." };
+  }
+  for (const o of orders) {
+    const { error } = await admin
+      .from("orders")
+      .update({ shipping_actual: o.shipping_actual, xexpress_invoice_id: id })
+      .eq("id", o.order_id);
+    if (error) return { error: "Vezivanje porudžbina nije uspelo." };
+  }
+
+  revalidateXexpress(id);
+  return { error: null, success: "XExpress faktura izmenjena." };
+}
+
+/**
+ * Brisanje XExpress fakture (Admin): odveže porudžbine i očisti `shipping_actual`
+ * (nazad na null), pa obriše fakturu. Global saldo se vraća na stanje pre.
+ */
+export async function deleteXexpressInvoice(id: string): Promise<FinanceActionState> {
+  await requireRole("admin");
+  const admin = createAdminClient();
+  const { error: clrErr } = await admin
+    .from("orders")
+    .update({ shipping_actual: null, xexpress_invoice_id: null })
+    .eq("xexpress_invoice_id", id);
+  if (clrErr) return { error: "Odvezivanje porudžbina nije uspelo." };
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("xexpress_invoices").delete().eq("id", id);
+  if (error) return { error: "Brisanje XExpress fakture nije uspelo." };
+
+  revalidateXexpress();
+  return { error: null, success: "XExpress faktura obrisana." };
 }

@@ -1,8 +1,14 @@
-import { Truck } from "lucide-react";
+import Link from "next/link";
+import { Plus, Truck } from "lucide-react";
 
 import { requireRole } from "@/lib/auth";
-import { getSaldoPostarine, listPostageSettlements } from "@/db/finance";
-import { rsd, datum } from "@/lib/format";
+import {
+  getSaldoPostarine,
+  listPostageSettlements,
+  listXexpressInvoices,
+} from "@/db/finance";
+import { rsd, num, datum } from "@/lib/format";
+import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/patterns/empty-state";
 import {
   MobileCard,
@@ -37,9 +43,10 @@ export default async function PostarinaPage() {
   const { profile } = await requireRole("admin", "manager");
   const isAdmin = profile.role === "admin";
 
-  const [saldo, settlements] = await Promise.all([
+  const [saldo, settlements, xInvoices] = await Promise.all([
     getSaldoPostarine(),
     listPostageSettlements(),
+    listXexpressInvoices(),
   ]);
 
   return (
@@ -85,6 +92,122 @@ export default async function PostarinaPage() {
           </div>
         </div>
       </div>
+
+      {/* XExpress fakture */}
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="text-ink text-sm font-semibold">XExpress fakture</h2>
+          <p className="text-ink-faint text-xs">
+            Stvarna poštarina po specifikaciji (osnovica) + 20% PDV vs naplaćeno kupcima.
+          </p>
+        </div>
+        {isAdmin ? (
+          <Button asChild size="sm">
+            <Link href="/finansije/postarina/fakture/nova">
+              <Plus /> Nova XExpress faktura
+            </Link>
+          </Button>
+        ) : null}
+      </div>
+
+      {xInvoices.length === 0 ? (
+        <div className="mb-8">
+          <EmptyState
+            icon={<Truck />}
+            title="Još nema XExpress faktura"
+            description="Kad XExpress pošalje fakturu sa specifikacijom, dodaj je i odaberi porudžbine da vidiš zaradu/gubitak na poštarini."
+          />
+        </div>
+      ) : (
+        <div className="mb-8">
+          {/* Desktop tabela */}
+          <div className="border-border bg-surface shadow-soft hidden overflow-x-auto rounded-lg border md:block">
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="eyebrow bg-surface-2 h-9 px-4">Broj</TableHead>
+                  <TableHead className="eyebrow bg-surface-2 h-9 px-4">Datum</TableHead>
+                  <TableHead className="eyebrow bg-surface-2 h-9 px-4 text-right">Porudžbina</TableHead>
+                  <TableHead className="eyebrow bg-surface-2 h-9 px-4 text-right">Naplaćeno</TableHead>
+                  <TableHead className="eyebrow bg-surface-2 h-9 px-4 text-right">Plaćeno (sa PDV)</TableHead>
+                  <TableHead className="eyebrow bg-surface-2 h-9 px-4 text-right">Rezultat</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {xInvoices.map((inv) => (
+                  <TableRow key={inv.id} className="border-border">
+                    <TableCell className="text-ink px-4 py-2.5 font-medium">
+                      <Link
+                        href={`/finansije/postarina/fakture/${inv.id}`}
+                        className="hover:text-green underline-offset-2 hover:underline"
+                      >
+                        {inv.invoice_number ?? "(bez broja)"}
+                      </Link>
+                    </TableCell>
+                    <TableCell className="num text-ink-soft px-4 py-2.5">
+                      {datum(inv.invoice_date)}
+                    </TableCell>
+                    <TableCell className="num text-ink-soft px-4 py-2.5 text-right">
+                      {num(inv.order_count)}
+                    </TableCell>
+                    <TableCell className="num text-ink px-4 py-2.5 text-right">
+                      {rsd(inv.naplaceno)}
+                    </TableCell>
+                    <TableCell className="num text-ink px-4 py-2.5 text-right">
+                      {rsd(inv.ukupno)}
+                    </TableCell>
+                    <TableCell
+                      className={
+                        "num px-4 py-2.5 text-right font-semibold " +
+                        (inv.rezultat >= 0 ? "text-success" : "text-warning")
+                      }
+                    >
+                      {signed(inv.rezultat)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+
+          {/* Mobilne kartice */}
+          <MobileCardList>
+            {xInvoices.map((inv) => (
+              <MobileCard key={inv.id} ariaLabel={`Faktura ${inv.invoice_number ?? ""}`}>
+                <Link href={`/finansije/postarina/fakture/${inv.id}`} className="block">
+                  <MobileCardHeader
+                    title={<span>{inv.invoice_number ?? "(bez broja)"}</span>}
+                    trailing={
+                      <span
+                        className={
+                          "num font-semibold " +
+                          (inv.rezultat >= 0 ? "text-success" : "text-warning")
+                        }
+                      >
+                        {signed(inv.rezultat)}
+                      </span>
+                    }
+                  />
+                  <div className="mt-3 space-y-1.5">
+                    <MobileCardField label="Datum">
+                      <span className="num">{datum(inv.invoice_date)}</span>
+                    </MobileCardField>
+                    <MobileCardField label="Porudžbina">
+                      <span className="num">{num(inv.order_count)}</span>
+                    </MobileCardField>
+                    <MobileCardField label="Naplaćeno">
+                      <span className="num">{rsd(inv.naplaceno)}</span>
+                    </MobileCardField>
+                    <MobileCardField label="Plaćeno (sa PDV)">
+                      <span className="num">{rsd(inv.ukupno)}</span>
+                    </MobileCardField>
+                  </div>
+                </Link>
+              </MobileCard>
+            ))}
+          </MobileCardList>
+        </div>
+      )}
 
       {/* Istorija poravnanja */}
       <h2 className="text-ink mb-2 text-sm font-semibold">Istorija poravnanja</h2>

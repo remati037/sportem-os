@@ -73,3 +73,46 @@ export const settlePostageSchema = z.object({
     .int("Iznos mora biti ceo broj (RSD)."),
   notes: optionalNote,
 });
+
+/* ── XExpress fakture poštarine ──────────────────────────────────────────── */
+
+/** Opcion datum „YYYY-MM-DD" — prazan string → null. */
+const optionalIsoDate = (label: string) =>
+  z
+    .union([z.literal(""), isoDate(label)])
+    .optional()
+    .transform((v) => (v ? v : null));
+
+/** Osnovica poštarine (bez PDV-a) po porudžbini — ceo broj RSD, ≥ 0. */
+const nonNegInt = z.coerce
+  .number({ message: "Unesite iznos." })
+  .int("Iznos mora biti ceo broj (RSD).")
+  .min(0, "Iznos ne može biti negativan.");
+
+export const xexpressInvoiceSchema = z.object({
+  // Broj XExpress fakture je opcion (jedinstvenost čuva parcijalni UNIQUE indeks).
+  invoice_number: z
+    .string()
+    .trim()
+    .max(100, "Broj fakture je predugačak.")
+    .optional()
+    .transform((v) => (v ? v : null)),
+  invoice_date: isoDate("datum fakture"),
+  period_from: optionalIsoDate("period od"),
+  period_to: optionalIsoDate("period do"),
+  notes: optionalNote,
+  // Bar jedna porudžbina sa unetom osnovicom stvarne poštarine.
+  orders: z
+    .array(
+      z.object({
+        order_id: uuid("Neispravna porudžbina."),
+        shipping_actual: nonNegInt,
+      }),
+    )
+    .min(1, "Izaberite bar jednu porudžbinu.")
+    .max(1000, "Previše porudžbina."),
+});
+
+export const updateXexpressInvoiceSchema = xexpressInvoiceSchema.extend({
+  id: uuid("Neispravna faktura."),
+});

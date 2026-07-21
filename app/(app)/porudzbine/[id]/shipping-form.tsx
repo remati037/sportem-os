@@ -65,7 +65,7 @@ export function ShippingForm({ orderId, values }: { orderId: string; values: Shi
             placeholder="—"
           />
         </Field>
-        <Field label="Stvarna poštarina (RSD)">
+        <Field label="Stvarna poštarina — osnovica, bez PDV-a (RSD)">
           <Input
             type="number"
             inputMode="numeric"

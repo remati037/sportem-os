@@ -41,6 +41,15 @@ function otkupOf(goods_total: number | null, shipping_charged: number | null): n
 }
 
 /**
+ * Stvarna poštarina koju Sportem plaća XExpress-u = osnovica + PDV. Osnovica
+ * (shipping_actual) se unosi iz specifikacije bez PDV-a; XExpress dodaje 20%.
+ * Round po porudžbini da global saldo i P&L fakture tačno rekonsiluju.
+ */
+export function withPdv(base: number, rate = 20): number {
+  return base + Math.round((base * rate) / 100);
+}
+
+/**
  * Sve XExpress porudžbine isporučene ali NEuplaćene i nevezane za uplatu —
  * kandidati za novu uplatu. UI pred-čekira one isporučene na T−1 radni dan.
  */
@@ -439,14 +448,15 @@ export async function getInvoiceDetail(id: string): Promise<InvoiceDetail | null
 /* ── Saldo poštarine — 1.6c ──────────────────────────────────────────────── */
 
 export type PostageBalance = {
-  gross: number; // Σ(shipping_charged − shipping_actual), oba NOT NULL
+  gross: number; // Σ(shipping_charged − withPdv(shipping_actual)), oba NOT NULL
   settled: number; // Σ postage_settlements.amount (sa predznakom)
   balance: number; // gross − settled (pozitivno = drug duguje Sportem-u)
 };
 
 /**
  * Saldo poštarine (prolazna stavka, NIJE profit): koliko je naplaćeno kupcima za
- * dostavu vs koliko je stvarno plaćeno kuriru, umanjeno za već poravnate iznose.
+ * dostavu vs koliko je stvarno plaćeno kuriru (osnovica + 20% PDV — kao na
+ * XExpress fakturi), umanjeno za već poravnate iznose.
  */
 export async function getSaldoPostarine(): Promise<PostageBalance> {
   const supabase = await createClient();
@@ -458,7 +468,7 @@ export async function getSaldoPostarine(): Promise<PostageBalance> {
     .not("shipping_actual", "is", null);
   const gross = (
     (shipRows as { shipping_charged: number; shipping_actual: number }[]) ?? []
-  ).reduce((sum, o) => sum + (o.shipping_charged - o.shipping_actual), 0);
+  ).reduce((sum, o) => sum + (o.shipping_charged - withPdv(o.shipping_actual)), 0);
 
   const { data: settleRows } = await supabase
     .from("postage_settlements")
@@ -488,6 +498,182 @@ export async function listPostageSettlements(): Promise<PostageSettlementRow[]> 
     .order("settled_at", { ascending: false })
     .order("created_at", { ascending: false });
   return (data as PostageSettlementRow[]) ?? [];
+}
+
+/* ── XExpress fakture poštarine ──────────────────────────────────────────── */
+
+const XEXPRESS_VAT_RATE = 20;
+
+/** P&L jedne XExpress fakture: naplaćeno kupcima vs (osnovica + PDV). */
+export type XexpressPnl = {
+  naplaceno: number; // Σ shipping_charged (naplaćeno kupcima)
+  osnovica: number; // Σ shipping_actual (stvarna poštarina, bez PDV-a)
+  pdv: number; // Σ round(shipping_actual * rate/100)
+  ukupno: number; // osnovica + pdv (plaćeno XExpress-u)
+  rezultat: number; // naplaceno − ukupno (+ zarada / − gubitak na poštarini)
+};
+
+type ShipRow = { shipping_charged: number | null; shipping_actual: number | null };
+
+/** Sabere P&L iz redova porudžbina (round PDV-a po porudžbini — kao global saldo). */
+function pnlFrom(rows: ShipRow[], rate = XEXPRESS_VAT_RATE): XexpressPnl {
+  let naplaceno = 0;
+  let osnovica = 0;
+  let pdv = 0;
+  for (const r of rows) {
+    naplaceno += r.shipping_charged ?? 0;
+    const base = r.shipping_actual ?? 0;
+    osnovica += base;
+    pdv += Math.round((base * rate) / 100);
+  }
+  const ukupno = osnovica + pdv;
+  return { naplaceno, osnovica, pdv, ukupno, rezultat: naplaceno - ukupno };
+}
+
+export type XexpressCandidate = {
+  id: string;
+  woo_order_id: number | null;
+  ordered_at: string | null;
+  ship_name: string | null;
+  shipping_charged: number | null;
+};
+
+/**
+ * Kandidati za XExpress fakturu: xexpress + naplaćena poštarina uneta + još
+ * nevezani za neku fakturu. Ručna selekcija po specifikaciji koju XExpress šalje.
+ */
+export async function getEligibleXexpressOrders(): Promise<XexpressCandidate[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("orders")
+    .select("id, woo_order_id, ordered_at, ship_name, shipping_charged")
+    .eq("delivery_method", "xexpress")
+    .not("shipping_charged", "is", null)
+    .is("xexpress_invoice_id", null)
+    .order("ordered_at", { ascending: true });
+  return (data as XexpressCandidate[]) ?? [];
+}
+
+export type XexpressInvoiceRow = XexpressPnl & {
+  id: string;
+  invoice_number: string | null;
+  invoice_date: string;
+  period_from: string | null;
+  period_to: string | null;
+  order_count: number;
+};
+
+/** Sve XExpress fakture + agregati (P&L po fakturi), najnovije prvo. */
+export async function listXexpressInvoices(): Promise<XexpressInvoiceRow[]> {
+  const supabase = await createClient();
+  const { data: invoices } = await supabase
+    .from("xexpress_invoices")
+    .select("id, invoice_number, invoice_date, period_from, period_to, vat_rate")
+    .order("invoice_date", { ascending: false })
+    .order("created_at", { ascending: false });
+  const list =
+    (invoices as {
+      id: string;
+      invoice_number: string | null;
+      invoice_date: string;
+      period_from: string | null;
+      period_to: string | null;
+      vat_rate: number;
+    }[]) ?? [];
+  if (list.length === 0) return [];
+
+  const { data: orderRows } = await supabase
+    .from("orders")
+    .select("xexpress_invoice_id, shipping_charged, shipping_actual")
+    .in(
+      "xexpress_invoice_id",
+      list.map((i) => i.id),
+    );
+  const byInvoice = new Map<string, ShipRow[]>();
+  for (const r of (orderRows as (ShipRow & { xexpress_invoice_id: string })[]) ?? []) {
+    const arr = byInvoice.get(r.xexpress_invoice_id) ?? [];
+    arr.push(r);
+    byInvoice.set(r.xexpress_invoice_id, arr);
+  }
+
+  return list.map((inv) => {
+    const rows = byInvoice.get(inv.id) ?? [];
+    return {
+      id: inv.id,
+      invoice_number: inv.invoice_number,
+      invoice_date: inv.invoice_date,
+      period_from: inv.period_from,
+      period_to: inv.period_to,
+      order_count: rows.length,
+      ...pnlFrom(rows, inv.vat_rate),
+    };
+  });
+}
+
+export type XexpressOrderLine = {
+  id: string;
+  woo_order_id: number | null;
+  ordered_at: string | null;
+  ship_name: string | null;
+  shipping_charged: number | null;
+  shipping_actual: number | null;
+  pdv: number; // PDV te porudžbine
+  ukupno: number; // osnovica + pdv te porudžbine
+  rezultat: number; // shipping_charged − ukupno
+};
+
+export type XexpressInvoiceDetail = XexpressPnl & {
+  invoice: {
+    id: string;
+    invoice_number: string | null;
+    invoice_date: string;
+    period_from: string | null;
+    period_to: string | null;
+    vat_rate: number;
+    notes: string | null;
+  };
+  orders: XexpressOrderLine[];
+  candidates: XexpressCandidate[]; // nevezane porudžbine (za izmenu — dodavanje)
+};
+
+/** Detalj XExpress fakture: header, vezane porudžbine sa P&L, + kandidati za edit. */
+export async function getXexpressInvoiceDetail(
+  id: string,
+): Promise<XexpressInvoiceDetail | null> {
+  const supabase = await createClient();
+  const { data: inv } = await supabase
+    .from("xexpress_invoices")
+    .select("id, invoice_number, invoice_date, period_from, period_to, vat_rate, notes")
+    .eq("id", id)
+    .maybeSingle();
+  if (!inv) return null;
+  const invoice = inv as XexpressInvoiceDetail["invoice"];
+
+  const { data: orderRows } = await supabase
+    .from("orders")
+    .select("id, woo_order_id, ordered_at, ship_name, shipping_charged, shipping_actual")
+    .eq("xexpress_invoice_id", id)
+    .order("ordered_at", { ascending: true });
+  const rows =
+    (orderRows as {
+      id: string;
+      woo_order_id: number | null;
+      ordered_at: string | null;
+      ship_name: string | null;
+      shipping_charged: number | null;
+      shipping_actual: number | null;
+    }[]) ?? [];
+
+  const orders: XexpressOrderLine[] = rows.map((r) => {
+    const base = r.shipping_actual ?? 0;
+    const pdv = Math.round((base * invoice.vat_rate) / 100);
+    const ukupno = base + pdv;
+    return { ...r, pdv, ukupno, rezultat: (r.shipping_charged ?? 0) - ukupno };
+  });
+
+  const candidates = await getEligibleXexpressOrders();
+
+  return { invoice, orders, candidates, ...pnlFrom(rows, invoice.vat_rate) };
 }
 
 /* ── Neto profit — 1.6c ──────────────────────────────────────────────────── */
