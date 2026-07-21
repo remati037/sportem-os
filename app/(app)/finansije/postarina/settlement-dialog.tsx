@@ -22,9 +22,10 @@ import { Label } from "@/components/ui/label";
 import { settlePostage } from "../actions";
 
 /*
- * Poravnanje salda poštarine (Korak 1.6c, Admin). Iznos je pred-popunjen
- * trenutnim saldom → „Poravnato keš" (klik snimi = saldo na 0), ali se sme
- * izmeniti. Iznos ide sa predznakom (saldo može biti negativan).
+ * Uplata poštarine (Korak 1.6c, Admin). Iznos je pred-popunjen trenutnim saldom
+ * → klik snimi = saldo na 0, ali se sme izmeniti. Iznos ide sa predznakom:
+ * plus = Simić uplaćuje Sportem-u (bili smo u plusu); minus = Sportem uplaćuje
+ * Simiću (bili smo u minusu — taj trošak Admin ručno unese u Troškove).
  */
 export function SettlementDialog({ balance }: { balance: number }) {
   const router = useRouter();
@@ -48,7 +49,7 @@ export function SettlementDialog({ balance }: { balance: number }) {
         toast.error(result.error);
         return;
       }
-      toast.success(result.success ?? "Poravnanje sačuvano.");
+      toast.success(result.success ?? "Uplata sačuvana.");
       setOpen(false);
       setNotes("");
       router.refresh();
@@ -57,6 +58,13 @@ export function SettlementDialog({ balance }: { balance: number }) {
 
   const parsed = Number(amount);
   const newBalance = Number.isFinite(parsed) ? balance - parsed : balance;
+
+  const smer =
+    balance > 0
+      ? `Simić ti uplaćuje ${rsd(balance)}.`
+      : balance < 0
+        ? `Ti uplaćuješ Simiću ${rsd(Math.abs(balance))} (dodaj ručno kao trošak).`
+        : "Saldo je na nuli — nema šta da se uplati.";
 
   return (
     <Dialog
@@ -68,21 +76,21 @@ export function SettlementDialog({ balance }: { balance: number }) {
     >
       <DialogTrigger asChild>
         <Button>
-          <Coins /> Poravnaj keš
+          <Coins /> Uplata poštarine
         </Button>
       </DialogTrigger>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Poravnanje poštarine</DialogTitle>
+          <DialogTitle>Uplata poštarine</DialogTitle>
           <DialogDescription>
-            Iznos je pred-popunjen trenutnim saldom ({rsd(balance)}) — snimi da ga svedeš na nulu,
-            ili unesi drugačiji iznos. Poravnanje je sa predznakom.
+            {smer} Iznos je pred-popunjen trenutnim saldom — snimi da ga svedeš na nulu, ili unesi
+            drugačiji iznos. Iznos je sa predznakom (plus = Simić uplaćuje, minus = uplata Simiću).
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
           <div className="space-y-1.5">
-            <Label htmlFor="settle_amount">Iznos poravnanja (RSD)</Label>
+            <Label htmlFor="settle_amount">Iznos uplate (RSD)</Label>
             <Input
               id="settle_amount"
               type="number"
@@ -93,7 +101,7 @@ export function SettlementDialog({ balance }: { balance: number }) {
           </div>
 
           <div className="border-border bg-surface-2 text-ink-soft flex items-center justify-between rounded-lg border px-4 py-2.5 text-sm">
-            <span>Saldo posle poravnanja</span>
+            <span>Saldo posle uplate</span>
             <span
               className={"num font-semibold " + (newBalance === 0 ? "text-success" : "text-warning")}
             >
@@ -107,7 +115,7 @@ export function SettlementDialog({ balance }: { balance: number }) {
               id="settle_notes"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="npr. isplaćeno drugu u kešu"
+              placeholder="npr. Simić uplatio u kešu"
             />
           </div>
         </div>
@@ -117,7 +125,7 @@ export function SettlementDialog({ balance }: { balance: number }) {
             Otkaži
           </Button>
           <Button type="button" disabled={pending || amount.trim() === ""} onClick={submit}>
-            Sačuvaj poravnanje
+            Sačuvaj uplatu
           </Button>
         </DialogFooter>
       </DialogContent>

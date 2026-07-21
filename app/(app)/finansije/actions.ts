@@ -412,7 +412,7 @@ export async function settlePostage(input: SettlePostageInput): Promise<FinanceA
 
   revalidatePath("/finansije");
   revalidatePath("/finansije/postarina");
-  return { error: null, success: "Poravnanje poštarine sačuvano." };
+  return { error: null, success: "Uplata poštarine sačuvana." };
 }
 
 /* ── XExpress fakture poštarine ──────────────────────────────────────────── */

@@ -448,15 +448,17 @@ export async function getInvoiceDetail(id: string): Promise<InvoiceDetail | null
 /* ── Saldo poštarine — 1.6c ──────────────────────────────────────────────── */
 
 export type PostageBalance = {
-  gross: number; // Σ(shipping_charged − withPdv(shipping_actual)), oba NOT NULL
+  gross: number; // Σ(shipping_charged − withPdv(shipping_actual)) SAMO za porudžbine na XExpress fakturi
   settled: number; // Σ postage_settlements.amount (sa predznakom)
-  balance: number; // gross − settled (pozitivno = drug duguje Sportem-u)
+  balance: number; // gross − settled (pozitivno = Simić duguje Sportem-u)
 };
 
 /**
- * Saldo poštarine (prolazna stavka, NIJE profit): koliko je naplaćeno kupcima za
- * dostavu vs koliko je stvarno plaćeno kuriru (osnovica + 20% PDV — kao na
- * XExpress fakturi), umanjeno za već poravnate iznose.
+ * Saldo poštarine (prolazna stavka, NIJE profit) = zbir rezultata svih XExpress
+ * faktura: koliko je naplaćeno kupcima za dostavu vs koliko je stvarno plaćeno
+ * kuriru (osnovica + 20% PDV), umanjeno za već izvršene uplate. Broje se ISKLJUČIVO
+ * porudžbine vezane za neku XExpress fakturu (`xexpress_invoice_id` NOT NULL) —
+ * `shipping_actual` van fakture (ručni unos na detalju porudžbine) se ne računa.
  */
 export async function getSaldoPostarine(): Promise<PostageBalance> {
   const supabase = await createClient();
@@ -465,7 +467,8 @@ export async function getSaldoPostarine(): Promise<PostageBalance> {
     .from("orders")
     .select("shipping_charged, shipping_actual")
     .not("shipping_charged", "is", null)
-    .not("shipping_actual", "is", null);
+    .not("shipping_actual", "is", null)
+    .not("xexpress_invoice_id", "is", null);
   const gross = (
     (shipRows as { shipping_charged: number; shipping_actual: number }[]) ?? []
   ).reduce((sum, o) => sum + (o.shipping_charged - withPdv(o.shipping_actual)), 0);

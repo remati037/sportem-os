@@ -12,6 +12,7 @@ import { updateWooOrderStatus } from "@/lib/woo-client";
 import {
   addItemSchema,
   changeOrderStatusSchema,
+  changeOrdersStatusSchema,
   markCashSaleSchema,
   markOrdersShippedSchema,
   setItemVpSchema,
@@ -550,6 +551,128 @@ export async function markOrdersShipped(orderIds: string[]): Promise<OrderAction
       skipped > 0
         ? `Označeno poslato: ${shipped} (preskočeno: ${skipped}).${wooNote}`
         : `Označeno poslato: ${shipped}.${wooNote}`,
+  };
+}
+
+/**
+ * Bulk promena statusa (Admin + Menadžer) — selektovane porudžbine → izabrani
+ * status. Ogledalo pojedinačne `changeOrderStatus` u petlji: isti lifecycle
+ * timestamp-ovi (po imenu), obavezan razlog za Otkazano/Vraćeno, app→Woo push.
+ * Plaćene/fakturisane porudžbine se pri otkazivanju/vraćanju PRESKAČU (force za
+ * njih ide pojedinačno na detalju). Zamrznute cene (`order_items`) se ne diraju.
+ */
+export async function changeOrdersStatus(
+  orderIds: string[],
+  statusId: string,
+  note?: string,
+): Promise<OrderActionState> {
+  const { userId } = await requireRole("admin", "manager");
+
+  const parsed = changeOrdersStatusSchema.safeParse({
+    order_ids: orderIds,
+    status_id: statusId,
+    note: note ?? undefined,
+  });
+  if (!parsed.success) return { error: firstZodError(parsed.error) };
+
+  const supabase = createAdminClient();
+
+  const { data: target } = await supabase
+    .from("order_statuses")
+    .select("id, name")
+    .eq("id", parsed.data.status_id)
+    .maybeSingle();
+  if (!target) return { error: "Status nije pronađen." };
+
+  const cancelTarget = isCancelStatusName(target.name);
+  // Razlog otkazivanja/vraćanja je OBAVEZAN (server je izvor istine).
+  if (cancelTarget && !parsed.data.note) {
+    return { error: "Unesite razlog otkazivanja/vraćanja." };
+  }
+
+  const { data: orders } = await supabase
+    .from("orders")
+    .select(
+      "id, status_id, payment_status, invoice_id, shipped_at, delivered_at, cancelled_at, woo_order_id",
+    )
+    .in("id", parsed.data.order_ids);
+  if (!orders || orders.length === 0) return { error: "Nijedna porudžbina nije pronađena." };
+
+  const now = new Date().toISOString();
+  let changed = 0;
+  let skipped = 0;
+  let wooFailed = 0;
+
+  for (const order of orders) {
+    if (order.status_id === target.id) {
+      skipped += 1;
+      continue;
+    }
+
+    // Plaćena/fakturisana se pri otkazivanju/vraćanju NE dira u bulk-u (force ide
+    // pojedinačno na detalju — zaštita finansija).
+    if (cancelTarget) {
+      const locked = order.invoice_id !== null || order.payment_status !== "neuplaceno";
+      if (locked) {
+        skipped += 1;
+        continue;
+      }
+    }
+
+    const patch: Record<string, unknown> = {
+      status_id: target.id,
+      needs_review: false,
+      review_reason: null,
+    };
+    // Lifecycle timestamp-ovi po imenu (isti obrazac kao changeOrderStatus);
+    // prelaz unazad čisti „buduće" timestamp-ove, custom status samo status_id.
+    if (cancelTarget) {
+      patch.cancelled_at = order.cancelled_at ?? now;
+    } else if (target.name === APP_STATUS.sent) {
+      patch.shipped_at = order.shipped_at ?? now;
+      patch.delivered_at = null;
+      patch.cancelled_at = null;
+    } else if (target.name === APP_STATUS.delivered) {
+      patch.shipped_at = order.shipped_at ?? now;
+      patch.delivered_at = order.delivered_at ?? now;
+      patch.cancelled_at = null;
+    } else if (target.name === APP_STATUS.created) {
+      patch.shipped_at = null;
+      patch.delivered_at = null;
+      patch.cancelled_at = null;
+    }
+
+    const { error } = await supabase.from("orders").update(patch).eq("id", order.id);
+    if (error) {
+      skipped += 1;
+      continue;
+    }
+
+    await supabase.from("order_status_history").insert({
+      order_id: order.id,
+      from_status_id: order.status_id,
+      to_status_id: target.id,
+      changed_by: userId,
+      note: parsed.data.note ?? `Bulk promena statusa: ${target.name}.`,
+    });
+    changed += 1;
+
+    if (!(await pushWooStatus(order.woo_order_id, target.name))) wooFailed += 1;
+  }
+
+  // Porudžbine koje uopšte nisu pronađene (npr. loš id) računamo u preskočene.
+  skipped += parsed.data.order_ids.length - orders.length;
+
+  revalidatePath("/porudzbine");
+  if (changed === 0)
+    return { error: "Nijedna porudžbina nije promenjena (sve preskočene)." };
+  const wooNote = wooFailed > 0 ? ` (WooCommerce nije ažuriran za ${wooFailed}.)` : "";
+  return {
+    error: null,
+    success:
+      skipped > 0
+        ? `Status promenjen: ${changed} (preskočeno: ${skipped}).${wooNote}`
+        : `Status promenjen: ${changed}.${wooNote}`,
   };
 }
 

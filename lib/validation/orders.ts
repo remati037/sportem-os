@@ -77,6 +77,16 @@ export const markOrdersShippedSchema = z.object({
     .max(200, "Najviše 200 porudžbina po potezu."),
 });
 
+/** Bulk promena statusa — lista porudžbina + ciljni status + opciona napomena. */
+export const changeOrdersStatusSchema = z.object({
+  order_ids: z
+    .array(uuid("Neispravna porudžbina."))
+    .min(1, "Izaberite bar jednu porudžbinu.")
+    .max(200, "Najviše 200 porudžbina po potezu."),
+  status_id: uuid("Izaberite status."),
+  note: optionalNote,
+});
+
 /** Opcioni ceo broj ≥ 0 (RSD/grami/komadi); prazno → null. */
 const optionalNonNegInt = (label: string) =>
   z

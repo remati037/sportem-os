@@ -2,12 +2,14 @@ import { ShoppingCart } from "lucide-react";
 
 import { requireRole } from "@/lib/auth";
 import { getOrders, getOrderStatuses, ORDERS_PER_PAGE_OPTIONS } from "@/db/orders";
+import { APP_STATUS } from "@/lib/woo";
 import { EmptyState } from "@/components/patterns/empty-state";
 
 import { OrdersFilterBar } from "./orders-filter-bar";
 import { OrdersPagination } from "./orders-pagination";
 import { OrdersBulkTable } from "./orders-bulk-table";
 import { OrdersRefresh } from "./orders-refresh";
+import type { FlowIds } from "./[id]/order-status-control";
 
 export const dynamic = "force-dynamic";
 
@@ -57,6 +59,16 @@ export default async function PorudzbinePage({
     getOrderStatuses(),
   ]);
 
+  // Poznati (seed) statusi toka — ids po imenu (nikad hardkodovan UUID). Bulk
+  // tabela ih koristi: koje statuse ponuditi (svi osim Poslato) i koji traže razlog.
+  const flow: FlowIds = {
+    created: statuses.find((s) => s.name === APP_STATUS.created)?.id,
+    sent: statuses.find((s) => s.name === APP_STATUS.sent)?.id,
+    delivered: statuses.find((s) => s.name === APP_STATUS.delivered)?.id,
+    cancelled: statuses.find((s) => s.name === APP_STATUS.cancelled)?.id,
+    returned: statuses.find((s) => s.name === APP_STATUS.returned)?.id,
+  };
+
   return (
     <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-10">
       <div className="mb-6 flex items-start justify-between gap-4">
@@ -76,7 +88,7 @@ export default async function PorudzbinePage({
           description="Nijedna porudžbina ne odgovara filterima."
         />
       ) : (
-        <OrdersBulkTable orders={orders} />
+        <OrdersBulkTable orders={orders} statuses={statuses} flow={flow} />
       )}
 
       {total > 0 ? <OrdersPagination total={total} page={page} perPage={perPage} /> : null}
