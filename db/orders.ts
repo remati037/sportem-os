@@ -1,7 +1,10 @@
 import "server-only";
 
+import type { SupabaseClient } from "@supabase/supabase-js";
+
 import { createClient } from "@/lib/supabase/server";
 import { buildCancellationIndex, matchCancellations } from "@/db/customer-risk";
+import { CANCELLED_STATUS_NAMES } from "@/lib/woo";
 
 /*
  * Upiti porudžbina (Korak 1.2 — minimalna lista + detalj; pun UX u 1.4).
@@ -106,6 +109,45 @@ function sanitizeTerm(term: string): string {
   return term.replace(/[,()%]/g, " ").trim();
 }
 
+/**
+ * OR-uslovi PostgREST pretrage (broj / ime / telefon / e-mail). Deljeno između
+ * liste i zbira da filteri ostanu identični. `null` = nijedan uslov ne odgovara
+ * (pozivalac tretira kao prazan rezultat, bez skupljanja svih redova).
+ */
+async function buildSearchOrParts(
+  supabase: SupabaseClient,
+  search: string,
+  searchField: "all" | "name" | "email" | "phone",
+): Promise<string[] | null> {
+  const term = sanitizeTerm(search);
+  const digits = term.replace(/\D/g, "");
+  const orParts: string[] = [];
+  const custOr: string[] = [];
+
+  const wantName = searchField === "all" || searchField === "name";
+  const wantPhone = searchField === "all" || searchField === "phone";
+  const wantEmail = searchField === "all" || searchField === "email";
+
+  if (searchField === "all" && /^\d+$/.test(term)) orParts.push(`woo_order_id.eq.${term}`);
+  if (wantName && term) {
+    orParts.push(`ship_name.ilike.%${term}%`);
+    custOr.push(`name.ilike.%${term}%`);
+  }
+  if (wantPhone && digits.length >= 3) {
+    orParts.push(`ship_phone.ilike.%${digits}%`);
+    custOr.push(`phone.ilike.%${digits}%`);
+  }
+  if (wantEmail && term) custOr.push(`email.ilike.%${term}%`);
+
+  if (custOr.length > 0) {
+    const { data: custs } = await supabase.from("customers").select("id").or(custOr.join(","));
+    const ids = (custs ?? []).map((c) => c.id);
+    if (ids.length > 0) orParts.push(`customer_id.in.(${ids.join(",")})`);
+  }
+
+  return orParts.length === 0 ? null : orParts;
+}
+
 export async function getOrders(filters: OrderFilters = {}): Promise<OrdersResult> {
   const supabase = await createClient();
   const { statusId, deliveryMethod, paymentStatus, needsVp, needsReview, from, to, search } =
@@ -126,39 +168,9 @@ export async function getOrders(filters: OrderFilters = {}): Promise<OrdersResul
   if (to) query = query.lte("ordered_at", `${to}T23:59:59.999Z`);
 
   if (search && search.trim()) {
-    const term = sanitizeTerm(search);
-    const digits = term.replace(/\D/g, "");
-    const orParts: string[] = [];
-    // Kupci → filter porudžbina po customer_id (ime / telefon / e-mail).
-    const custOr: string[] = [];
-
-    const wantName = searchField === "all" || searchField === "name";
-    const wantPhone = searchField === "all" || searchField === "phone";
-    const wantEmail = searchField === "all" || searchField === "email";
-
-    // Broj porudžbine (samo u „Sve", numerički unos).
-    if (searchField === "all" && /^\d+$/.test(term)) orParts.push(`woo_order_id.eq.${term}`);
-
-    // Snapshot adrese na samoj porudžbini — hvata i porudžbine čiji vezani
-    // `customers` red ima drugačije ime (npr. isti kupac, dva telefona).
-    if (wantName && term) {
-      orParts.push(`ship_name.ilike.%${term}%`);
-      custOr.push(`name.ilike.%${term}%`);
-    }
-    if (wantPhone && digits.length >= 3) {
-      orParts.push(`ship_phone.ilike.%${digits}%`);
-      custOr.push(`phone.ilike.%${digits}%`);
-    }
-    if (wantEmail && term) custOr.push(`email.ilike.%${term}%`);
-
-    if (custOr.length > 0) {
-      const { data: custs } = await supabase.from("customers").select("id").or(custOr.join(","));
-      const ids = (custs ?? []).map((c) => c.id);
-      if (ids.length > 0) orParts.push(`customer_id.in.(${ids.join(",")})`);
-    }
-
+    const orParts = await buildSearchOrParts(supabase, search, searchField);
     // Nijedan uslov ne odgovara → prazna lista (bez skupljanja svih redova).
-    if (orParts.length === 0) return { rows: [], total: 0 };
+    if (!orParts) return { rows: [], total: 0 };
     query = query.or(orParts.join(","));
   }
 
@@ -194,6 +206,106 @@ export async function getOrders(filters: OrderFilters = {}): Promise<OrdersResul
   const { data, count } = await orderedQuery.range(fromIdx, fromIdx + perPage - 1);
   const rows = annotateRisk((data as unknown as OrderListRow[]) ?? []);
   return { rows, total: count ?? 0 };
+}
+
+export type OrdersSummary = {
+  zarada: number; // Σ zamrznute profit_at_sale (bez otkazanih/vraćenih)
+  promet: number; // Σ mp_at_sale × quantity
+  marza: number; // zarada / promet, 0..1 (0 kad nema prometa)
+  broj: number; // broj porudžbina koje ulaze u zbir
+};
+
+/** Zbir order_items (zarada + promet) po chunk-ovima order_id-jeva (URL limit). */
+async function sumOrderItems(
+  supabase: SupabaseClient,
+  ids: string[],
+): Promise<{ zarada: number; promet: number }> {
+  let zarada = 0;
+  let promet = 0;
+  const CHUNK = 500;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const { data } = await supabase
+      .from("order_items")
+      .select("quantity, mp_at_sale, profit_at_sale")
+      .in("order_id", ids.slice(i, i + CHUNK));
+    for (const it of (data as {
+      quantity: number;
+      mp_at_sale: number;
+      profit_at_sale: number | null;
+    }[]) ?? []) {
+      zarada += it.profit_at_sale ?? 0;
+      promet += it.mp_at_sale * it.quantity;
+    }
+  }
+  return { zarada, promet };
+}
+
+/**
+ * Zbir zarade/prometa/marže za ISTE filtere kao lista (bez paginacije), da se uz
+ * listu prikaže „za ovaj filter". Zarada iz ZAMRZNUTIH `order_items`, bez
+ * Otkazano/Vraćeno (isto kao Dashboard/Finansije — „zarada" = prihod, ne prodaja
+ * koja je stornirana). `needs_vp` porudžbine ulaze sa profitom 0.
+ */
+export async function getOrdersSummary(filters: OrderFilters = {}): Promise<OrdersSummary> {
+  const supabase = await createClient();
+  const { statusId, deliveryMethod, paymentStatus, needsVp, needsReview, from, to, search } =
+    filters;
+  const searchField = filters.searchField ?? "name";
+  const empty: OrdersSummary = { zarada: 0, promet: 0, marza: 0, broj: 0 };
+
+  let query = supabase
+    .from("orders")
+    .select("id, status_id, ship_phone, customer:customers(phone, email)");
+
+  if (statusId) query = query.eq("status_id", statusId);
+  if (deliveryMethod) query = query.eq("delivery_method", deliveryMethod);
+  if (paymentStatus) query = query.eq("payment_status", paymentStatus);
+  if (needsVp) query = query.eq("needs_vp", true);
+  if (needsReview) query = query.eq("needs_review", true);
+  if (from) query = query.gte("ordered_at", from);
+  if (to) query = query.lte("ordered_at", `${to}T23:59:59.999Z`);
+
+  if (search && search.trim()) {
+    const orParts = await buildSearchOrParts(supabase, search, searchField);
+    if (!orParts) return empty;
+    query = query.or(orParts.join(","));
+  }
+
+  const SUMMARY_SCAN_CAP = 20000;
+  const { data } = await query.range(0, SUMMARY_SCAN_CAP - 1);
+  let rows =
+    (data as unknown as {
+      id: string;
+      status_id: string;
+      ship_phone: string | null;
+      customer: { phone: string | null; email: string | null } | null;
+    }[]) ?? [];
+
+  // Izbaci Otkazano/Vraćeno iz zarade (nisu prihod) — po imenu.
+  const { data: cancelStatuses } = await supabase
+    .from("order_statuses")
+    .select("id")
+    .in("name", CANCELLED_STATUS_NAMES);
+  const excluded = new Set(((cancelStatuses as { id: string }[]) ?? []).map((s) => s.id));
+  rows = rows.filter((r) => !excluded.has(r.status_id));
+
+  if (filters.onlyRisky) {
+    const riskIndex = await buildCancellationIndex(supabase);
+    rows = rows.filter(
+      (r) =>
+        matchCancellations(riskIndex, {
+          phone: r.ship_phone ?? r.customer?.phone,
+          email: r.customer?.email,
+          excludeId: r.id,
+        }).length > 0,
+    );
+  }
+
+  const ids = rows.map((r) => r.id);
+  if (ids.length === 0) return empty;
+
+  const { zarada, promet } = await sumOrderItems(supabase, ids);
+  return { zarada, promet, marza: promet > 0 ? zarada / promet : 0, broj: ids.length };
 }
 
 export type OrderStatusRow = {

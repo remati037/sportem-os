@@ -32,7 +32,8 @@ export default async function UplataPage({ params }: { params: Promise<{ id: str
   if (!detail) notFound();
   const spisak = await getPayoutSpisak(id);
 
-  const { payout, orders, otkupTotal, postageTotal, difference } = detail;
+  const { payout, orders } = detail;
+  const { totals } = spisak;
 
   return (
     <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-10 sm:px-6">
@@ -64,15 +65,12 @@ export default async function UplataPage({ params }: { params: Promise<{ id: str
       </div>
 
       {/* Sažetak iznosa */}
-      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-5">
         <SummaryCard label="Uplaćeno" value={rsd(payout.amount)} />
-        <SummaryCard label="Σ otkupnina" value={rsd(otkupTotal)} />
-        <SummaryCard label="Poštarina" value={rsd(postageTotal)} />
-        <SummaryCard
-          label="Razlika"
-          value={difference === 0 ? "0" : `${difference > 0 ? "+" : ""}${rsd(difference)}`}
-          tone={difference === 0 ? "success" : "warning"}
-        />
+        <SummaryCard label="MP ukupno" value={rsd(totals.mp)} />
+        <SummaryCard label="VP ukupno" value={rsd(totals.vp)} />
+        <SummaryCard label="Poštarina" value={rsd(totals.shipping)} />
+        <SummaryCard label="Zarada" value={rsd(totals.profit)} tone="success" />
       </div>
 
       {/* Vezane porudžbine */}

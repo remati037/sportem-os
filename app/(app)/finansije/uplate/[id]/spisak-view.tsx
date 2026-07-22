@@ -102,14 +102,6 @@ export function SpisakView({
         </p>
       ) : (
         <>
-          {/* Zbirovi za celu uplatu — MP/VP/Dostava/Zarada (zamrznute cene). */}
-          <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-            <TotalCard label="MP ukupno" value={rsd(totals.mp)} />
-            <TotalCard label="VP ukupno" value={rsd(totals.vp)} />
-            <TotalCard label="Dostava" value={rsd(totals.shipping)} />
-            <TotalCard label="Zarada" value={rsd(totals.profit)} tone="success" />
-          </div>
-
           <p className="text-ink-faint mb-1 text-xs">Zbirno po artiklu (za kasu):</p>
           <div className="border-border bg-surface shadow-soft mb-6 overflow-x-auto rounded-lg border">
             <Table>
@@ -155,24 +147,5 @@ export function SpisakView({
         </>
       )}
     </section>
-  );
-}
-
-function TotalCard({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone?: "success";
-}) {
-  return (
-    <div className="border-border bg-surface shadow-soft rounded-lg border px-4 py-3">
-      <div className="eyebrow">{label}</div>
-      <div className={"num mt-1 text-lg font-bold " + (tone === "success" ? "text-success" : "text-ink")}>
-        {value}
-      </div>
-    </div>
   );
 }

@@ -71,73 +71,60 @@ export default async function UplatePage() {
                   <TableHead className="eyebrow bg-surface-2 h-9 px-4">Datum uplate</TableHead>
                   <TableHead className="eyebrow bg-surface-2 h-9 px-4">Isporuka (T−1)</TableHead>
                   <TableHead className="eyebrow bg-surface-2 h-9 px-4 text-right">Porudžbina</TableHead>
-                  <TableHead className="eyebrow bg-surface-2 h-9 px-4 text-right">Σ otkup</TableHead>
-                  <TableHead className="eyebrow bg-surface-2 h-9 px-4 text-right">Uplaćeno</TableHead>
-                  <TableHead className="eyebrow bg-surface-2 h-9 px-4 text-right">Razlika</TableHead>
+                  <TableHead className="eyebrow bg-surface-2 h-9 px-4 text-right">Uplata</TableHead>
+                  <TableHead className="eyebrow bg-surface-2 h-9 px-4 text-right">Zarada</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {payouts.map((p) => {
-                  const diff = p.amount - p.linkedOtkup;
-                  return (
-                    <TableRow key={p.id} className="border-border hover:bg-green-soft relative">
-                      <TableCell className="num text-ink px-4 py-2.5 font-medium">
-                        <Link
-                          href={`/finansije/uplate/${p.id}`}
-                          className="after:absolute after:inset-0"
-                        >
-                          {datum(p.payout_date)}
-                        </Link>
-                      </TableCell>
-                      <TableCell className="num text-ink-soft px-4 py-2.5">
-                        {p.delivery_date ? datum(p.delivery_date) : "—"}
-                      </TableCell>
-                      <TableCell className="num px-4 py-2.5 text-right">{num(p.linkedCount)}</TableCell>
-                      <TableCell className="num px-4 py-2.5 text-right">{rsd(p.linkedOtkup)}</TableCell>
-                      <TableCell className="num px-4 py-2.5 text-right">{rsd(p.amount)}</TableCell>
-                      <TableCell
-                        className={
-                          "num px-4 py-2.5 text-right " +
-                          (diff === 0 ? "text-success" : "text-warning")
-                        }
+                {payouts.map((p) => (
+                  <TableRow key={p.id} className="border-border hover:bg-green-soft relative">
+                    <TableCell className="num text-ink px-4 py-2.5 font-medium">
+                      <Link
+                        href={`/finansije/uplate/${p.id}`}
+                        className="after:absolute after:inset-0"
                       >
-                        {diff === 0 ? "0" : `${diff > 0 ? "+" : ""}${rsd(diff)}`}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
+                        {datum(p.payout_date)}
+                      </Link>
+                    </TableCell>
+                    <TableCell className="num text-ink-soft px-4 py-2.5">
+                      {p.delivery_date ? datum(p.delivery_date) : "—"}
+                    </TableCell>
+                    <TableCell className="num px-4 py-2.5 text-right">{num(p.linkedCount)}</TableCell>
+                    <TableCell className="num text-ink px-4 py-2.5 text-right font-medium">
+                      {rsd(p.amount)}
+                    </TableCell>
+                    <TableCell className="num text-success px-4 py-2.5 text-right font-semibold">
+                      {rsd(p.profit)}
+                    </TableCell>
+                  </TableRow>
+                ))}
               </TableBody>
             </Table>
           </div>
 
           {/* Mobilne kartice */}
           <MobileCardList>
-            {payouts.map((p) => {
-              const diff = p.amount - p.linkedOtkup;
-              return (
-                <MobileCard
-                  key={p.id}
-                  href={`/finansije/uplate/${p.id}`}
-                  ariaLabel={`Uplata ${datum(p.payout_date)}`}
-                >
-                  <MobileCardHeader
-                    title={<span className="num">{datum(p.payout_date)}</span>}
-                    subtitle={<span>{num(p.linkedCount)} porudžbina · isporuka {p.delivery_date ? datum(p.delivery_date) : "—"}</span>}
-                    trailing={<span className="num font-medium">{rsd(p.amount)}</span>}
-                  />
-                  <div className="mt-3 space-y-1.5">
-                    <MobileCardField label="Σ otkup">
-                      <span className="num">{rsd(p.linkedOtkup)}</span>
-                    </MobileCardField>
-                    <MobileCardField label="Razlika">
-                      <span className={"num " + (diff === 0 ? "text-success" : "text-warning")}>
-                        {diff === 0 ? "0" : `${diff > 0 ? "+" : ""}${rsd(diff)}`}
-                      </span>
-                    </MobileCardField>
-                  </div>
-                </MobileCard>
-              );
-            })}
+            {payouts.map((p) => (
+              <MobileCard
+                key={p.id}
+                href={`/finansije/uplate/${p.id}`}
+                ariaLabel={`Uplata ${datum(p.payout_date)}`}
+              >
+                <MobileCardHeader
+                  title={<span className="num">{datum(p.payout_date)}</span>}
+                  subtitle={<span>{num(p.linkedCount)} porudžbina · isporuka {p.delivery_date ? datum(p.delivery_date) : "—"}</span>}
+                  trailing={<span className="num font-medium">{rsd(p.amount)}</span>}
+                />
+                <div className="mt-3 space-y-1.5">
+                  <MobileCardField label="Uplata">
+                    <span className="num">{rsd(p.amount)}</span>
+                  </MobileCardField>
+                  <MobileCardField label="Zarada">
+                    <span className="num text-success font-semibold">{rsd(p.profit)}</span>
+                  </MobileCardField>
+                </div>
+              </MobileCard>
+            ))}
           </MobileCardList>
         </>
       )}

@@ -1,8 +1,14 @@
 import { ShoppingCart } from "lucide-react";
 
 import { requireRole } from "@/lib/auth";
-import { getOrders, getOrderStatuses, ORDERS_PER_PAGE_OPTIONS } from "@/db/orders";
+import {
+  getOrders,
+  getOrdersSummary,
+  getOrderStatuses,
+  ORDERS_PER_PAGE_OPTIONS,
+} from "@/db/orders";
 import { APP_STATUS } from "@/lib/woo";
+import { rsd } from "@/lib/format";
 import { EmptyState } from "@/components/patterns/empty-state";
 
 import { OrdersFilterBar } from "./orders-filter-bar";
@@ -42,23 +48,26 @@ export default async function PorudzbinePage({
     ? (qfRaw as "all" | "name" | "email" | "phone")
     : "name";
 
-  const [{ rows: orders, total }, statuses] = await Promise.all([
-    getOrders({
-      search: one(sp.q),
-      searchField,
-      statusId: one(sp.status),
-      deliveryMethod: one(sp.delivery),
-      paymentStatus: one(sp.payment),
-      needsVp: one(sp.needs_vp) === "1",
-      needsReview: one(sp.needs_review) === "1",
-      onlyRisky: one(sp.risky) === "1",
-      from: one(sp.from),
-      to: one(sp.to),
-      page,
-      perPage,
-    }),
+  const filters = {
+    search: one(sp.q),
+    searchField,
+    statusId: one(sp.status),
+    deliveryMethod: one(sp.delivery),
+    paymentStatus: one(sp.payment),
+    needsVp: one(sp.needs_vp) === "1",
+    needsReview: one(sp.needs_review) === "1",
+    onlyRisky: one(sp.risky) === "1",
+    from: one(sp.from),
+    to: one(sp.to),
+  };
+
+  const [{ rows: orders, total }, statuses, summary] = await Promise.all([
+    getOrders({ ...filters, page, perPage }),
     getOrderStatuses(),
+    getOrdersSummary(filters),
   ]);
+
+  const marzaPct = Math.round(summary.marza * 100);
 
   // Poznati (seed) statusi toka — ids po imenu (nikad hardkodovan UUID). Bulk
   // tabela ih koristi: koje statuse ponuditi (svi osim Poslato) i koji traže razlog.
@@ -82,6 +91,17 @@ export default async function PorudzbinePage({
 
       <OrdersFilterBar statuses={statuses} />
 
+      {/* Zbir za trenutni filter (zarada iz zamrznutih stavki, bez otkazanih/vraćenih) */}
+      <div className="border-border bg-surface-2 mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border px-4 py-2.5">
+        <span className="eyebrow">Za ovaj filter</span>
+        <SummaryStat label="Zarada" value={rsd(summary.zarada)} />
+        <SummaryStat label="Promet" value={rsd(summary.promet)} />
+        <SummaryStat label="Marža" value={`${marzaPct}%`} />
+        <span className="text-ink-faint ml-auto text-xs">
+          {summary.broj} porudžbina u zbiru (bez otkazanih/vraćenih)
+        </span>
+      </div>
+
       {orders.length === 0 ? (
         <EmptyState
           icon={<ShoppingCart />}
@@ -94,5 +114,14 @@ export default async function PorudzbinePage({
 
       {total > 0 ? <OrdersPagination total={total} page={page} perPage={perPage} /> : null}
     </main>
+  );
+}
+
+function SummaryStat({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="flex items-baseline gap-1.5">
+      <span className="text-ink-faint text-xs">{label}</span>
+      <span className="num text-ink text-sm font-semibold">{value}</span>
+    </span>
   );
 }

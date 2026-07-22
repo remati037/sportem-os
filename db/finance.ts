@@ -89,27 +89,33 @@ export type PayoutRow = {
   notes: string | null;
   linkedCount: number;
   linkedOtkup: number; // Σ otkupnina vezanih porudžbina
+  profit: number; // Σ zamrznuta zarada vezanih porudžbina (order_profit view)
 };
 
-/** Lista uplata (sa brojem vezanih porudžbina i Σ otkupnine). */
+/** Lista uplata (sa brojem vezanih porudžbina, Σ otkupnine i Σ zarade). */
 export async function listPayouts(): Promise<PayoutRow[]> {
   const supabase = await createClient();
   const { data } = await supabase
     .from("payouts")
     .select(
-      "id, amount, payout_date, delivery_date, notes, orders(goods_total, shipping_charged)",
+      "id, amount, payout_date, delivery_date, notes, orders(id, goods_total, shipping_charged)",
     )
     .order("payout_date", { ascending: false })
     .order("created_at", { ascending: false });
 
-  return (
-    (data as unknown as (Omit<PayoutRow, "linkedCount" | "linkedOtkup"> & {
-      orders: { goods_total: number | null; shipping_charged: number | null }[];
-    })[]) ?? []
-  ).map(({ orders, ...p }) => ({
+  const rows =
+    (data as unknown as (Omit<PayoutRow, "linkedCount" | "linkedOtkup" | "profit"> & {
+      orders: { id: string; goods_total: number | null; shipping_charged: number | null }[];
+    })[]) ?? [];
+
+  // Zarada iz order_profit view-a (zamrznuti profit_at_sale) — jedan upit za sve.
+  const profitMap = await profitByOrder(rows.flatMap((p) => p.orders.map((o) => o.id)));
+
+  return rows.map(({ orders, ...p }) => ({
     ...p,
     linkedCount: orders.length,
     linkedOtkup: orders.reduce((sum, o) => sum + otkupOf(o.goods_total, o.shipping_charged), 0),
+    profit: orders.reduce((sum, o) => sum + (profitMap.get(o.id) ?? 0), 0),
   }));
 }
 
@@ -152,6 +158,8 @@ export async function getPayoutDetail(id: string): Promise<PayoutDetail | null> 
       otkup: otkupOf(goods_total, shipping_charged),
     }));
   const otkupTotal = orders.reduce((sum, o) => sum + o.otkup, 0);
+  const profitMap = await profitByOrder(orders.map((o) => o.id));
+  const profitTotal = orders.reduce((sum, o) => sum + (profitMap.get(o.id) ?? 0), 0);
 
   return {
     payout: {
@@ -162,6 +170,7 @@ export async function getPayoutDetail(id: string): Promise<PayoutDetail | null> 
       notes: row.notes,
       linkedCount: orders.length,
       linkedOtkup: otkupTotal,
+      profit: profitTotal,
     },
     orders,
     otkupTotal,
