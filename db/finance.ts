@@ -87,6 +87,7 @@ export type PayoutRow = {
   payout_date: string;
   delivery_date: string | null;
   notes: string | null;
+  invoice_id: string | null; // faktura na kojoj je uplata (NULL = nefakturisana)
   linkedCount: number;
   linkedOtkup: number; // Σ otkupnina vezanih porudžbina
   profit: number; // Σ zamrznuta zarada vezanih porudžbina (order_profit view)
@@ -98,7 +99,7 @@ export async function listPayouts(): Promise<PayoutRow[]> {
   const { data } = await supabase
     .from("payouts")
     .select(
-      "id, amount, payout_date, delivery_date, notes, orders(id, goods_total, shipping_charged)",
+      "id, amount, payout_date, delivery_date, notes, invoice_id, orders(id, goods_total, shipping_charged)",
     )
     .order("payout_date", { ascending: false })
     .order("created_at", { ascending: false });
@@ -133,7 +134,7 @@ export async function getPayoutDetail(id: string): Promise<PayoutDetail | null> 
   const { data } = await supabase
     .from("payouts")
     .select(
-      `id, amount, payout_date, delivery_date, notes,
+      `id, amount, payout_date, delivery_date, notes, invoice_id,
        orders(id, woo_order_id, ship_name, goods_total, shipping_charged, delivered_at)`,
     )
     .eq("id", id)
@@ -168,6 +169,7 @@ export async function getPayoutDetail(id: string): Promise<PayoutDetail | null> 
       payout_date: row.payout_date,
       delivery_date: row.delivery_date,
       notes: row.notes,
+      invoice_id: row.invoice_id,
       linkedCount: orders.length,
       linkedOtkup: otkupTotal,
       profit: profitTotal,
@@ -281,49 +283,56 @@ async function profitByOrder(orderIds: string[]): Promise<Map<string, number>> {
   return map;
 }
 
-export type InvoiceCandidate = {
+/**
+ * Kandidat za fakturu = jedna UPLATA (payout) koja još nije ni na jednoj fakturi.
+ * Faktura se sklapa od uplata (ne pojedinačnih porudžbina) — jednostavnije.
+ */
+export type PayoutInvoiceCandidate = {
   id: string;
-  woo_order_id: number | null;
-  ship_name: string | null;
-  delivered_at: string | null;
-  profit: number;
+  payout_date: string;
+  linkedCount: number; // broj vezanih porudžbina
+  otkup: number; // Σ otkupnina vezanih porudžbina
+  profit: number; // Σ zamrznuta zarada (order_profit) — osnova „za fakturisanje"
 };
 
-export type InvoiceCandidates = { orders: InvoiceCandidate[]; total: number };
+export type InvoiceCandidates = { payouts: PayoutInvoiceCandidate[]; total: number };
 
-/**
- * Kandidati za fakturu = „drug mi duguje" baza: XExpress + isporučeno + uplaćeno
- * + nefakturisano + bez needs_vp. Zarada iz zamrznutih stavki (order_profit).
- */
-export async function getInvoiceCandidates(): Promise<InvoiceCandidates> {
-  const delivered = await deliveredStatusId();
-  if (!delivered) return { orders: [], total: 0 };
+/** Nefakturisane uplate (payout.invoice_id null) sa Σ zarade i otkupnine. */
+export async function getInvoiceablePayouts(): Promise<PayoutInvoiceCandidate[]> {
   const supabase = await createClient();
   const { data } = await supabase
-    .from("orders")
-    .select("id, woo_order_id, ship_name, delivered_at")
-    .eq("delivery_method", "xexpress")
-    .eq("payment_status", "uplaceno")
-    .eq("status_id", delivered)
+    .from("payouts")
+    .select("id, payout_date, orders(id, goods_total, shipping_charged)")
     .is("invoice_id", null)
-    .eq("needs_vp", false)
-    .order("delivered_at", { ascending: true, nullsFirst: false });
+    .order("payout_date", { ascending: false })
+    .order("created_at", { ascending: false });
 
   const rows =
-    (data as {
+    (data as unknown as {
       id: string;
-      woo_order_id: number | null;
-      ship_name: string | null;
-      delivered_at: string | null;
+      payout_date: string;
+      orders: { id: string; goods_total: number | null; shipping_charged: number | null }[];
     }[]) ?? [];
 
-  const profits = await profitByOrder(rows.map((o) => o.id));
-  const orders: InvoiceCandidate[] = rows.map((o) => ({
-    ...o,
-    profit: profits.get(o.id) ?? 0,
+  const profitMap = await profitByOrder(rows.flatMap((p) => p.orders.map((o) => o.id)));
+
+  return rows.map((p) => ({
+    id: p.id,
+    payout_date: p.payout_date,
+    linkedCount: p.orders.length,
+    otkup: p.orders.reduce((sum, o) => sum + otkupOf(o.goods_total, o.shipping_charged), 0),
+    profit: p.orders.reduce((sum, o) => sum + (profitMap.get(o.id) ?? 0), 0),
   }));
-  const total = orders.reduce((sum, o) => sum + o.profit, 0);
-  return { orders, total };
+}
+
+/**
+ * Kandidati za fakturu = nefakturisane uplate (bez praznih). „Za fakturisanje" =
+ * Σ zarade tih uplata (zamrznuti profit_at_sale kroz order_profit view).
+ */
+export async function getInvoiceCandidates(): Promise<InvoiceCandidates> {
+  const payouts = (await getInvoiceablePayouts()).filter((p) => p.linkedCount > 0);
+  const total = payouts.reduce((sum, p) => sum + p.profit, 0);
+  return { payouts, total };
 }
 
 export type BlockedOrder = {
@@ -334,29 +343,33 @@ export type BlockedOrder = {
 };
 
 /**
- * Porudžbine koje BI bile kandidati ali čekaju VP (needs_vp=true) — neće ući u
- * fakturu dok se VP ne unese. Prikazuju se kao upozorenje.
+ * Porudžbine koje čekaju VP (needs_vp=true) unutar NEfakturisane uplate — njihova
+ * zarada je 0/podcenjena dok se VP ne unese, pa bi podcenile fakturu te uplate.
+ * Prikazuju se kao upozorenje (ne blokiraju izdavanje).
  */
 export async function getBlockedNeedsVpOrders(): Promise<BlockedOrder[]> {
-  const delivered = await deliveredStatusId();
-  if (!delivered) return [];
   const supabase = await createClient();
   const { data } = await supabase
     .from("orders")
-    .select("id, woo_order_id, ship_name, delivered_at")
-    .eq("delivery_method", "xexpress")
-    .eq("payment_status", "uplaceno")
-    .eq("status_id", delivered)
-    .is("invoice_id", null)
+    .select("id, woo_order_id, ship_name, delivered_at, payouts!inner(invoice_id)")
     .eq("needs_vp", true)
+    .is("payouts.invoice_id", null)
     .order("delivered_at", { ascending: true, nullsFirst: false });
-  return (data as BlockedOrder[]) ?? [];
+
+  return (
+    (data as unknown as (BlockedOrder & { payouts: { invoice_id: string | null } })[]) ?? []
+  ).map((o) => ({
+    id: o.id,
+    woo_order_id: o.woo_order_id,
+    ship_name: o.ship_name,
+    delivered_at: o.delivered_at,
+  }));
 }
 
-/** „Drug mi duguje" = Σ nefakturisane realizovane zarade (isti skup kao kandidati). */
-export async function getDrugMiDuguje(): Promise<{ total: number; orderCount: number }> {
-  const { orders, total } = await getInvoiceCandidates();
-  return { total, orderCount: orders.length };
+/** „Drug mi duguje" = Σ zarade nefakturisanih uplata (isti skup kao kandidati). */
+export async function getDrugMiDuguje(): Promise<{ total: number; payoutCount: number }> {
+  const { payouts, total } = await getInvoiceCandidates();
+  return { total, payoutCount: payouts.length };
 }
 
 export type InvoiceRow = {

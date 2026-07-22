@@ -236,28 +236,22 @@ function revalidateInvoices(id?: string) {
 }
 
 /**
- * Provera da su SVE porudžbine i dalje eligible za fakturu: xexpress +
- * isporučeno + uplaćeno + nefakturisano + bez needs_vp. Guard protiv stale
- * klijent liste / konkurentnog izdavanja. Vraća poruku greške ili null.
+ * Provera da su SVE izabrane uplate i dalje eligible za fakturu: postoje i još
+ * nisu ni na jednoj fakturi (invoice_id null). Guard protiv stale klijent liste
+ * / konkurentnog izdavanja. Vraća poruku greške ili null.
  */
-async function assertInvoiceable(orderIds: string[]): Promise<string | null> {
-  if (orderIds.length === 0) return "Izaberite bar jednu porudžbinu.";
-  const delivered = await deliveredStatusId();
-  if (!delivered) return "Status „Isporučeno“ nije pronađen.";
+async function assertInvoiceable(payoutIds: string[]): Promise<string | null> {
+  if (payoutIds.length === 0) return "Izaberite bar jednu uplatu.";
 
   const supabase = await createClient();
   const { data } = await supabase
-    .from("orders")
+    .from("payouts")
     .select("id")
-    .in("id", orderIds)
-    .eq("delivery_method", "xexpress")
-    .eq("payment_status", "uplaceno")
-    .eq("status_id", delivered)
-    .is("invoice_id", null)
-    .eq("needs_vp", false);
+    .in("id", payoutIds)
+    .is("invoice_id", null);
 
-  if ((data?.length ?? 0) !== orderIds.length) {
-    return "Neke porudžbine više nisu dostupne za fakturu (uplaćene + bez čekanja VP). Osveži i pokušaj ponovo.";
+  if ((data?.length ?? 0) !== payoutIds.length) {
+    return "Neke uplate više nisu dostupne za fakturu (već fakturisane). Osveži i pokušaj ponovo.";
   }
   return null;
 }
@@ -265,27 +259,38 @@ async function assertInvoiceable(orderIds: string[]): Promise<string | null> {
 export type IssueInvoiceInput = z.input<typeof issueInvoiceSchema>;
 
 /**
- * Izdavanje fakture drugu. total_amount = Σ zamrznute zarade (order_profit)
- * rekompjutovana server-side. Vezane porudžbine dobijaju invoice_id (stavke se
- * time zaključavaju). Broj fakture je ručni — duplikat pada na 23505.
+ * Izdavanje fakture drugu od izabranih UPLATA. total_amount = Σ zamrznute zarade
+ * (order_profit) svih porudžbina tih uplata, rekompjutovano server-side. Uplate
+ * dobijaju invoice_id; njihove porudžbine dobijaju invoice_id (stavke se time
+ * zaključavaju). Broj fakture je ručni — duplikat pada na 23505.
  */
 export async function issueInvoice(input: IssueInvoiceInput): Promise<FinanceActionState> {
   await requireRole("admin");
 
   const parsed = issueInvoiceSchema.safeParse(input);
   if (!parsed.success) return { error: firstZodError(parsed.error) };
-  const { invoice_number, invoice_date, order_ids } = parsed.data;
+  const { invoice_number, invoice_date, payout_ids } = parsed.data;
 
-  const blocked = await assertInvoiceable(order_ids);
+  const blocked = await assertInvoiceable(payout_ids);
   if (blocked) return { error: blocked };
 
   const supabase = await createClient();
+
+  // Sve porudžbine izabranih uplata.
+  const { data: orderRows } = await supabase
+    .from("orders")
+    .select("id")
+    .in("payout_id", payout_ids);
+  const orderIds = ((orderRows as { id: string }[]) ?? []).map((o) => o.id);
+  if (orderIds.length === 0) {
+    return { error: "Izabrane uplate nemaju vezane porudžbine." };
+  }
 
   // Rekompjutuj total iz zamrznutih stavki (ne veruj klijentskoj cifri).
   const { data: profitRows } = await supabase
     .from("order_profit")
     .select("profit")
-    .in("order_id", order_ids);
+    .in("order_id", orderIds);
   const total = ((profitRows as { profit: number | null }[]) ?? []).reduce(
     (sum, r) => sum + (r.profit ?? 0),
     0,
@@ -309,20 +314,33 @@ export async function issueInvoice(input: IssueInvoiceInput): Promise<FinanceAct
     return { error: "Izdavanje fakture nije uspelo." };
   }
 
+  // Veži uplate za fakturu.
+  const { error: payErr } = await supabase
+    .from("payouts")
+    .update({ invoice_id: invoice.id })
+    .in("id", payout_ids);
+  if (payErr) {
+    await supabase.from("invoices").delete().eq("id", invoice.id);
+    return { error: "Vezivanje uplata za fakturu nije uspelo." };
+  }
+
+  // Kaskadno veži porudžbine tih uplata (zaključava stavke; hrani detalj fakture).
   const { error: updErr } = await supabase
     .from("orders")
     .update({ invoice_id: invoice.id })
-    .in("id", order_ids);
+    .in("id", orderIds);
   if (updErr) {
-    // Rollback fakture da ne ostane bez vezanih porudžbina.
+    // Rollback: odveži uplate pa obriši fakturu.
+    await supabase.from("payouts").update({ invoice_id: null }).eq("invoice_id", invoice.id);
     await supabase.from("invoices").delete().eq("id", invoice.id);
     return { error: "Vezivanje porudžbina za fakturu nije uspelo." };
   }
 
   revalidateInvoices(invoice.id);
+  revalidatePayouts();
   return {
     error: null,
-    success: `Faktura ${invoice_number} izdata (${order_ids.length} porudžbina).`,
+    success: `Faktura ${invoice_number} izdata (${payout_ids.length} uplata).`,
   };
 }
 
@@ -373,13 +391,16 @@ export async function deleteInvoice(id: string): Promise<FinanceActionState> {
     return { error: "Istorijska faktura (backfill) se ne može obrisati." };
   }
 
-  // Re-otvori porudžbine pre brisanja (FK je SET NULL, ali eksplicitno radi jasnoće).
+  // Re-otvori uplate i porudžbine pre brisanja (FK je SET NULL, ali eksplicitno
+  // radi jasnoće — uplate se vraćaju u kandidate za fakturu).
+  await supabase.from("payouts").update({ invoice_id: null }).eq("invoice_id", id);
   await supabase.from("orders").update({ invoice_id: null }).eq("invoice_id", id);
 
   const { error } = await supabase.from("invoices").delete().eq("id", id);
   if (error) return { error: "Brisanje fakture nije uspelo." };
 
   revalidateInvoices();
+  revalidatePayouts();
   return { error: null, success: "Faktura obrisana." };
 }
 

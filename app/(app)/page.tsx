@@ -10,7 +10,6 @@ import {
 } from "lucide-react";
 
 import { getProfile } from "@/lib/auth";
-import { getDrugMiDuguje, getSaldoPostarine } from "@/db/finance";
 import { getDashboardMetrics, getWaitingOrders } from "@/db/dashboard";
 import { getLowStockVariants } from "@/db/catalog";
 import { rsd, num } from "@/lib/format";
@@ -24,16 +23,12 @@ export const dynamic = "force-dynamic";
 
 /*
  * Dashboard (Korak 1.8) — sve ključne cifre na jednom ekranu. Metrike su po
- * izabranom periodu (dan/nedelja/mesec/prilagođeno) i realizovane (Isporučeno +
- * uplaćeno/keš, bez needs_vp); „drug mi duguje" i saldo poštarine su tekuće
- * stanje. STAFF-only — Logistika se preusmerava na Katalog.
+ * izabranom periodu (dan/nedelja/mesec/prilagođeno): broj porudžbina broji SVE
+ * kreirane u periodu, a zarada/marža/neto samo realizovane (bez otkazanih/
+ * vraćenih). STAFF-only — Logistika se preusmerava na Katalog.
  */
 
 const LOW_STOCK_LIMIT = 8;
-
-function signed(n: number) {
-  return n === 0 ? "0" : `${n > 0 ? "+" : ""}${rsd(n)}`;
-}
 
 export default async function DashboardPage({
   searchParams,
@@ -47,10 +42,8 @@ export default async function DashboardPage({
 
   const period = resolvePeriod(await searchParams);
 
-  const [metrics, drug, saldo, waiting, lowStock] = await Promise.all([
+  const [metrics, waiting, lowStock] = await Promise.all([
     getDashboardMetrics({ from: period.from, to: period.to }),
-    getDrugMiDuguje(),
-    getSaldoPostarine(),
     getWaitingOrders(),
     getLowStockVariants(),
   ]);
@@ -101,7 +94,11 @@ export default async function DashboardPage({
           hint={`Troškovi ${rsd(metrics.troskovi)}`}
           tone={metrics.neto >= 0 ? "ink" : "warning"}
         />
-        <MetricCard label="Porudžbine" value={num(metrics.brojPorudzbina)} hint="Kreirano u periodu" />
+        <MetricCard
+          label="Porudžbine"
+          value={num(metrics.brojPorudzbina)}
+          hint="Sve kreirane u periodu"
+        />
         <MetricCard label="Prosečna marža" value={`${marzaPct}%`} hint="Zarada / promet" />
       </div>
 
@@ -110,42 +107,12 @@ export default async function DashboardPage({
         <div className="border-border bg-surface text-ink-soft mb-8 flex items-start gap-2 rounded-lg border px-4 py-3 text-sm">
           <Info className="text-ink-faint mt-0.5 size-4 shrink-0" />
           <div>
-            Nema porudžbina kreiranih u ovom periodu ({period.label}). Metrike broje sve porudžbine
-            napravljene u periodu, <span className="font-medium">osim otkazanih i vraćenih</span> —
-            probaj drugi period.
+            Nema porudžbina kreiranih u ovom periodu ({period.label}). Broj broji sve porudžbine
+            napravljene u periodu; zarada i marža računaju se bez otkazanih i vraćenih — probaj
+            drugi period.
           </div>
         </div>
       ) : null}
-
-      {/* Tekuće stanje */}
-      <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Link
-          href="/finansije"
-          className="border-green/30 bg-green-soft hover:bg-green/10 rounded-lg border px-4 py-4 transition-colors"
-        >
-          <div className="eyebrow text-green">Za fakturisanje</div>
-          <div className="text-green num mt-1 text-2xl font-bold">{rsd(drug.total)}</div>
-          <p className="text-ink-soft mt-1 text-xs">
-            {num(drug.orderCount)} nefakturisanih porudžbina (uplaćeno, bez čekanja VP)
-          </p>
-        </Link>
-
-        <Link
-          href="/finansije/postarina"
-          className="border-border bg-surface shadow-soft hover:bg-surface-2 rounded-lg border px-4 py-4 transition-colors"
-        >
-          <div className="eyebrow">Saldo poštarine</div>
-          <div
-            className={
-              "num mt-1 text-2xl font-bold " +
-              (saldo.balance === 0 ? "text-success" : "text-warning")
-            }
-          >
-            {signed(saldo.balance)}
-          </div>
-          <p className="text-ink-soft mt-1 text-xs">Prolazna stavka — nije profit.</p>
-        </Link>
-      </div>
 
       {/* Porudžbine koje čekaju */}
       <section className="mb-8">

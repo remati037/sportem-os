@@ -6,6 +6,7 @@ import { getUnpaidDeliveredXexpress, listPayouts } from "@/db/finance";
 import { rsd, num, datum } from "@/lib/format";
 import { todayBelgrade } from "@/lib/date-belgrade";
 import { EmptyState } from "@/components/patterns/empty-state";
+import { Badge } from "@/components/ui/badge";
 import {
   MobileCard,
   MobileCardField,
@@ -85,6 +86,11 @@ export default async function UplatePage() {
                       >
                         {datum(p.payout_date)}
                       </Link>
+                      {p.invoice_id ? (
+                        <Badge variant="success" className="relative z-10 ml-2 align-middle">
+                          Fakturisano
+                        </Badge>
+                      ) : null}
                     </TableCell>
                     <TableCell className="num text-ink-soft px-4 py-2.5">
                       {p.delivery_date ? datum(p.delivery_date) : "—"}
@@ -111,7 +117,12 @@ export default async function UplatePage() {
                 ariaLabel={`Uplata ${datum(p.payout_date)}`}
               >
                 <MobileCardHeader
-                  title={<span className="num">{datum(p.payout_date)}</span>}
+                  title={
+                    <span className="flex items-center gap-2">
+                      <span className="num">{datum(p.payout_date)}</span>
+                      {p.invoice_id ? <Badge variant="success">Fakturisano</Badge> : null}
+                    </span>
+                  }
                   subtitle={<span>{num(p.linkedCount)} porudžbina · isporuka {p.delivery_date ? datum(p.delivery_date) : "—"}</span>}
                   trailing={<span className="num font-medium">{rsd(p.amount)}</span>}
                 />

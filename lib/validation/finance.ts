@@ -52,11 +52,11 @@ export const issueInvoiceSchema = z.object({
     .max(100, "Broj fakture je predugačak."),
   // Jedan datum fakture (default danas); puni obe period kolone u bazi.
   invoice_date: isoDate("datum fakture"),
-  // Bar jedna porudžbina — faktura bez stavki nema smisla.
-  order_ids: z
-    .array(uuid("Neispravna porudžbina."))
-    .min(1, "Izaberite bar jednu porudžbinu.")
-    .max(1000, "Previše porudžbina."),
+  // Bar jedna uplata — faktura se sklapa od uplata (ne pojedinačnih porudžbina).
+  payout_ids: z
+    .array(uuid("Neispravna uplata."))
+    .min(1, "Izaberite bar jednu uplatu.")
+    .max(1000, "Previše uplata."),
 });
 
 export const markInvoicePaidSchema = z.object({

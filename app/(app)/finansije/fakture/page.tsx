@@ -31,9 +31,9 @@ import { IssueInvoicePanel } from "./issue-invoice-panel";
 export const dynamic = "force-dynamic";
 
 /*
- * Fakture drugu (Korak 1.6b). „Drug mi duguje" = Σ nefakturisane realizovane
- * zarade (uplaćene, bez needs_vp). Izdavanjem fakture porudžbine dobijaju
- * invoice_id i zaključavaju stavke. Bez PDF-a (zaključana odluka).
+ * Fakture drugu (Korak 1.6b). „Za fakturisanje" = Σ zarade nefakturisanih UPLATA
+ * (payouts koje još nisu ni na jednoj fakturi). Izdavanjem fakture uplate i
+ * njihove porudžbine dobijaju invoice_id i zaključavaju stavke. Bez PDF-a.
  */
 export default async function FakturePage() {
   const { profile } = await requireRole("admin", "manager");
@@ -58,21 +58,20 @@ export default async function FakturePage() {
       <div className="border-green/30 bg-green-soft mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-4 py-3">
         <div>
           <div className="eyebrow text-green">Za fakturisanje</div>
-          {candidates.orders.length === 0 ? (
+          {candidates.payouts.length === 0 ? (
             <p className="text-ink-soft text-xs">
-              Nema porudžbina za fakturisanje. Faktura se pravi od isporučenih porudžbina koje su
-              označene kao plaćene —{" "}
+              Nema uplata za fakturisanje. Faktura se sklapa od{" "}
               <Link
                 href="/finansije/uplate"
                 className="text-green font-medium underline-offset-2 hover:underline"
               >
-                obeleži uplatu
+                uplata
               </Link>{" "}
-              pa se pojave ovde.
+              — kad napraviš uplatu, pojavi se ovde.
             </p>
           ) : (
             <p className="text-ink-soft text-xs">
-              {num(candidates.orders.length)} nefakturisanih porudžbina (uplaćeno, bez čekanja VP)
+              {num(candidates.payouts.length)} nefakturisanih uplata
             </p>
           )}
         </div>
@@ -84,8 +83,8 @@ export default async function FakturePage() {
         <div className="border-warning/30 bg-warning-soft text-warning mb-4 flex items-start gap-2 rounded-lg border px-4 py-3 text-sm">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" />
           <div>
-            <span className="font-medium">Čeka VP ({num(blocked.length)})</span> — neće ući u
-            fakturu dok se ne unese nabavna cena:{" "}
+            <span className="font-medium">Čeka VP ({num(blocked.length)})</span> — u nefakturisanoj
+            uplati; dok se ne unese nabavna cena, zarada im je 0 i podcenjuju fakturu:{" "}
             {blocked.map((o, i) => (
               <span key={o.id} className="num">
                 {i > 0 ? ", " : ""}
@@ -107,7 +106,7 @@ export default async function FakturePage() {
 
       {isAdmin ? (
         <div className="mb-6 flex justify-end">
-          <IssueInvoicePanel candidates={candidates.orders} />
+          <IssueInvoicePanel candidates={candidates.payouts} />
         </div>
       ) : null}
 

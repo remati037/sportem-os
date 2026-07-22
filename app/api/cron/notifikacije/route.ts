@@ -73,12 +73,12 @@ export async function GET(request: Request) {
     }
 
     // ── 1. i 15. u mesecu (~2 nedelje): podsetnik na fakturu ────────────────
-    if ((dayOfMonth === 1 || dayOfMonth === 15) && deliveredId) {
-      const candidates = await invoiceCandidateCount(supabase, deliveredId);
+    if (dayOfMonth === 1 || dayOfMonth === 15) {
+      const candidates = await invoiceCandidateCount(supabase);
       if (candidates > 0) {
         await notifyRoles("invoice_reminder", `invoice:${today}`, [...STAFF], {
           title: "Podsetnik za fakturu",
-          body: `${candidates} ${plural(candidates, "porudžbina", "porudžbine", "porudžbina")} za fakturisanje drugu.`,
+          body: `${candidates} ${plural(candidates, "uplata", "uplate", "uplata")} za fakturisanje drugu.`,
           url: "/finansije/fakture",
           tag: "invoice-reminder",
         });
@@ -139,17 +139,14 @@ async function deliveredUnpaidCount(supabase: Admin, deliveredId: string): Promi
   return count ?? 0;
 }
 
-/** Kandidati za fakturu drugu (isti skup kao „drug mi duguje" u finansijama). */
-async function invoiceCandidateCount(supabase: Admin, deliveredId: string): Promise<number> {
-  const { count } = await supabase
-    .from("orders")
-    .select("id", { count: "exact", head: true })
-    .eq("delivery_method", "xexpress")
-    .eq("payment_status", "uplaceno")
-    .eq("status_id", deliveredId)
-    .is("invoice_id", null)
-    .eq("needs_vp", false);
-  return count ?? 0;
+/**
+ * Kandidati za fakturu drugu = nefakturisane uplate (payout.invoice_id null) sa
+ * bar jednom vezanom porudžbinom. Isti skup kao „za fakturisanje" u finansijama.
+ */
+async function invoiceCandidateCount(supabase: Admin): Promise<number> {
+  const { data } = await supabase.from("payouts").select("id, orders(id)").is("invoice_id", null);
+  const rows = (data as { id: string; orders: { id: string }[] }[]) ?? [];
+  return rows.filter((p) => p.orders.length > 0).length;
 }
 
 /** Srpska množina (1 / 2–4 / 5+). */

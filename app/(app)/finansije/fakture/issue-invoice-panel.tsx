@@ -5,7 +5,7 @@ import { useMemo, useState, useTransition } from "react";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
 
-import type { InvoiceCandidate } from "@/db/finance";
+import type { PayoutInvoiceCandidate } from "@/db/finance";
 import { rsd, num, datum } from "@/lib/format";
 import { todayBelgrade } from "@/lib/date-belgrade";
 import { Button } from "@/components/ui/button";
@@ -24,11 +24,11 @@ import { Label } from "@/components/ui/label";
 import { issueInvoice } from "../actions";
 
 /*
- * Nova faktura drugu (Korak 1.6b, Admin). Kandidati (uplaćene nefakturisane
- * XExpress porudžbine) su podrazumevano svi čekirani; total = Σ zamrznute zarade.
- * Broj fakture je ručni; datum fakture je podrazumevano danas (izdaj kad hoćeš).
+ * Nova faktura drugu (Admin). Kandidati su UPLATE (payouts) koje još nisu ni na
+ * jednoj fakturi; podrazumevano su sve čekirane. Total = Σ zamrznute zarade
+ * izabranih uplata. Broj fakture je ručni; datum je podrazumevano danas.
  */
-export function IssueInvoicePanel({ candidates }: { candidates: InvoiceCandidate[] }) {
+export function IssueInvoicePanel({ candidates }: { candidates: PayoutInvoiceCandidate[] }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [open, setOpen] = useState(false);
@@ -45,8 +45,7 @@ export function IssueInvoicePanel({ candidates }: { candidates: InvoiceCandidate
   }
 
   const total = useMemo(
-    () =>
-      candidates.filter((c) => selected.has(c.id)).reduce((sum, c) => sum + c.profit, 0),
+    () => candidates.filter((c) => selected.has(c.id)).reduce((sum, c) => sum + c.profit, 0),
     [candidates, selected],
   );
 
@@ -64,7 +63,7 @@ export function IssueInvoicePanel({ candidates }: { candidates: InvoiceCandidate
       const result = await issueInvoice({
         invoice_number: invoiceNumber,
         invoice_date: invoiceDate || todayBelgrade(),
-        order_ids: [...selected],
+        payout_ids: [...selected],
       });
       if (result.error) {
         toast.error(result.error);
@@ -96,7 +95,7 @@ export function IssueInvoicePanel({ candidates }: { candidates: InvoiceCandidate
         <DialogHeader>
           <DialogTitle>Nova faktura drugu</DialogTitle>
           <DialogDescription>
-            Uplaćene nefakturisane porudžbine. Total = Σ zarada izabranih (zamrznuto). Izabrane
+            Nefakturisane uplate. Total = Σ zarada izabranih (zamrznuto). Izabrane uplate i njihove
             porudžbine dobijaju broj fakture i zaključavaju stavke.
           </DialogDescription>
         </DialogHeader>
@@ -126,15 +125,15 @@ export function IssueInvoicePanel({ candidates }: { candidates: InvoiceCandidate
           {/* Zbir zarade */}
           <div className="border-green/30 bg-green-soft text-green flex flex-wrap items-center justify-between gap-2 rounded-lg border px-4 py-2.5 text-sm">
             <span>
-              Izabrano: <span className="num font-medium">{num(selected.size)}</span> porudžbina
+              Izabrano: <span className="num font-medium">{num(selected.size)}</span> uplata
             </span>
             <span className="num font-semibold">Zarada: {rsd(total)}</span>
           </div>
 
-          {/* Kandidati */}
+          {/* Kandidati (uplate) */}
           <div className="border-border divide-border max-h-72 divide-y overflow-y-auto rounded-lg border">
             {candidates.length === 0 ? (
-              <p className="text-ink-soft px-4 py-6 text-sm">Nema kandidata za fakturu.</p>
+              <p className="text-ink-soft px-4 py-6 text-sm">Nema uplata za fakturisanje.</p>
             ) : (
               candidates.map((c) => (
                 <label
@@ -147,14 +146,9 @@ export function IssueInvoicePanel({ candidates }: { candidates: InvoiceCandidate
                     checked={selected.has(c.id)}
                     onChange={() => toggle(c.id)}
                   />
-                  <span className="num text-ink font-medium">
-                    {c.woo_order_id != null ? `#${c.woo_order_id}` : "—"}
-                  </span>
+                  <span className="num text-ink font-medium">{datum(c.payout_date)}</span>
                   <span className="text-ink-soft min-w-0 flex-1 truncate text-sm">
-                    {c.ship_name ?? "—"}
-                  </span>
-                  <span className="num text-ink-faint text-xs">
-                    {c.delivered_at ? datum(c.delivered_at) : "—"}
+                    {num(c.linkedCount)} porudžbina
                   </span>
                   <span className="num text-ink text-sm">{rsd(c.profit)}</span>
                 </label>
