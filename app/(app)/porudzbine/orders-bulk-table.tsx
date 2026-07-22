@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { ChevronDown, FileText, Send } from "lucide-react";
 import { toast } from "sonner";
@@ -63,6 +63,11 @@ export function OrdersBulkTable({
   flow: FlowIds;
 }) {
   const router = useRouter();
+  const params = useSearchParams();
+  // „Nazad na porudžbine" sa detalja vraća ove filtere (URL passthrough).
+  const backQs = params.toString();
+  const detailHref = (o: OrderListRow) =>
+    `/porudzbine/${o.woo_order_id ?? o.id}${backQs ? `?back=${encodeURIComponent(backQs)}` : ""}`;
   const [pending, startTransition] = useTransition();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   // Bulk promena statusa: izabrani ciljni status + (obavezan) razlog za Otkazano/Vraćeno.
@@ -266,7 +271,7 @@ export function OrdersBulkTable({
                   />
                 </TableCell>
                 <TableCell className="px-4 py-2.5">
-                  <Link href={`/porudzbine/${o.woo_order_id ?? o.id}`} className="after:absolute after:inset-0">
+                  <Link href={detailHref(o)} className="after:absolute after:inset-0">
                     <span className="num text-ink font-medium">
                       {o.woo_order_id != null ? `#${o.woo_order_id}` : "—"}
                     </span>
@@ -306,7 +311,7 @@ export function OrdersBulkTable({
         {orders.map((o) => (
           <MobileCard
             key={o.id}
-            href={`/porudzbine/${o.woo_order_id ?? o.id}`}
+            href={detailHref(o)}
             ariaLabel={`Porudžbina ${o.woo_order_id ?? ""}`}
           >
             <MobileCardHeader

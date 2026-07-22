@@ -48,6 +48,7 @@ type Draft = {
   delivery: string;
   payment: string;
   needsVp: boolean;
+  risky: boolean;
   from: string;
   to: string;
 };
@@ -57,6 +58,7 @@ const EMPTY_DRAFT: Draft = {
   delivery: ALL,
   payment: ALL,
   needsVp: false,
+  risky: false,
   from: "",
   to: "",
 };
@@ -99,6 +101,7 @@ export function OrdersFilterBar({ statuses }: { statuses: OrderStatusRow[] }) {
         delivery: params.get("delivery") ?? ALL,
         payment: params.get("payment") ?? ALL,
         needsVp: params.get("needs_vp") === "1",
+        risky: params.get("risky") === "1",
         from: params.get("from") ?? "",
         to: params.get("to") ?? "",
       });
@@ -114,6 +117,7 @@ export function OrdersFilterBar({ statuses }: { statuses: OrderStatusRow[] }) {
     (params.get("delivery") ? 1 : 0) +
     (params.get("payment") ? 1 : 0) +
     (params.get("needs_vp") === "1" ? 1 : 0) +
+    (params.get("risky") === "1" ? 1 : 0) +
     (params.get("from") ? 1 : 0) +
     (params.get("to") ? 1 : 0);
 
@@ -123,6 +127,7 @@ export function OrdersFilterBar({ statuses }: { statuses: OrderStatusRow[] }) {
       delivery: draft.delivery,
       payment: draft.payment,
       needs_vp: draft.needsVp ? "1" : null,
+      risky: draft.risky ? "1" : null,
       from: draft.from || null,
       to: draft.to || null,
     });
@@ -136,6 +141,7 @@ export function OrdersFilterBar({ statuses }: { statuses: OrderStatusRow[] }) {
       delivery: null,
       payment: null,
       needs_vp: null,
+      risky: null,
       from: null,
       to: null,
     });
@@ -248,6 +254,16 @@ export function OrdersFilterBar({ statuses }: { statuses: OrderStatusRow[] }) {
                 className="accent-green size-4"
               />
               Samo „Nedostaje VP“
+            </label>
+
+            <label className="text-ink-soft flex cursor-pointer items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={draft.risky}
+                onChange={(e) => setDraft((d) => ({ ...d, risky: e.target.checked }))}
+                className="accent-green size-4"
+              />
+              Samo rizični kupci
             </label>
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

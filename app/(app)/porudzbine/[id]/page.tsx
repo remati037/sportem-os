@@ -10,6 +10,7 @@ import {
   getOrderStatusHistory,
 } from "@/db/orders";
 import { getOrderCancellationHistory, porudzbinePlural } from "@/db/customer-risk";
+import { otkupOf } from "@/db/finance";
 import { rsd, datum, datumVreme } from "@/lib/format";
 import { APP_STATUS } from "@/lib/woo";
 import { Badge } from "@/components/ui/badge";
@@ -27,8 +28,18 @@ export const dynamic = "force-dynamic";
  * (istorija „ko i kada"); Admin edituje stavke i radi keš prodaju; fakturisana
  * porudžbina je zaključana za edit stavki.
  */
-export default async function PorudzbinaPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function PorudzbinaPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const { id } = await params;
+  const sp = await searchParams;
+  // „Nazad" čuva prethodne filtere liste (URL passthrough kroz `back` param).
+  const backRaw = Array.isArray(sp.back) ? sp.back[0] : sp.back;
+  const backHref = backRaw ? `/porudzbine?${decodeURIComponent(backRaw)}` : "/porudzbine";
   const { profile } = await requireRole("admin", "manager");
   const isAdmin = profile.role === "admin";
 
@@ -58,7 +69,7 @@ export default async function PorudzbinaPage({ params }: { params: Promise<{ id:
   return (
     <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-10 sm:px-6">
       <Link
-        href="/porudzbine"
+        href={backHref}
         className="text-ink-soft hover:text-ink mb-6 inline-flex items-center gap-1.5 text-sm"
       >
         <ArrowLeft className="size-4" /> Nazad na porudžbine
@@ -171,8 +182,8 @@ export default async function PorudzbinaPage({ params }: { params: Promise<{ id:
               num
             />
             <Row
-              label="Otkupnina (COD)"
-              value={order.cod_amount != null ? rsd(order.cod_amount) : "—"}
+              label="Otkupnina"
+              value={rsd(otkupOf(order.goods_total, order.shipping_charged))}
               num
             />
             <Row

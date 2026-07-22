@@ -116,8 +116,10 @@ export function ShippingListDocument({
         </View>
 
         {orders.map((o) => {
-          const showCod =
-            o.delivery_method === "xexpress" && o.cod_amount != null && o.cod_amount > 0;
+          // Otkupnina = roba + naplaćena poštarina (cod_amount je nepouzdan — NULL na
+          // backfill/ne-COD; usklađeno sa finansijama).
+          const otkup = (o.goods_total ?? 0) + (o.shipping_charged ?? 0);
+          const showCod = o.delivery_method === "xexpress" && otkup > 0;
           return (
             <View key={o.id} style={styles.block} wrap={false}>
               <View style={styles.blockHead}>
@@ -151,7 +153,7 @@ export function ShippingListDocument({
                   Težina: {o.weight_grams != null ? `${num(o.weight_grams)} g` : "—"}
                 </Text>
                 {showCod ? (
-                  <Text style={styles.cod}>Otkupnina: {rsd(o.cod_amount as number)}</Text>
+                  <Text style={styles.cod}>Otkupnina: {rsd(otkup)}</Text>
                 ) : (
                   <Text style={styles.codNone}>
                     {o.delivery_method === "licno" ? "Lično" : "Bez otkupnine"}

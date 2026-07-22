@@ -85,6 +85,8 @@ export type OrderFilters = {
   search?: string;
   /** Polje pretrage: „all" (default) / „name" / „email" / „phone". */
   searchField?: "all" | "name" | "email" | "phone";
+  /** Samo rizični kupci (istorija otkazivanja/vraćanja po tel/e-mailu). */
+  onlyRisky?: boolean;
   /** Paginacija (1-based). */
   page?: number;
   perPage?: number;
@@ -160,23 +162,37 @@ export async function getOrders(filters: OrderFilters = {}): Promise<OrdersResul
     query = query.or(orParts.join(","));
   }
 
-  const fromIdx = (page - 1) * perPage;
-  const { data, count } = await query
-    .order("ordered_at", { ascending: false, nullsFirst: false })
-    .range(fromIdx, fromIdx + perPage - 1);
-
-  const rows = (data as unknown as OrderListRow[]) ?? [];
+  const orderedQuery = query.order("ordered_at", { ascending: false, nullsFirst: false });
 
   // „Rizičan kupac" flag po redu (istorija otkazivanja/vraćanja po tel/e-mailu).
   const riskIndex = await buildCancellationIndex(supabase);
-  for (const row of rows) {
-    row.risky_cancel_count = matchCancellations(riskIndex, {
-      phone: row.ship_phone ?? row.customer?.phone,
-      email: row.customer?.email,
-      excludeId: row.id,
-    }).length;
+  const annotateRisk = (rows: OrderListRow[]): OrderListRow[] => {
+    for (const row of rows) {
+      row.risky_cancel_count = matchCancellations(riskIndex, {
+        phone: row.ship_phone ?? row.customer?.phone,
+        email: row.customer?.email,
+        excludeId: row.id,
+      }).length;
+    }
+    return rows;
+  };
+
+  const fromIdx = (page - 1) * perPage;
+
+  if (filters.onlyRisky) {
+    // Rizik nije SQL kolona — povuci sve redove koji prolaze ostale filtere (širok
+    // cap), izračunaj rizik, zadrži rizične, pa paginiraj u JS-u. Dovoljno za obim
+    // internog kataloga porudžbina; cap sprečava da PostgREST default limit tiho odseče.
+    const RISK_SCAN_CAP = 5000;
+    const { data } = await orderedQuery.range(0, RISK_SCAN_CAP - 1);
+    const risky = annotateRisk((data as unknown as OrderListRow[]) ?? []).filter(
+      (r) => r.risky_cancel_count > 0,
+    );
+    return { rows: risky.slice(fromIdx, fromIdx + perPage), total: risky.length };
   }
 
+  const { data, count } = await orderedQuery.range(fromIdx, fromIdx + perPage - 1);
+  const rows = annotateRisk((data as unknown as OrderListRow[]) ?? []);
   return { rows, total: count ?? 0 };
 }
 
@@ -278,6 +294,8 @@ export type ShippingOrder = {
   ship_postal_code: string | null;
   ship_note: string | null;
   cod_amount: number | null;
+  goods_total: number | null;
+  shipping_charged: number | null;
   delivery_method: string;
   payment_status: string;
   package_count: number | null;
@@ -297,8 +315,8 @@ export async function getOrdersForShipping(ids: string[]): Promise<ShippingOrder
     .from("orders")
     .select(
       `id, woo_order_id, ship_name, ship_phone, ship_address, ship_city, ship_postal_code,
-       ship_note, cod_amount, delivery_method, payment_status, package_count, weight_grams,
-       items:order_items(sku, product_name, quantity)`,
+       ship_note, cod_amount, goods_total, shipping_charged, delivery_method, payment_status,
+       package_count, weight_grams, items:order_items(sku, product_name, quantity)`,
     )
     .in("id", ids)
     .order("woo_order_id", { ascending: true, nullsFirst: false });

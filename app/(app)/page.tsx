@@ -18,6 +18,7 @@ import { resolvePeriod } from "@/lib/period";
 import { EmptyState } from "@/components/patterns/empty-state";
 
 import { PeriodFilter } from "./period-filter";
+import { OrdersRefresh } from "./porudzbine/orders-refresh";
 
 export const dynamic = "force-dynamic";
 
@@ -81,9 +82,12 @@ export default async function DashboardPage({
 
   return (
     <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-10">
-      <div className="mb-6 space-y-1">
-        <div className="eyebrow">Pregled</div>
-        <h1 className="text-ink text-xl font-bold">Dashboard</h1>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div className="space-y-1">
+          <div className="eyebrow">Pregled</div>
+          <h1 className="text-ink text-xl font-bold">Dashboard</h1>
+        </div>
+        <OrdersRefresh />
       </div>
 
       <PeriodFilter period={period} />

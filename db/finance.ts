@@ -36,7 +36,7 @@ export type PayoutCandidate = {
  * (`shipping_charged`). `cod_amount` se NE koristi — NULL je na backfill i
  * ne-COD porudžbinama; `goods_total` je pouzdano popunjen svuda.
  */
-function otkupOf(goods_total: number | null, shipping_charged: number | null): number {
+export function otkupOf(goods_total: number | null, shipping_charged: number | null): number {
   return (goods_total ?? 0) + (shipping_charged ?? 0);
 }
 

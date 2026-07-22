@@ -31,9 +31,17 @@ type IndexRow = {
   customer: { phone: string | null; email: string | null } | null;
 };
 
+/*
+ * Naši interni mejlovi — ponekad sami napravimo porudžbinu sa svojim mejlom kad
+ * nam se kupac javi. Ne smeju da čine kupca „rizičnim": tretiramo ih kao da nema
+ * e-maila (izbacuje ih i iz indeksa i iz poklapanja). Telefon i dalje matchuje.
+ */
+const OUR_EMAILS = new Set(["mmarkom2000@gmail.com", "milenkovic.m2003@gmail.com"]);
+
 function normEmail(raw: string | null | undefined): string | null {
   const e = (raw ?? "").trim().toLowerCase();
-  return e || null;
+  if (!e || OUR_EMAILS.has(e)) return null;
+  return e;
 }
 
 function pushTo(map: Map<string, CancelEntry[]>, key: string | null, entry: CancelEntry): void {

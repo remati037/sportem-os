@@ -51,6 +51,7 @@ export default async function PorudzbinePage({
       paymentStatus: one(sp.payment),
       needsVp: one(sp.needs_vp) === "1",
       needsReview: one(sp.needs_review) === "1",
+      onlyRisky: one(sp.risky) === "1",
       from: one(sp.from),
       to: one(sp.to),
       page,
