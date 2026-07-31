@@ -16,6 +16,8 @@ export type VariantRow = {
   weight_grams: number | null;
   image: string | null;
   archived_at: string | null;
+  /** Kad je stanje poslednji put popisano; null = količina nikad uneta. */
+  stock_counted_at: string | null;
   /** Vrednosti atributa po nazivu (npr. {"Težina": "1 kg"}). Vidi i Logistika. */
   attributes: Record<string, string>;
   // Samo Admin/Menadžer (Logistika: undefined — kolone ne postoje):
@@ -42,7 +44,22 @@ export type ProductWithVariants = ProductRow & {
   variants: VariantRow[];
 };
 
-/** Da li je varijanta na niskom stanju (aktivna i ≤ prag). */
+/**
+ * Da li je varijanta na niskom stanju (aktivna, POPISANA i ≤ prag).
+ *
+ * Nepopisane se namerno ne broje: `stock_quantity` je `default 0`, pa bi svaka
+ * varijanta čija količina nikad nije uneta lažno padala u nisko stanje.
+ * Popisana nula JESTE nisko stanje — to je stvarno prazna polica.
+ */
 export function isVariantLowStock(v: VariantRow): boolean {
-  return v.archived_at == null && v.stock_quantity <= v.low_stock_threshold;
+  return (
+    v.archived_at == null &&
+    v.stock_counted_at != null &&
+    v.stock_quantity <= v.low_stock_threshold
+  );
+}
+
+/** Aktivna varijanta kojoj količina nikad nije uneta („Fali količina"). */
+export function isVariantUncounted(v: VariantRow): boolean {
+  return v.archived_at == null && v.stock_counted_at == null;
 }

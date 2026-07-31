@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { firstZodError } from "@/lib/actions";
 import { requireRole } from "@/lib/auth";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { deleteCatalogImage, uploadCatalogImage } from "@/lib/storage";
 import {
@@ -11,6 +12,7 @@ import {
   MAX_IMAGE_BYTES,
   categorySchema,
   productSchema,
+  stockCountSchema,
   variantSchema,
 } from "@/lib/validation/catalog";
 
@@ -266,7 +268,7 @@ export async function createVariant(
   _prev: CatalogActionState,
   formData: FormData,
 ): Promise<CatalogActionState> {
-  await requireRole("admin");
+  const { userId } = await requireRole("admin");
 
   const parsed = variantSchema.safeParse({
     product_id: formData.get("product_id"),
@@ -285,10 +287,14 @@ export async function createVariant(
   const image = await handleImageUpload(formData, "variants");
   if (image.error) return { error: image.error };
 
+  // Forma uvek nosi polje „Stanje" → čuvanje je ujedno i popis (v. setStockCount).
   const supabase = await createClient();
-  const { error } = await supabase
-    .from("product_variants")
-    .insert({ ...parsed.data, image: image.path });
+  const { error } = await supabase.from("product_variants").insert({
+    ...parsed.data,
+    image: image.path,
+    stock_counted_at: new Date().toISOString(),
+    stock_counted_by: userId,
+  });
 
   if (error) {
     if (image.uploaded) await deleteCatalogImage(image.path);
@@ -304,7 +310,7 @@ export async function updateVariant(
   _prev: CatalogActionState,
   formData: FormData,
 ): Promise<CatalogActionState> {
-  await requireRole("admin");
+  const { userId } = await requireRole("admin");
 
   const id = String(formData.get("id") ?? "");
   if (!id) return { error: "Neispravan unos." };
@@ -335,7 +341,12 @@ export async function updateVariant(
   if (image.error) return { error: image.error };
 
   const { product_id, ...rest } = parsed.data;
-  const patch: Record<string, unknown> = { ...rest };
+  // Čuvanje forme potvrđuje i stanje → varijanta se broji kao popisana.
+  const patch: Record<string, unknown> = {
+    ...rest,
+    stock_counted_at: new Date().toISOString(),
+    stock_counted_by: userId,
+  };
   if (image.uploaded) patch.image = image.path;
   else if (removeImage) patch.image = null;
 
@@ -352,6 +363,43 @@ export async function updateVariant(
 
   revalidateCatalog(product_id);
   return { error: null, success: "Varijanta izmenjena." };
+}
+
+/**
+ * Popis zaliha — označi da je stanje varijante provereno („pogledao sam"), uz
+ * opcioni unos količine. Popisana nula je validno stanje i ulazi u nisko stanje;
+ * nepopisana varijanta ne ulazi (v. `isVariantLowStock`).
+ *
+ * Jedina katalog akcija dostupna i Logistici — ona drži fizički magacin pa i
+ * popisuje. Logistika NEMA write RLS na `product_variants` (čita restriktovani
+ * view bez cena), zato upis ide kroz service-role klijent uz `requireRole`
+ * guard na serveru; patch dira isključivo stanje i oznaku popisa — nikad cene.
+ */
+export async function setStockCount(input: {
+  variant_id: string;
+  product_id?: string;
+  counted: boolean;
+  stock_quantity?: number;
+}): Promise<CatalogActionState> {
+  const { userId } = await requireRole("admin", "logistics");
+
+  const parsed = stockCountSchema.safeParse(input);
+  if (!parsed.success) return { error: firstZodError(parsed.error) };
+
+  const { variant_id, product_id, counted, stock_quantity } = parsed.data;
+
+  const patch: Record<string, unknown> = counted
+    ? { stock_counted_at: new Date().toISOString(), stock_counted_by: userId }
+    : { stock_counted_at: null, stock_counted_by: null };
+  // Skidanje oznake ne dira količinu (ostaje poslednja poznata).
+  if (counted && stock_quantity != null) patch.stock_quantity = stock_quantity;
+
+  const supabase = createAdminClient();
+  const { error } = await supabase.from("product_variants").update(patch).eq("id", variant_id);
+  if (error) return { error: "Čuvanje popisa nije uspelo." };
+
+  revalidateCatalog(product_id);
+  return { error: null, success: counted ? "Popisano." : "Oznaka popisa skinuta." };
 }
 
 export async function archiveVariant(id: string): Promise<CatalogActionState> {

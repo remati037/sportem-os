@@ -11,7 +11,7 @@ import {
 
 import { getProfile } from "@/lib/auth";
 import { getDashboardMetrics, getWaitingOrders } from "@/db/dashboard";
-import { getLowStockVariants } from "@/db/catalog";
+import { getLowStockVariants, getUncountedVariantCount } from "@/db/catalog";
 import { rsd, num } from "@/lib/format";
 import { resolvePeriod } from "@/lib/period";
 import { EmptyState } from "@/components/patterns/empty-state";
@@ -42,10 +42,11 @@ export default async function DashboardPage({
 
   const period = resolvePeriod(await searchParams);
 
-  const [metrics, waiting, lowStock] = await Promise.all([
+  const [metrics, waiting, lowStock, uncounted] = await Promise.all([
     getDashboardMetrics({ from: period.from, to: period.to }),
     getWaitingOrders(),
     getLowStockVariants(),
+    getUncountedVariantCount(),
   ]);
 
   const marzaPct = Math.round(metrics.marza * 100);
@@ -188,6 +189,20 @@ export default async function DashboardPage({
             ) : null}
           </div>
         )}
+
+        {/* Nepopisane ne ulaze u nisko stanje — reci koliko ih čeka. */}
+        {uncounted > 0 ? (
+          <div className="border-border bg-surface text-ink-soft mt-3 flex items-start gap-2 rounded-lg border px-4 py-3 text-sm">
+            <Info className="text-ink-faint mt-0.5 size-4 shrink-0" />
+            <div>
+              {num(uncounted)} varijanti nema unetu količinu i ne ulazi u nisko stanje.{" "}
+              <Link href="/katalog?popis=fali" className="text-green font-medium hover:underline">
+                Popiši ih u katalogu
+              </Link>
+              .
+            </div>
+          </div>
+        ) : null}
       </section>
     </main>
   );

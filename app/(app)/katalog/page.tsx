@@ -11,10 +11,17 @@ import { ProductFormDialog } from "./product-form";
 
 export const dynamic = "force-dynamic";
 
-export default async function KatalogPage() {
+export default async function KatalogPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const { profile } = await requireRole("admin", "manager", "logistics");
   const role = profile.role;
   const isAdmin = role === "admin";
+
+  // `?popis=fali` — link sa Dashboarda otvara katalog sa uključenim filterom.
+  const uncountedOnly = (await searchParams).popis === "fali";
 
   const [products, categories] = await Promise.all([getCatalog({ role }), getCategories()]);
   const categoryOptions = categories.map((c) => ({ id: c.id, name: c.name }));
@@ -55,7 +62,12 @@ export default async function KatalogPage() {
         ) : null}
       </div>
 
-      <CatalogTable products={products} role={role} categories={categoryOptions} />
+      <CatalogTable
+        products={products}
+        role={role}
+        categories={categoryOptions}
+        initialUncountedOnly={uncountedOnly}
+      />
     </main>
   );
 }

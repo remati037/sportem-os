@@ -109,6 +109,17 @@ export const variantSchema = z.object({
   attributes: attributeValues,
 });
 
+/**
+ * Popis zaliha — „pogledao sam ovu varijantu". `counted: false` skida oznaku i
+ * NE dira količinu; `stock_quantity` je opciono (čekboks bez unosa cifre).
+ */
+export const stockCountSchema = z.object({
+  variant_id: uuid("Neispravna varijanta."),
+  product_id: uuid("Neispravan proizvod.").optional(),
+  counted: z.boolean(),
+  stock_quantity: nonNegativeInt("Stanje mora biti ceo broj ≥ 0.").optional(),
+});
+
 /* ── Uvoz iz CSV-a (Korak 1.1b) ─────────────────────────────────────────────
  * Vrednosti iz Sheets-a su slobodni stringovi. Srpski brojevi mogu imati tačku
  * kao separator hiljada („9.990" = 9990) → skini sve osim cifara pre parsiranja.

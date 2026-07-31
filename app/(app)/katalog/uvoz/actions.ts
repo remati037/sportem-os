@@ -172,7 +172,7 @@ export async function previewImport(items: ImportItem[]): Promise<ImportReport> 
 
 /** Upis: kreira kategorije/proizvode, insert/update varijanti (idempotentno po SKU). */
 export async function commitImport(items: ImportItem[]): Promise<ImportReport> {
-  await requireRole("admin");
+  const { userId } = await requireRole("admin");
   if (!Array.isArray(items) || items.length === 0) {
     return {
       totalRows: 0,
@@ -235,6 +235,9 @@ export async function commitImport(items: ImportItem[]): Promise<ImportReport> {
     // 3) Varijante: postojeći SKU → update; novi → insert.
     for (const r of validRows) {
       const d = r.data;
+      // Kolona sa količinom je mapirana → uneta cifra se broji kao popis.
+      // Ako nije mapirana, oznaka popisa se ne dira.
+      const counted = d.stock_quantity != null;
       const fields = {
         variant_name: deriveVariantName(d.sku, d.variant_name),
         mp_price: d.mp_price,
@@ -243,6 +246,7 @@ export async function commitImport(items: ImportItem[]): Promise<ImportReport> {
         low_stock_threshold: d.low_stock_threshold ?? 5,
         supplier_sku: d.supplier_sku,
         weight_grams: d.weight_grams ?? null,
+        ...(counted ? { stock_counted_at: new Date().toISOString(), stock_counted_by: userId } : {}),
       };
 
       const existing = existingBySku.get(d.sku);

@@ -17,12 +17,12 @@ import type { CategoryRow, ProductRow, ProductWithVariants, VariantRow } from "@
  */
 
 export type { CategoryRow, ProductRow, ProductWithVariants, VariantRow };
-export { isVariantLowStock } from "@/db/catalog-types";
+export { isVariantLowStock, isVariantUncounted } from "@/db/catalog-types";
 
 const PRODUCT_COLS =
   "id, name, description, brand, image, category_id, attribute_names, archived_at, updated_at";
 const VARIANT_PUBLIC_COLS =
-  "id, product_id, sku, variant_name, stock_quantity, low_stock_threshold, supplier_sku, weight_grams, image, archived_at, attributes";
+  "id, product_id, sku, variant_name, stock_quantity, low_stock_threshold, supplier_sku, weight_grams, image, archived_at, attributes, stock_counted_at";
 const VARIANT_STAFF_COLS = `${VARIANT_PUBLIC_COLS}, mp_price, vp_price, profit`;
 
 function canSeeFinance(role: Role): boolean {
@@ -103,10 +103,12 @@ export type LowStockVariant = {
 };
 
 /**
- * Varijante na niskom stanju (aktivne, `stock_quantity ≤ low_stock_threshold`,
+ * Varijante na niskom stanju (aktivne, POPISANE, `stock_quantity ≤ prag`,
  * proizvod nearhiviran) — za Dashboard (Korak 1.8). Poređenje dve kolone se ne
  * može kroz PostgREST filter, pa se aktivne varijante filtriraju u JS-u (dataset
  * kataloga je mali). Samo Admin/Menadžer čitaju base tabelu (Dashboard je STAFF).
+ *
+ * Nepopisane (`stock_counted_at is null`) su isključene — v. `isVariantLowStock`.
  */
 export async function getLowStockVariants(): Promise<LowStockVariant[]> {
   const supabase = await createClient();
@@ -115,7 +117,8 @@ export async function getLowStockVariants(): Promise<LowStockVariant[]> {
     .select(
       "id, product_id, sku, variant_name, stock_quantity, low_stock_threshold, archived_at, products(name, archived_at)",
     )
-    .is("archived_at", null);
+    .is("archived_at", null)
+    .not("stock_counted_at", "is", null);
 
   const rows =
     (data as unknown as {
@@ -145,6 +148,22 @@ export async function getLowStockVariants(): Promise<LowStockVariant[]> {
       low_stock_threshold: r.low_stock_threshold,
     }))
     .sort((a, b) => a.stock_quantity - b.stock_quantity || a.sku.localeCompare(b.sku));
+}
+
+/**
+ * Broj aktivnih varijanti kojima količina nikad nije uneta („Fali količina").
+ * Za napomenu na Dashboardu — te varijante ne ulaze u nisko stanje.
+ */
+export async function getUncountedVariantCount(): Promise<number> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("product_variants")
+    .select("id, products(archived_at)")
+    .is("archived_at", null)
+    .is("stock_counted_at", null);
+
+  const rows = (data as unknown as { products: { archived_at: string | null } | null }[]) ?? [];
+  return rows.filter((r) => r.products != null && r.products.archived_at == null).length;
 }
 
 /** Jedan proizvod sa svim varijantama (uklj. arhivirane — za detalj/edit). */

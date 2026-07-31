@@ -5,7 +5,7 @@ import { useState, useTransition } from "react";
 import { Archive, ArchiveRestore, ImageIcon, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
-import { isVariantLowStock, type VariantRow } from "@/db/catalog-types";
+import { isVariantLowStock, isVariantUncounted, type VariantRow } from "@/db/catalog-types";
 import { catalogImageUrl } from "@/lib/image-url";
 import { rsd } from "@/lib/format";
 import {
@@ -32,7 +32,19 @@ import {
   unarchiveVariant,
   type CatalogActionState,
 } from "./actions";
+import { StockCountControl } from "./stock-count-control";
 import { VariantFormDialog } from "./variant-form";
+
+/** Prikaz stanja: cifra + „Nisko" / „Fali količina" (kad nije popisano). */
+function StockCell({ variant }: { variant: VariantRow }) {
+  return (
+    <span className="num inline-flex items-center gap-2">
+      {variant.stock_quantity}
+      {isVariantLowStock(variant) ? <Badge variant="warning">Nisko</Badge> : null}
+      {isVariantUncounted(variant) ? <Badge>Fali količina</Badge> : null}
+    </span>
+  );
+}
 
 function VariantThumb({ image }: { image: string | null }) {
   const url = catalogImageUrl(image);
@@ -117,12 +129,15 @@ export function VariantsTable({
   variants,
   canSeeFinance,
   isAdmin,
+  canCount = false,
 }: {
   productId: string;
   attributeNames: string[];
   variants: VariantRow[];
   canSeeFinance: boolean;
   isAdmin: boolean;
+  /** Admin + Logistika smeju da popisuju (unos stanja + oznaka „Popisano"). */
+  canCount?: boolean;
 }) {
   return (
     <>
@@ -188,11 +203,21 @@ export function VariantsTable({
                       </TableCell>
                     </>
                   ) : null}
-                  <TableCell className="num px-4 py-2.5 text-right">
-                    <span className="inline-flex items-center gap-2">
-                      {v.stock_quantity}
-                      {isVariantLowStock(v) ? <Badge variant="warning">Nisko</Badge> : null}
-                    </span>
+                  <TableCell className="px-4 py-2 text-right">
+                    {canCount && !archived ? (
+                      <div className="flex flex-col items-end gap-1">
+                        <StockCountControl
+                          variantId={v.id}
+                          productId={productId}
+                          stockQuantity={v.stock_quantity}
+                          countedAt={v.stock_counted_at}
+                        />
+                        {isVariantLowStock(v) ? <Badge variant="warning">Nisko</Badge> : null}
+                        {isVariantUncounted(v) ? <Badge>Fali količina</Badge> : null}
+                      </div>
+                    ) : (
+                      <StockCell variant={v} />
+                    )}
                   </TableCell>
                   <TableCell className="num text-ink-soft px-4 py-2.5 text-right">
                     {v.weight_grams ? `${v.weight_grams} g` : "—"}
@@ -242,10 +267,21 @@ export function VariantsTable({
               />
               <div className="mt-3 space-y-1.5">
                 <MobileCardField label="Stanje">
-                  <span className="num inline-flex items-center gap-2">
-                    {v.stock_quantity}
-                    {isVariantLowStock(v) ? <Badge variant="warning">Nisko</Badge> : null}
-                  </span>
+                  {canCount && !archived ? (
+                    <span className="inline-flex flex-col items-end gap-1">
+                      <StockCountControl
+                        variantId={v.id}
+                        productId={productId}
+                        stockQuantity={v.stock_quantity}
+                        countedAt={v.stock_counted_at}
+                        showLabel
+                      />
+                      {isVariantLowStock(v) ? <Badge variant="warning">Nisko</Badge> : null}
+                      {isVariantUncounted(v) ? <Badge>Fali količina</Badge> : null}
+                    </span>
+                  ) : (
+                    <StockCell variant={v} />
+                  )}
                 </MobileCardField>
                 {canSeeFinance ? (
                   <>

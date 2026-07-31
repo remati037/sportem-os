@@ -124,6 +124,7 @@ export default async function ProizvodPage({ params }: { params: Promise<{ id: s
           variants={product.variants}
           canSeeFinance={canSeeFinance}
           isAdmin={isAdmin}
+          canCount={role === "admin" || role === "logistics"}
         />
       )}
     </main>

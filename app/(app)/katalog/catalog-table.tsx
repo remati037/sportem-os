@@ -6,7 +6,12 @@ import { type ColumnDef } from "@tanstack/react-table";
 import { ImageIcon, Package } from "lucide-react";
 
 import type { Role } from "@/lib/auth";
-import { isVariantLowStock, type ProductWithVariants } from "@/db/catalog-types";
+import {
+  isVariantLowStock,
+  isVariantUncounted,
+  type ProductWithVariants,
+  type VariantRow,
+} from "@/db/catalog-types";
 import { catalogImageUrl } from "@/lib/image-url";
 import { rsd } from "@/lib/format";
 import { DataTable } from "@/components/patterns/data-table";
@@ -27,6 +32,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+import { StockCountControl } from "./stock-count-control";
+
 type CatalogRow = {
   id: string;
   name: string;
@@ -36,6 +43,10 @@ type CatalogRow = {
   variantCount: number;
   totalStock: number;
   lowStock: boolean;
+  /** Broj aktivnih varijanti kojima količina nikad nije uneta. */
+  uncounted: number;
+  /** Jedina aktivna varijanta (brz popis iz liste, bez ulaska u detalj). */
+  soleVariant: VariantRow | null;
   archived: boolean;
   skus: string;
   mpMin: number | null;
@@ -56,6 +67,8 @@ function toRow(p: ProductWithVariants): CatalogRow {
     variantCount: active.length,
     totalStock: active.reduce((s, v) => s + v.stock_quantity, 0),
     lowStock: active.some(isVariantLowStock),
+    uncounted: active.filter(isVariantUncounted).length,
+    soleVariant: active.length === 1 ? active[0] : null,
     archived: p.archived_at != null,
     skus: p.variants.map((v) => v.sku).join(" "),
     mpMin: prices.length ? Math.min(...prices) : null,
@@ -81,15 +94,20 @@ export function CatalogTable({
   products,
   role,
   categories,
+  initialUncountedOnly = false,
 }: {
   products: ProductWithVariants[];
   role: Role;
   categories: { id: string; name: string }[];
+  /** `?popis=fali` (npr. link sa Dashboarda) → filter je odmah uključen. */
+  initialUncountedOnly?: boolean;
 }) {
   const canSeeFinance = role === "admin" || role === "manager";
+  const canCount = role === "admin" || role === "logistics";
   const [search, setSearch] = React.useState("");
   const [categoryId, setCategoryId] = React.useState(ALL_CATEGORIES);
   const [lowStockOnly, setLowStockOnly] = React.useState(false);
+  const [uncountedOnly, setUncountedOnly] = React.useState(initialUncountedOnly);
 
   const allRows = React.useMemo(() => products.map(toRow), [products]);
 
@@ -105,9 +123,10 @@ export function CatalogTable({
         if (!match) return false;
       }
       if (lowStockOnly && !r.lowStock) return false;
+      if (uncountedOnly && r.uncounted === 0) return false;
       return true;
     });
-  }, [allRows, products, search, categoryId, lowStockOnly]);
+  }, [allRows, products, search, categoryId, lowStockOnly, uncountedOnly]);
 
   const columns = React.useMemo<ColumnDef<CatalogRow>[]>(() => {
     const cols: ColumnDef<CatalogRow>[] = [
@@ -166,17 +185,40 @@ export function CatalogTable({
     cols.push({
       accessorKey: "totalStock",
       header: ({ column }) => <DataTableColumnHeader column={column} title="Stanje" />,
-      cell: ({ row }) => (
-        <span className="inline-flex items-center gap-2">
-          {row.original.totalStock}
-          {row.original.lowStock ? <Badge variant="warning">Nisko</Badge> : null}
-        </span>
-      ),
+      cell: ({ row }) => {
+        const r = row.original;
+        return (
+          <div className="flex flex-col items-end gap-1">
+            {/* Proizvod sa jednom varijantom se popisuje odmah iz liste;
+                za više varijanti popis ide na detalju proizvoda. */}
+            {canCount && r.soleVariant ? (
+              <StockCountControl
+                variantId={r.soleVariant.id}
+                productId={r.id}
+                stockQuantity={r.soleVariant.stock_quantity}
+                countedAt={r.soleVariant.stock_counted_at}
+              />
+            ) : (
+              <span>{r.totalStock}</span>
+            )}
+            {r.lowStock || r.uncounted > 0 ? (
+              <span className="flex items-center gap-1">
+                {r.lowStock ? <Badge variant="warning">Nisko</Badge> : null}
+                {r.uncounted > 0 ? (
+                  <Badge>
+                    {r.soleVariant ? "Fali količina" : `Fali količina · ${r.uncounted}`}
+                  </Badge>
+                ) : null}
+              </span>
+            ) : null}
+          </div>
+        );
+      },
       meta: { align: "right", numeric: true },
     });
 
     return cols;
-  }, [canSeeFinance]);
+  }, [canSeeFinance, canCount]);
 
   return (
     <div className="space-y-4">
@@ -208,6 +250,15 @@ export function CatalogTable({
             className="accent-green size-4"
           />
           Samo nisko stanje
+        </label>
+        <label className="text-ink-soft flex cursor-pointer items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={uncountedOnly}
+            onChange={(e) => setUncountedOnly(e.target.checked)}
+            className="accent-green size-4"
+          />
+          Fali količina
         </label>
       </div>
 
@@ -243,9 +294,30 @@ export function CatalogTable({
                   {p.categoryName ?? "—"}
                 </MobileCardField>
                 <MobileCardField label="Stanje">
-                  <span className="num inline-flex items-center gap-2">
-                    {p.totalStock}
-                    {p.lowStock ? <Badge variant="warning">Nisko</Badge> : null}
+                  <span className="num inline-flex flex-col items-end gap-1">
+                    {canCount && p.soleVariant ? (
+                      // Iznad overlay linka kartice (v. MobileCard) da bi bio klikabilan.
+                      <span className="relative z-10">
+                        <StockCountControl
+                          variantId={p.soleVariant.id}
+                          productId={p.id}
+                          stockQuantity={p.soleVariant.stock_quantity}
+                          countedAt={p.soleVariant.stock_counted_at}
+                        />
+                      </span>
+                    ) : (
+                      <span>{p.totalStock}</span>
+                    )}
+                    {p.lowStock || p.uncounted > 0 ? (
+                      <span className="flex items-center gap-1">
+                        {p.lowStock ? <Badge variant="warning">Nisko</Badge> : null}
+                        {p.uncounted > 0 ? (
+                          <Badge>
+                            {p.soleVariant ? "Fali količina" : `Fali količina · ${p.uncounted}`}
+                          </Badge>
+                        ) : null}
+                      </span>
+                    ) : null}
                   </span>
                 </MobileCardField>
                 {canSeeFinance ? (

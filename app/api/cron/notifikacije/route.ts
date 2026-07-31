@@ -105,12 +105,16 @@ async function deliveredStatusId(supabase: Admin): Promise<string | null> {
   return (data?.id as string | undefined) ?? null;
 }
 
-/** Broj aktivnih varijanti na niskom stanju (poređenje dve kolone → JS filter). */
+/**
+ * Broj aktivnih varijanti na niskom stanju (poređenje dve kolone → JS filter).
+ * Nepopisane (`stock_counted_at is null`) se ne broje — v. `isVariantLowStock`.
+ */
 async function lowStockCount(supabase: Admin): Promise<number> {
   const { data } = await supabase
     .from("product_variants")
     .select("stock_quantity, low_stock_threshold, archived_at, products(archived_at)")
-    .is("archived_at", null);
+    .is("archived_at", null)
+    .not("stock_counted_at", "is", null);
   const rows =
     (data as
       | {
