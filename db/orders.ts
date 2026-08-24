@@ -148,6 +148,15 @@ async function buildSearchOrParts(
   return orParts.length === 0 ? null : orParts;
 }
 
+/** Id-jevi statusa „Otkazano"/„Vraćeno" (lookup po IMENU, nikad hardkodovan UUID). */
+async function cancelledStatusIds(supabase: SupabaseClient): Promise<string[]> {
+  const { data } = await supabase
+    .from("order_statuses")
+    .select("id")
+    .in("name", CANCELLED_STATUS_NAMES);
+  return ((data as { id: string }[]) ?? []).map((s) => s.id);
+}
+
 export async function getOrders(filters: OrderFilters = {}): Promise<OrdersResult> {
   const supabase = await createClient();
   const { statusId, deliveryMethod, paymentStatus, needsVp, needsReview, from, to, search } =
@@ -166,6 +175,13 @@ export async function getOrders(filters: OrderFilters = {}): Promise<OrdersResul
   if (needsReview) query = query.eq("needs_review", true);
   if (from) query = query.gte("ordered_at", from);
   if (to) query = query.lte("ordered_at", `${to}T23:59:59.999Z`);
+
+  // „Neuplaćeno" + Otkazano/Vraćeno nema smisla (stornirana porudžbina ne može da se
+  // uplati) — izbaci ih iz liste. Kad je status izričito izabran, poštuj izbor.
+  if (paymentStatus === "neuplaceno" && !statusId) {
+    const cancelled = await cancelledStatusIds(supabase);
+    if (cancelled.length > 0) query = query.not("status_id", "in", `(${cancelled.join(",")})`);
+  }
 
   if (search && search.trim()) {
     const orParts = await buildSearchOrParts(supabase, search, searchField);
@@ -282,11 +298,7 @@ export async function getOrdersSummary(filters: OrderFilters = {}): Promise<Orde
     }[]) ?? [];
 
   // Izbaci Otkazano/Vraćeno iz zarade (nisu prihod) — po imenu.
-  const { data: cancelStatuses } = await supabase
-    .from("order_statuses")
-    .select("id")
-    .in("name", CANCELLED_STATUS_NAMES);
-  const excluded = new Set(((cancelStatuses as { id: string }[]) ?? []).map((s) => s.id));
+  const excluded = new Set(await cancelledStatusIds(supabase));
   rows = rows.filter((r) => !excluded.has(r.status_id));
 
   if (filters.onlyRisky) {
