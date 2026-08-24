@@ -7,6 +7,7 @@ import {
   porudzbinePlural,
 } from "@/db/customer-risk";
 import { notifyRoles } from "@/lib/push";
+import { syncOrderStock } from "@/lib/stock";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   APP_STATUS,
@@ -255,6 +256,10 @@ async function insertOrder(
       .single();
     if (fresh) await syncExistingOrder(supabase, order, fresh);
   } else {
+    // Skini robu sa stanja (best-effort, idempotentno po `stock_applied`).
+    // Odmah-otkazana porudžbina se preskače — nikad nije ni izašla iz magacina.
+    await syncOrderStock(created.id, "reserve");
+
     // Push „nova porudžbina" (Korak 1.9) — best-effort, dedup po woo_order_id;
     // ne šaljemo za odmah-otkazane. notifyRoles nikad ne baca.
     await notifyRoles("new_order", String(order.id), ["admin", "manager"], {
@@ -296,20 +301,27 @@ async function syncExistingOrder(
   existing: ExistingOrder,
 ): Promise<void> {
   const patch: Record<string, unknown> = { woo_status: order.status };
+  // Otkazano/vraćeno u Woo-u → roba se vraća na stanje (posle uspešnog update-a).
+  let releaseStock = false;
 
   if (isWooCancelled(order.status) && !existing.cancelled_at) {
     const isLocked = existing.invoice_id !== null || existing.payment_status !== "neuplaceno";
     if (isLocked) {
       patch.needs_review = true;
       patch.review_reason = `WooCommerce status „${order.status}" stigao posle fakturisanja/uplate — potrebna ručna odluka.`;
+      // Status se ne menja → roba ostaje skinuta sa stanja; vraća se tek kad
+      // Admin izričito potvrdi otkazivanje/vraćanje na detalju porudžbine.
     } else {
       // Woo `refunded` → interno „Vraćeno"; cancelled/failed/trash → „Otkazano".
       const appStatus = order.status === "refunded" ? APP_STATUS.returned : APP_STATUS.cancelled;
       patch.status_id = await getStatusId(supabase, appStatus);
       patch.cancelled_at = new Date().toISOString();
+      releaseStock = true;
     }
   }
 
   const { error } = await supabase.from("orders").update(patch).eq("id", existing.id);
   if (error) throw error;
+
+  if (releaseStock) await syncOrderStock(existing.id, "release");
 }

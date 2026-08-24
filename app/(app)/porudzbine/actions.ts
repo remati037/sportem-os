@@ -5,6 +5,7 @@ import * as Sentry from "@sentry/nextjs";
 
 import { firstZodError } from "@/lib/actions";
 import { requireRole } from "@/lib/auth";
+import { syncItemStock, syncOrderStock } from "@/lib/stock";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { APP_STATUS, CANCELLED_STATUS_NAMES, isCancelStatusName, wooStatusForApp } from "@/lib/woo";
@@ -64,6 +65,31 @@ async function pushWooStatus(
   }
 }
 
+/** Upozorenje uz poruku kad automatsko skidanje/vraćanje robe nije prošlo. */
+const stockNote = (ok: boolean) => (ok ? "" : " (Stanje u katalogu nije ažurirano — proveri.)");
+
+/**
+ * Skini/vrati robu na stanje pri promeni statusa. Rezervacija prati „živi" tok:
+ * prelaz u Otkazano/Vraćeno vraća robu, povratak iz njih je ponovo skida.
+ * Prelazi unutar živog toka (Kreirano ↔ Poslato ↔ Isporučeno) ne diraju stanje.
+ */
+async function syncStockForStatusChange(
+  orderId: string,
+  fromStatusName: string | null,
+  toStatusName: string,
+): Promise<boolean> {
+  const wasCancelled = fromStatusName != null && isCancelStatusName(fromStatusName);
+  const isCancelled = isCancelStatusName(toStatusName);
+  if (isCancelled === wasCancelled) return true;
+  return syncOrderStock(orderId, isCancelled ? "release" : "reserve");
+}
+
+/** Ime statusa iz PostgREST embed-a (`status:order_statuses(name)`). */
+function statusName(embed: unknown): string | null {
+  const row = Array.isArray(embed) ? embed[0] : embed;
+  return (row as { name?: string } | null)?.name ?? null;
+}
+
 /** Porudžbina sme da se menja samo dok nije fakturisana. */
 async function assertEditable(orderId: string): Promise<string | null> {
   const supabase = await createClient();
@@ -77,20 +103,20 @@ async function assertEditable(orderId: string): Promise<string | null> {
   return null;
 }
 
-/** order_id stavke + guard fakturisanosti. */
+/** Stavka (uz varijantu i količinu — za korekciju stanja) + guard fakturisanosti. */
 async function getEditableOrderIdForItem(
   itemId: string,
-): Promise<{ orderId: string } | { error: string }> {
+): Promise<{ orderId: string; variantId: string | null; quantity: number } | { error: string }> {
   const supabase = await createClient();
   const { data } = await supabase
     .from("order_items")
-    .select("order_id")
+    .select("order_id, variant_id, quantity")
     .eq("id", itemId)
     .maybeSingle();
   if (!data) return { error: "Stavka nije pronađena." };
   const blocked = await assertEditable(data.order_id);
   if (blocked) return { error: blocked };
-  return { orderId: data.order_id };
+  return { orderId: data.order_id, variantId: data.variant_id, quantity: data.quantity ?? 0 };
 }
 
 /** `needs_vp` = postoji li i dalje stavka bez VP (posle svake mutacije). */
@@ -176,9 +202,17 @@ export async function updateItemQuantity(
     .eq("id", parsed.data.item_id);
   if (error) return { error: "Izmena količine nije uspela." };
 
+  // Razlika ide na stanje (veća količina → skini još, manja → vrati) — samo ako
+  // je roba ove porudžbine trenutno skinuta sa stanja.
+  const stockOk = await syncItemStock(
+    target.orderId,
+    target.variantId,
+    target.quantity - parsed.data.quantity,
+  );
+
   await recomputeGoodsTotal(target.orderId);
   revalidateOrder();
-  return { error: null, success: "Količina izmenjena." };
+  return { error: null, success: `Količina izmenjena.${stockNote(stockOk)}` };
 }
 
 /** Unos VP na stavci bez varijante — skida `needs_vp` kad su sve pokrivene. */
@@ -220,10 +254,13 @@ export async function deleteItem(itemId: string): Promise<OrderActionState> {
   const { error } = await supabase.from("order_items").delete().eq("id", itemId);
   if (error) return { error: "Brisanje stavke nije uspelo." };
 
+  // Obrisana stavka → njena količina se vraća na stanje (ako je bila skinuta).
+  const stockOk = await syncItemStock(target.orderId, target.variantId, target.quantity);
+
   await syncNeedsVp(target.orderId);
   await recomputeGoodsTotal(target.orderId);
   revalidateOrder();
-  return { error: null, success: "Stavka obrisana." };
+  return { error: null, success: `Stavka obrisana.${stockNote(stockOk)}` };
 }
 
 /** Dodavanje stavke iz kataloga — snapshot MP/VP u trenutku dodavanja. */
@@ -263,10 +300,13 @@ export async function addItemFromCatalog(
   });
   if (error) return { error: "Dodavanje stavke nije uspelo." };
 
+  // Dodata stavka → skini je sa stanja (ako je roba porudžbine već skinuta).
+  const stockOk = await syncItemStock(parsed.data.order_id, variant.id, -parsed.data.quantity);
+
   await syncNeedsVp(parsed.data.order_id);
   await recomputeGoodsTotal(parsed.data.order_id);
   revalidateOrder();
-  return { error: null, success: "Stavka dodata." };
+  return { error: null, success: `Stavka dodata.${stockNote(stockOk)}` };
 }
 
 /*
@@ -297,7 +337,7 @@ export async function changeOrderStatus(
   const { data: order } = await supabase
     .from("orders")
     .select(
-      "id, status_id, payment_status, invoice_id, shipped_at, delivered_at, cancelled_at, woo_order_id",
+      "id, status_id, payment_status, invoice_id, shipped_at, delivered_at, cancelled_at, woo_order_id, status:order_statuses(name)",
     )
     .eq("id", parsed.data.order_id)
     .maybeSingle();
@@ -367,6 +407,13 @@ export async function changeOrderStatus(
     note: parsed.data.note,
   });
 
+  // Otkazano/Vraćeno vraća robu na stanje; povratak u živi tok je ponovo skida.
+  const stockOk = await syncStockForStatusChange(
+    order.id,
+    statusName(order.status),
+    target.name,
+  );
+
   const wooOk = await pushWooStatus(order.woo_order_id, target.name);
 
   revalidateOrder();
@@ -374,7 +421,7 @@ export async function changeOrderStatus(
     error: null,
     success: `Status promenjen: ${target.name}.${
       wooOk ? "" : " (WooCommerce nije ažuriran — proveri kasnije.)"
-    }`,
+    }${stockNote(stockOk)}`,
   };
 }
 
@@ -395,7 +442,7 @@ export async function markCashSale(
 
   const { data: order } = await supabase
     .from("orders")
-    .select("id, status_id, invoice_id, payment_status, woo_order_id")
+    .select("id, status_id, invoice_id, payment_status, woo_order_id, status:order_statuses(name)")
     .eq("id", parsed.data.order_id)
     .maybeSingle();
   if (!order) return { error: "Porudžbina nije pronađena." };
@@ -434,6 +481,14 @@ export async function markCashSale(
     note: "Keš/lična prodaja — isplaćeno.",
   });
 
+  // Keš prodaja vraća otkazanu/vraćenu porudžbinu u živi tok → roba se ponovo
+  // skida sa stanja. Porudžbina koja je već bila živa se ne dira (idempotentno).
+  const stockOk = await syncStockForStatusChange(
+    order.id,
+    statusName(order.status),
+    APP_STATUS.delivered,
+  );
+
   const wooOk = await pushWooStatus(order.woo_order_id, APP_STATUS.delivered);
 
   revalidateOrder();
@@ -441,7 +496,7 @@ export async function markCashSale(
     error: null,
     success: `Označeno kao keš/lična prodaja (isplaćeno).${
       wooOk ? "" : " (WooCommerce nije ažuriran — proveri kasnije.)"
-    }`,
+    }${stockNote(stockOk)}`,
   };
 }
 
@@ -593,7 +648,7 @@ export async function changeOrdersStatus(
   const { data: orders } = await supabase
     .from("orders")
     .select(
-      "id, status_id, payment_status, invoice_id, shipped_at, delivered_at, cancelled_at, woo_order_id",
+      "id, status_id, payment_status, invoice_id, shipped_at, delivered_at, cancelled_at, woo_order_id, status:order_statuses(name)",
     )
     .in("id", parsed.data.order_ids);
   if (!orders || orders.length === 0) return { error: "Nijedna porudžbina nije pronađena." };
@@ -602,6 +657,7 @@ export async function changeOrdersStatus(
   let changed = 0;
   let skipped = 0;
   let wooFailed = 0;
+  let stockFailed = 0;
 
   for (const order of orders) {
     if (order.status_id === target.id) {
@@ -657,6 +713,9 @@ export async function changeOrdersStatus(
     });
     changed += 1;
 
+    if (!(await syncStockForStatusChange(order.id, statusName(order.status), target.name))) {
+      stockFailed += 1;
+    }
     if (!(await pushWooStatus(order.woo_order_id, target.name))) wooFailed += 1;
   }
 
@@ -667,12 +726,14 @@ export async function changeOrdersStatus(
   if (changed === 0)
     return { error: "Nijedna porudžbina nije promenjena (sve preskočene)." };
   const wooNote = wooFailed > 0 ? ` (WooCommerce nije ažuriran za ${wooFailed}.)` : "";
+  const stockWarn =
+    stockFailed > 0 ? ` (Stanje u katalogu nije ažurirano za ${stockFailed}.)` : "";
   return {
     error: null,
     success:
       skipped > 0
-        ? `Status promenjen: ${changed} (preskočeno: ${skipped}).${wooNote}`
-        : `Status promenjen: ${changed}.${wooNote}`,
+        ? `Status promenjen: ${changed} (preskočeno: ${skipped}).${wooNote}${stockWarn}`
+        : `Status promenjen: ${changed}.${wooNote}${stockWarn}`,
   };
 }
 

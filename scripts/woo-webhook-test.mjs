@@ -5,6 +5,10 @@
 // service role klijent. Koristi visoke woo_order_id-jeve (99xxxx) i briše
 // svoje podatke na kraju — ne dira prave porudžbine.
 //
+// Pokriva i automatsko skidanje robe sa stanja (nova porudžbina −količina,
+// otkazivanje +količina, bez duplog skidanja na Woo retry). Stanje test
+// varijante se na kraju vraća na polaznu cifru.
+//
 // Preduslovi:
 //   • `npm run dev` radi na http://localhost:3000
 //   • WOO_WEBHOOK_SECRET + SUPABASE_SERVICE_ROLE_KEY u .env.local
@@ -94,11 +98,21 @@ async function getOrder(wooId) {
   const { data } = await db
     .from("orders")
     .select(
-      "id, needs_vp, needs_review, review_reason, woo_status, cancelled_at, goods_total, shipping_charged, cod_amount, customer_id, payment_status, order_statuses(name), order_items(sku, quantity, mp_at_sale, vp_at_sale, profit_at_sale, variant_id)",
+      "id, needs_vp, needs_review, review_reason, woo_status, cancelled_at, goods_total, shipping_charged, cod_amount, customer_id, payment_status, stock_applied, order_statuses(name), order_items(sku, quantity, mp_at_sale, vp_at_sale, profit_at_sale, variant_id)",
     )
     .eq("woo_order_id", wooId)
     .maybeSingle();
   return data;
+}
+
+/** Trenutno stanje varijante (test automatskog skidanja sa stanja). */
+async function stockOf(variantId) {
+  const { data } = await db
+    .from("product_variants")
+    .select("stock_quantity")
+    .eq("id", variantId)
+    .single();
+  return data?.stock_quantity;
 }
 
 async function cleanup() {
@@ -121,6 +135,9 @@ async function main() {
     process.exit(2);
   }
 
+  // Polazno stanje varijante — sve provere skidanja/vraćanja idu u odnosu na njega.
+  const baseStock = await stockOf(variant.id);
+
   console.log("\n1) order.created — poznat SKU, snapshot cena");
   const orderA = makeOrder({ id: WOO_ID_A, sku: variant.sku });
   check("HTTP 200", (await post(orderA)) === 200);
@@ -140,6 +157,12 @@ async function main() {
   check("goods_total = 13000", a?.goods_total === 13000);
   check("shipping_charged = 390", a?.shipping_charged === 390);
   check("cod_amount = 13390", a?.cod_amount === 13390);
+  check("stock_applied = true", a?.stock_applied === true);
+  check(
+    "stanje skinuto za 2 komada",
+    (await stockOf(variant.id)) === baseStock - 2,
+    `${await stockOf(variant.id)} (polazno ${baseStock})`,
+  );
 
   console.log("\n2) Idempotentnost — isti payload 2×");
   check("HTTP 200", (await post(orderA)) === 200);
@@ -148,6 +171,7 @@ async function main() {
     .select("id", { count: "exact", head: true })
     .eq("woo_order_id", WOO_ID_A);
   check("nema duplikata", count === 1);
+  check("stanje nije duplo skinuto", (await stockOf(variant.id)) === baseStock - 2);
 
   console.log("\n3) Nepoznat SKU → needs_vp");
   check("HTTP 200", (await post(makeOrder({ id: WOO_ID_B, sku: "NE-POSTOJI-XYZ" }))) === 200);
@@ -155,6 +179,7 @@ async function main() {
   check("needs_vp = true", b?.needs_vp === true);
   check("vp_at_sale null", b?.order_items?.[0]?.vp_at_sale === null);
   check("profit_at_sale null", b?.order_items?.[0]?.profit_at_sale === null);
+  check("nepoznat SKU ne dira stanje", (await stockOf(variant.id)) === baseStock - 2);
 
   console.log("\n4) order.updated — otkazivanje");
   check(
@@ -166,6 +191,15 @@ async function main() {
   check("cancelled_at upisan", Boolean(a?.cancelled_at));
   check("woo_status = cancelled", a?.woo_status === "cancelled");
   check("stavke netaknute", a?.order_items?.length === 1);
+  check("stock_applied = false", a?.stock_applied === false);
+  check(
+    "stanje vraćeno na polazno",
+    (await stockOf(variant.id)) === baseStock,
+    `${await stockOf(variant.id)} (polazno ${baseStock})`,
+  );
+  // Woo retry istog „cancelled" ne sme drugi put da vrati robu na stanje.
+  await post(makeOrder({ id: WOO_ID_A, sku: variant.sku, status: "cancelled" }));
+  check("2× otkazivanje ne vraća duplo", (await stockOf(variant.id)) === baseStock);
 
   console.log("\n5) Otkazivanje na plaćenoj → needs_review, status netaknut");
   check("HTTP 200", (await post(makeOrder({ id: WOO_ID_C, sku: variant.sku }))) === 200);
@@ -178,6 +212,9 @@ async function main() {
   check("status ostao Kreirano", c?.order_statuses?.name === "Kreirano");
   check("needs_review = true", c?.needs_review === true);
   check("review_reason upisan", Boolean(c?.review_reason));
+  // Status se nije promenio → roba ostaje skinuta dok Admin ručno ne odluči.
+  check("stock_applied ostao true", c?.stock_applied === true);
+  check("stanje ostalo skinuto", (await stockOf(variant.id)) === baseStock - 2);
 
   console.log("\n6) Pogrešan potpis → 401");
   check(
@@ -205,6 +242,10 @@ async function main() {
   check("jedan kupac za sve tri porudžbine", custCount === 1, `count=${custCount}`);
 
   await cleanup();
+  // Test porudžbina C je ostala „skinuta sa stanja" (needs_review) — brisanje reda
+  // ne vraća robu, pa stanje vraćamo ručno da katalog ostane netaknut.
+  await db.from("product_variants").update({ stock_quantity: baseStock }).eq("id", variant.id);
+  check("stanje varijante vraćeno posle testa", (await stockOf(variant.id)) === baseStock);
 
   console.log(failures === 0 ? "\n✅ Svi testovi prošli." : `\n❌ ${failures} provera palo.`);
   process.exit(failures === 0 ? 0 : 1);
