@@ -8,6 +8,12 @@ import { requireRole } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { orderStatusSchema } from "@/lib/validation/orders";
+import {
+  archiveTicketTagSchema,
+  ticketColumnSchema,
+  ticketPrioritySchema,
+  ticketTagSchema,
+} from "@/lib/validation/tickets";
 
 /*
  * Podešavanje statusa porudžbine (Korak 1.4, Admin-only). Write ide kroz RLS
@@ -111,7 +117,8 @@ export async function upsertOrderStatus(
   const { error } = id
     ? await supabase.from("order_statuses").update(parsed.data).eq("id", id)
     : await supabase.from("order_statuses").insert(parsed.data);
-  if (error) return { error: id ? "Izmena statusa nije uspela." : "Dodavanje statusa nije uspelo." };
+  if (error)
+    return { error: id ? "Izmena statusa nije uspela." : "Dodavanje statusa nije uspelo." };
 
   revalidateStatuses();
   return { error: null, success: id ? "Status izmenjen." : "Status dodat." };
@@ -133,4 +140,188 @@ export async function deleteOrderStatus(id: string): Promise<SettingsActionState
 
   revalidateStatuses();
   return { error: null, success: "Status obrisan." };
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * Tiketi — podešavanja kolona, prioriteta i tagova (Korak T1, Admin-only).
+ *
+ * Write ide kroz RLS klijent — politike `ticket_*_admin_write` puštaju samo
+ * Admina (Menadžer čita, Logistika ne vidi ništa). Ne dira tikete ni njihov
+ * sadržaj, a nikako porudžbine, finansije ni snapshot cene.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+function revalidateTicketConfig() {
+  revalidatePath("/podesavanja");
+  revalidatePath("/tiketi");
+}
+
+/** Najviše jedan podrazumevani prioritet — stari se skida pre postavljanja novog. */
+async function clearDefaultPriority(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  exceptId?: string,
+) {
+  let query = supabase
+    .from("ticket_priorities")
+    .update({ is_default: false })
+    .eq("is_default", true);
+  if (exceptId) query = query.neq("id", exceptId);
+  await query;
+}
+
+export async function upsertTicketColumn(
+  _prev: SettingsActionState,
+  formData: FormData,
+): Promise<SettingsActionState> {
+  await requireRole("admin");
+
+  const id = String(formData.get("id") ?? "").trim();
+  const parsed = ticketColumnSchema.safeParse({
+    name: formData.get("name"),
+    color: formData.get("color"),
+    sort_order: formData.get("sort_order") ?? undefined,
+    is_done: formData.get("is_done") ?? undefined,
+    wip_limit: formData.get("wip_limit") ?? undefined,
+  });
+  if (!parsed.success) return { error: firstZodError(parsed.error) };
+
+  const supabase = await createClient();
+  const { error } = id
+    ? await supabase.from("ticket_columns").update(parsed.data).eq("id", id)
+    : await supabase.from("ticket_columns").insert(parsed.data);
+  if (error) return { error: id ? "Izmena kolone nije uspela." : "Dodavanje kolone nije uspelo." };
+
+  revalidateTicketConfig();
+  return { error: null, success: id ? "Kolona izmenjena." : "Kolona dodata." };
+}
+
+export async function deleteTicketColumn(id: string): Promise<SettingsActionState> {
+  await requireRole("admin");
+  if (!id) return { error: "Neispravan unos." };
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("ticket_columns").delete().eq("id", id);
+  if (error) {
+    // FK RESTRICT (23503) → u koloni ima tiketa.
+    if ((error as { code?: string }).code === "23503") {
+      return { error: "Kolona ima tikete — prvo ih premesti pa je obriši." };
+    }
+    return { error: "Brisanje kolone nije uspelo." };
+  }
+
+  revalidateTicketConfig();
+  return { error: null, success: "Kolona obrisana." };
+}
+
+export async function upsertTicketPriority(
+  _prev: SettingsActionState,
+  formData: FormData,
+): Promise<SettingsActionState> {
+  await requireRole("admin");
+
+  const id = String(formData.get("id") ?? "").trim();
+  const parsed = ticketPrioritySchema.safeParse({
+    name: formData.get("name"),
+    color: formData.get("color"),
+    level: formData.get("level") ?? undefined,
+    is_default: formData.get("is_default") ?? undefined,
+    sort_order: formData.get("sort_order") ?? undefined,
+  });
+  if (!parsed.success) return { error: firstZodError(parsed.error) };
+
+  const supabase = await createClient();
+  // Parcijalni unique index dozvoljava tačno jedan `is_default` — stari se
+  // skida PRE upisa novog (inače 23505).
+  if (parsed.data.is_default) await clearDefaultPriority(supabase, id || undefined);
+
+  const { error } = id
+    ? await supabase.from("ticket_priorities").update(parsed.data).eq("id", id)
+    : await supabase.from("ticket_priorities").insert(parsed.data);
+  if (error)
+    return { error: id ? "Izmena prioriteta nije uspela." : "Dodavanje prioriteta nije uspelo." };
+
+  revalidateTicketConfig();
+  return { error: null, success: id ? "Prioritet izmenjen." : "Prioritet dodat." };
+}
+
+export async function deleteTicketPriority(id: string): Promise<SettingsActionState> {
+  await requireRole("admin");
+  if (!id) return { error: "Neispravan unos." };
+
+  const supabase = await createClient();
+  // FK je ON DELETE SET NULL → tiketi ostaju, samo bez prioriteta.
+  const { error } = await supabase.from("ticket_priorities").delete().eq("id", id);
+  if (error) return { error: "Brisanje prioriteta nije uspelo." };
+
+  revalidateTicketConfig();
+  return { error: null, success: "Prioritet obrisan." };
+}
+
+export async function upsertTicketTag(
+  _prev: SettingsActionState,
+  formData: FormData,
+): Promise<SettingsActionState> {
+  await requireRole("admin");
+
+  const id = String(formData.get("id") ?? "").trim();
+  const parsed = ticketTagSchema.safeParse({
+    name: formData.get("name"),
+    color: formData.get("color"),
+    sort_order: formData.get("sort_order") ?? undefined,
+  });
+  if (!parsed.success) return { error: firstZodError(parsed.error) };
+
+  const supabase = await createClient();
+  const { error } = id
+    ? await supabase.from("ticket_tags").update(parsed.data).eq("id", id)
+    : await supabase.from("ticket_tags").insert(parsed.data);
+  if (error) {
+    // Jedinstveno ime među aktivnim tagovima (parcijalni unique index).
+    if ((error as { code?: string }).code === "23505") {
+      return { error: "Tag sa tim nazivom već postoji." };
+    }
+    return { error: id ? "Izmena taga nije uspela." : "Dodavanje taga nije uspelo." };
+  }
+
+  revalidateTicketConfig();
+  return { error: null, success: id ? "Tag izmenjen." : "Tag dodat." };
+}
+
+/** Arhiviranje/vraćanje taga — preporučeno umesto brisanja (istorija ostaje). */
+export async function setTicketTagArchived(
+  id: string,
+  archived: boolean,
+): Promise<SettingsActionState> {
+  await requireRole("admin");
+
+  const parsed = archiveTicketTagSchema.safeParse({ id, archived });
+  if (!parsed.success) return { error: firstZodError(parsed.error) };
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("ticket_tags")
+    .update({ archived_at: parsed.data.archived ? new Date().toISOString() : null })
+    .eq("id", parsed.data.id);
+  if (error) {
+    // Vraćanje iz arhive može da udari u aktivan tag sa istim imenom.
+    if ((error as { code?: string }).code === "23505") {
+      return { error: "Aktivan tag sa tim nazivom već postoji — prvo ga preimenuj." };
+    }
+    return { error: "Promena arhive nije uspela." };
+  }
+
+  revalidateTicketConfig();
+  return { error: null, success: parsed.data.archived ? "Tag arhiviran." : "Tag vraćen." };
+}
+
+export async function deleteTicketTag(id: string): Promise<SettingsActionState> {
+  await requireRole("admin");
+  if (!id) return { error: "Neispravan unos." };
+
+  const supabase = await createClient();
+  // Link tabela je ON DELETE CASCADE → tag se samo skida sa tiketa.
+  const { error } = await supabase.from("ticket_tags").delete().eq("id", id);
+  if (error) return { error: "Brisanje taga nije uspelo." };
+
+  revalidateTicketConfig();
+  return { error: null, success: "Tag obrisan." };
 }
