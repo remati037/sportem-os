@@ -21,6 +21,7 @@ Vlasnici: **korisnik (Admin)** i **brat (Menadžer)**. **Drug (Logistika)** je d
 
 - **Jedan korak plana = jedna sesija.** Ne uzimati ceo plan odjednom — uzeti CLAUDE.md + tekst konkretnog koraka.
 - Posle svakog koraka proveriti „Rezultat" (definiciju gotovog), pa commit. Ne prelaziti na sledeći korak dok rezultat ne stoji.
+- **Bez feature grana (odluka korisnika, 25.08.2026):** commit i push idu **direktno na `main`**, i kad plan u `docs/` pominje granu po koraku (npr. `korak-2-tiketi`). Vercel sa `main` deployuje produkciju.
 - **Skretanje sa plana** (druga biblioteka/šema) je dozvoljeno **samo ako ne dira zaključane odluke ni zamrznute cene.** Svaku izmenu odluke upisati u ovaj fajl.
 - **Migracije baze uvek kroz `supabase/migrations`** — nikad ručne izmene šeme kroz Supabase dashboard (da lokalni i produkcioni ostanu u sync-u).
 - Sav UI tekst na **srpskom** sa punim dijakriticima (č, ć, š, ž, đ).
