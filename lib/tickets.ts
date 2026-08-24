@@ -65,3 +65,44 @@ export function parseTicketParam(param: string): number | null {
   const code = Number(cleaned);
   return Number.isSafeInteger(code) && code > 0 ? code : null;
 }
+
+/* ── Prikaz (Korak T2) ───────────────────────────────────────────────────── */
+
+/** Stanje roka u odnosu na današnji Belgrade datum. */
+export type TicketDueState = "overdue" | "today" | "future";
+
+/**
+ * `due_date` („YYYY-MM-DD", bez vremena) → stanje roka. Poređenje je čisto
+ * leksičko nad kalendarskim datumima (oba u Europe/Belgrade), pa nema TZ
+ * pomeranja. Završen tiket nema „probijen rok" — zato `completedAt`.
+ */
+export function dueState(
+  dueDate: string | null,
+  today: string,
+  completedAt?: string | null,
+): TicketDueState | null {
+  if (!dueDate) return null;
+  if (completedAt) return "future";
+  if (dueDate < today) return "overdue";
+  if (dueDate === today) return "today";
+  return "future";
+}
+
+/** Inicijali izvršioca za avatar („Marko Marković" → „MM"). */
+export function initials(fullName: string | null): string {
+  const parts = (fullName ?? "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  return parts
+    .slice(0, 2)
+    .map((p) => p[0]!.toUpperCase())
+    .join("");
+}
+
+/** Procena vremena u minutima → „45 min" / „2 h" / „2 h 30 min". */
+export function formatEstimate(minutes: number | null): string | null {
+  if (minutes == null || minutes <= 0) return null;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h === 0) return `${m} min`;
+  return m === 0 ? `${h} h` : `${h} h ${m} min`;
+}

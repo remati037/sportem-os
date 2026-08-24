@@ -86,3 +86,98 @@ export const archiveTicketTagSchema = z.object({
 export const ticketConfigIdSchema = z.object({
   id: uuid("Neispravan unos."),
 });
+
+/* ── Tiketi (Korak T2) ──────────────────────────────────────────────────── */
+
+/**
+ * Opciona veza iz FormData: prazno / „none" → `null`, inače UUID.
+ * (Select komponenta ne sme da ima prazan `value`, pa se „ništa" šalje kao „none".)
+ */
+const optionalLink = (msg: string) =>
+  z
+    .union([z.literal(""), z.literal("none"), uuid(msg)])
+    .optional()
+    .transform((v) => (v === "" || v === "none" || v === undefined ? null : v));
+
+/** Opciono tekstualno polje: prazno → `null`. */
+const optionalText = (max: number, msg: string) =>
+  z
+    .string()
+    .trim()
+    .max(max, msg)
+    .optional()
+    .transform((v) => (v ? v : null));
+
+/** Rok — samo datum („YYYY-MM-DD"), prazno → bez roka. */
+const optionalDate = z
+  .union([z.literal(""), z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Rok mora biti datum.")])
+  .optional()
+  .transform((v) => (v ? v : null));
+
+/** Procena vremena u minutima — prazno → bez procene. */
+const optionalMinutes = z
+  .union([
+    z.literal(""),
+    z.coerce
+      .number({ message: "Procena mora biti broj minuta." })
+      .int("Procena mora biti ceo broj minuta.")
+      .min(1, "Procena mora biti najmanje 1 minut.")
+      .max(100000, "Procena je prevelika."),
+  ])
+  .optional()
+  .transform((v) => (v === "" || v === undefined ? null : v));
+
+/** Lista id-jeva iz `formData.getAll(...)` — duplikati se sklanjaju. */
+const idList = (msg: string) =>
+  z
+    .array(uuid(msg))
+    .optional()
+    .transform((v) => [...new Set(v ?? [])]);
+
+export const ticketSchema = z.object({
+  title: z
+    .string()
+    .trim()
+    .min(1, "Unesite naslov tiketa.")
+    .max(160, "Naslov je predugačak (max 160 znakova)."),
+  description: optionalText(4000, "Opis je predugačak (max 4000 znakova)."),
+  column_id: uuid("Izaberite kolonu."),
+  priority_id: optionalLink("Neispravan prioritet."),
+  due_date: optionalDate,
+  estimate_minutes: optionalMinutes,
+  blocked_by_ticket_id: optionalLink("Neispravan tiket."),
+  order_id: optionalLink("Neispravna porudžbina."),
+  variant_id: optionalLink("Neispravan artikal."),
+  customer_id: optionalLink("Neispravan kupac."),
+  assignee_ids: idList("Neispravan izvršilac."),
+  tag_ids: idList("Neispravan tag."),
+});
+
+export type TicketInput = z.infer<typeof ticketSchema>;
+
+export const updateTicketSchema = ticketSchema.extend({
+  id: uuid("Neispravan tiket."),
+});
+
+/** Premeštanje u drugu kolonu (bez DnD — redosled dolazi u T3). */
+export const moveTicketSchema = z.object({
+  id: uuid("Neispravan tiket."),
+  column_id: uuid("Izaberite kolonu."),
+});
+
+/** Dodela izvršilaca (zamena kompletne liste). */
+export const setAssigneesSchema = z.object({
+  id: uuid("Neispravan tiket."),
+  assignee_ids: idList("Neispravan izvršilac."),
+});
+
+/** Tagovi tiketa (zamena kompletne liste). */
+export const setTagsSchema = z.object({
+  id: uuid("Neispravan tiket."),
+  tag_ids: idList("Neispravan tag."),
+});
+
+/** Brisanje tiketa. */
+export const ticketIdSchema = z.object({
+  id: uuid("Neispravan tiket."),
+});
