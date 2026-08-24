@@ -88,7 +88,32 @@
       "Bash(node -e \"const {z}=require\\('zod'\\); console.log\\('zod', require\\('zod/package.json'\\).version\\); const s=z.string\\(\\).uuid\\('Izaberite status.'\\); for \\(const v of ['0b5f...','a3164bbc-d750-5787-a000-000000000000','018f9a2b-1c2d-7e3f-8a4b-5c6d7e8f9a0b','123e4567-e89b-12d3-a456-426614174000']\\) { const r=s.safeParse\\(v\\); console.log\\(r.success, v\\); }\")",
       "Bash(node -e \"const {z}=require\\('zod'\\); const s=z.string\\(\\).uuid\\(\\); ['f47ac10b-58cc-4372-a567-0e02b2c3d479','d9428888-122b-11e1-b85c-61cd3cbb3210','00000000-0000-0000-0000-000000000000'].forEach\\(v=>console.log\\(s.safeParse\\(v\\).success, v\\)\\);\")",
       "Bash(node -e ' *)",
-      "Bash(npx next *)"
+      "Bash(npx next *)",
+      "Bash(lsof -ti:3111)",
+      "Bash(xargs kill -9)",
+      "Bash(git reset *)",
+      "Bash(git pull *)",
+      "Bash(git merge *)",
+      "Bash(cd /Users/marko/Desktop/Marko/sportem-os; sleep 3; rm -rf .next/cache/*.lock 2>/dev/null; npm run build 2>&1 | tail -6)",
+      "Bash(node \"/private/tmp/claude-501/-Users-marko-Desktop-Marko-sportem-os/1df0b298-7a3a-4c69-835c-8d59c075055b/scratchpad/prep-katalog.mjs\")",
+      "Bash(awk -F, '$3==\"\\\\\"/\\\\\"\" || $3==\"/\"' katalog-clean.csv)",
+      "Bash(python3 -c ' *)",
+      "Bash(grep -F '${o.id}')",
+      "Bash(grep -F '${h.id}')",
+      "Bash(grep -F '${created.id}')",
+      "Bash(perl -0pi -e 's/revalidateOrder\\\\\\(\\(?:target\\\\.orderId|parsed\\\\.data\\\\.order_id|order\\\\.id|orderId|order_id\\)\\\\\\)/revalidateOrder\\(\\)/g' \"app/\\(app\\)/porudzbine/actions.ts\")",
+      "Bash(awk '/create table.*profiles|CREATE TABLE.*profiles/,/;/' supabase/migrations/20260708164149_init_schema.sql)",
+      "Bash(node /private/tmp/claude-501/-Users-marko-Desktop-Marko-sportem-os/2d26ef16-169a-4964-be33-c4cf67dcc09d/scratchpad/diag.mjs)",
+      "Bash(node ./_diag.mjs)",
+      "Bash(node --env-file-if-exists=.env.local scripts/fix-goods-total.mjs 2818)",
+      "Bash(node --env-file-if-exists=.env.local /private/tmp/claude-501/-Users-marko-Desktop-Marko-sportem-os/1427c34c-1220-4244-a995-a55f9703b894/scratchpad/inspect.mjs)",
+      "Bash(node --env-file-if-exists=.env.local scripts/_tmp_inspect.mjs)",
+      "Bash(node --env-file-if-exists=.env.local scripts/fix-goods-total.mjs 2815)",
+      "Bash(node --env-file-if-exists=.env.local scripts/fix-goods-total.mjs 2815 --apply)",
+      "Bash(grep -n \"useSearchParams\\\\|useRouter\\\\|/porudzbine/\\\\${\" /Users/marko/Desktop/Marko/sportem-os/app/\\\\\\(app\\\\\\)/porudzbine/orders-bulk-table.tsx)"
+    ],
+    "additionalDirectories": [
+      "/Users/marko/Desktop/Marko/sportem-os/.next/cache"
     ]
   }
 }
