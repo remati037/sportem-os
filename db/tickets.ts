@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cache } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/server";
@@ -345,8 +346,12 @@ export async function listTickets(filters: TicketFilters = {}): Promise<TicketBo
 /**
  * Detalj tiketa po URL parametru („SPT-42" / „42" = šifra, inače UUID —
  * rezerva za direktne linkove). `null` → 404.
+ *
+ * `cache()` deduplikuje pozive unutar istog zahteva (obrazac iz `lib/auth.ts`):
+ * modal čita naslov za zaglavlje, a `TicketDetail` isti tiket za sadržaj — jedan
+ * upit, ne dva.
  */
-export async function getTicketDetail(param: string): Promise<TicketDetail | null> {
+export const getTicketDetail = cache(async (param: string): Promise<TicketDetail | null> => {
   const supabase = await createClient();
   const code = parseTicketParam(param);
 
@@ -365,7 +370,7 @@ export async function getTicketDetail(param: string): Promise<TicketDetail | nul
     ...row,
     created_by_name: raw.created_by ? (nameById.get(raw.created_by) ?? null) : null,
   };
-}
+});
 
 /**
  * Sledeća `position` na dnu kolone: `max(position) + 1000`. Fractional
