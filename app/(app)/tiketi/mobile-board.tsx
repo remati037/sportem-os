@@ -10,8 +10,8 @@ import type { TicketOptions } from "./ticket-dialog";
 
 /*
  * Mobilni prikaz board-a (Korak T2, ispod md): tabovi po kolonama sa brojačem
- * + vertikalna lista kartica. Bez drag & drop-a (dodir + skrol se ne mešaju) —
- * status se menja kroz „⋮" meni kartice.
+ * + vertikalna lista kartica. Bez drag & drop-a (dodir + skrol se ne mešaju,
+ * odluka iz T3) — kolona se menja kroz „⋮" meni kartice.
  */
 export function MobileBoard({
   board,

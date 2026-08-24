@@ -24,7 +24,7 @@ export const dynamic = "force-dynamic";
  *
  * Filteri su URL-driven (`?kolona=&osoba=&tag=&prioritet=&q=&moji=1
  * &rok=probijen|danas&arhiva=1`) — deljiv link = deljiv pogled.
- * Bez drag & drop-a (T3), bez komentara/checkliste/istorije (T4).
+ * Kartice se prevlače na desktopu (T3); bez komentara/checkliste/istorije (T4).
  */
 export default async function TiketiPage({
   searchParams,

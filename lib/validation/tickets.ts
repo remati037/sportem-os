@@ -159,10 +159,25 @@ export const updateTicketSchema = ticketSchema.extend({
   id: uuid("Neispravan tiket."),
 });
 
-/** Premeštanje u drugu kolonu (bez DnD — redosled dolazi u T3). */
+/**
+ * Sused pri premeštanju (Korak T3): `null` / prazno = nema ga (vrh ili dno
+ * kolone). Server iz suseda sam računa `position` — klijentskoj poziciji se
+ * ne veruje.
+ */
+const neighborId = z
+  .union([z.literal(""), z.null(), uuid("Neispravan sused.")])
+  .optional()
+  .transform((v) => (v ? v : null));
+
+/**
+ * Premeštanje tiketa: ciljna kolona + susedi na mestu ispuštanja.
+ * Bez suseda (meni „⋮" ili prazna kolona) tiket ide na dno kolone.
+ */
 export const moveTicketSchema = z.object({
   id: uuid("Neispravan tiket."),
   column_id: uuid("Izaberite kolonu."),
+  before_id: neighborId,
+  after_id: neighborId,
 });
 
 /** Dodela izvršilaca (zamena kompletne liste). */

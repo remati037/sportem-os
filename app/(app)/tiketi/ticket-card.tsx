@@ -134,9 +134,12 @@ export function TicketCard({
         ) : null}
       </div>
 
+      {/* `draggable={false}`: bez toga browser pokreće NATIVNO prevlačenje
+          linka i otima pokret od drag & drop-a board-a (T3). */}
       <Link
         href={`/tiketi/${formatTicketCode(ticket.code)}`}
         aria-label={`${formatTicketCode(ticket.code)} — ${ticket.title}`}
+        draggable={false}
         className="absolute inset-0 rounded-lg"
       />
     </div>

@@ -47,7 +47,9 @@ export function TicketActions({
   const targets = options.columns.filter((c) => c.id !== ticket.column_id);
 
   return (
-    <>
+    // Zaustavljanje `pointerdown`: kartica je na board-u sortable (T3), pa bi
+    // pokret iznad otvorenog menija inače počeo da prevlači tiket.
+    <span onPointerDown={(e) => e.stopPropagation()}>
       <RowActions label={`Akcije za SPT-${ticket.code}`}>
         <DropdownMenuItem onSelect={() => setEditOpen(true)}>
           <Pencil /> Izmeni
@@ -84,6 +86,6 @@ export function TicketActions({
       </RowActions>
 
       <TicketDialog options={options} ticket={ticket} open={editOpen} onOpenChange={setEditOpen} />
-    </>
+    </span>
   );
 }

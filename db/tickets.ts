@@ -280,7 +280,7 @@ async function hydrateTickets(
 
 /**
  * Board: kolone + tiketi u njima, filtrirano. Sortiranje unutar kolone je
- * `position ASC` (nov tiket ide na dno) — ručni redosled dolazi u T3.
+ * `position ASC` — ručni redosled sa board-a (T3) piše upravo u `position`.
  */
 export async function listTickets(filters: TicketFilters = {}): Promise<TicketBoard> {
   const supabase = await createClient();
@@ -515,4 +515,110 @@ export async function searchTicketOptions(
     label: `SPT-${t.code}`,
     hint: t.title,
   }));
+}
+
+/* ── Ručni redosled: fractional indexing (Korak T3) ─────────────────────── */
+
+/**
+ * Najmanji dozvoljen razmak između dve susedne `position` vrednosti. Kad
+ * polovljenje padne ispod ovoga, kolona se prenumeriše na `1000, 2000, 3000…`
+ * (numeric je egzaktan, ali beskonačno polovljenje ne želimo ni u bazi ni u
+ * JSON-u koji putuje na klijent).
+ */
+const MIN_POSITION_GAP = 0.0001;
+
+type PositionRow = { id: string; position: number };
+
+/** Tiketi jedne kolone u redosledu prikaza (`position ASC`, pa `code ASC`). */
+async function columnOrder(supabase: SupabaseClient, columnId: string): Promise<PositionRow[]> {
+  const { data, error } = await supabase
+    .from("tickets")
+    .select("id, position")
+    .eq("column_id", columnId)
+    .order("position", { ascending: true })
+    .order("code", { ascending: true })
+    .range(0, SCAN_CAP - 1);
+  if (error) throw new Error(error.message);
+  return ((data as PositionRow[]) ?? []).map((r) => ({ id: r.id, position: Number(r.position) }));
+}
+
+/**
+ * Prenumeracija kolone na `1000, 2000, 3000…` sa premeštenim tiketom već na
+ * svom mestu; vraća poziciju premeštenog (nju upisuje sama akcija, zajedno sa
+ * `column_id`).
+ *
+ * Bez DB transakcije (PostgREST nema `begin`; RPC bi tražio migraciju, a T3 ne
+ * dira šemu) — upisi idu redom. Najgori ishod ukrštanja dva korisnika je
+ * kozmetički redosled u koloni, nikad gubitak tiketa.
+ */
+async function renumberColumn(
+  supabase: SupabaseClient,
+  rows: PositionRow[],
+  movingId: string,
+  index: number,
+): Promise<number> {
+  const ordered = rows.map((r) => r.id);
+  ordered.splice(Math.max(0, Math.min(index, ordered.length)), 0, movingId);
+
+  let movedPosition = TICKET_POSITION_STEP;
+  for (let i = 0; i < ordered.length; i += 1) {
+    const id = ordered[i]!;
+    const position = (i + 1) * TICKET_POSITION_STEP;
+    if (id === movingId) {
+      movedPosition = position;
+      continue;
+    }
+    const { error } = await supabase.from("tickets").update({ position }).eq("id", id);
+    if (error) throw new Error(error.message);
+  }
+  return movedPosition;
+}
+
+/**
+ * Pozicija tiketa na osnovu SUSEDA, ne klijentskog broja — klijent šalje samo
+ * „ko je iznad" (`beforeId`) i „ko je ispod" (`afterId`), a server čita njihove
+ * stvarne pozicije iz baze. Guard za istovremeni rad dvoje ljudi: zastarela
+ * klijentska pozicija ne može da upiše pogrešan broj.
+ *
+ * Bez suseda → dno kolone (obrazac „premesti" iz menija i prazna kolona).
+ */
+export async function positionForMove(
+  supabase: SupabaseClient,
+  columnId: string,
+  movingId: string,
+  beforeId: string | null,
+  afterId: string | null,
+): Promise<number> {
+  // Tiket koji se premešta ne sme da bude sam sebi sused (pomeranje u koloni).
+  const rows = (await columnOrder(supabase, columnId)).filter((r) => r.id !== movingId);
+
+  const beforeIdx = beforeId ? rows.findIndex((r) => r.id === beforeId) : -1;
+  const afterIdx = afterId ? rows.findIndex((r) => r.id === afterId) : -1;
+
+  // Sused sa druge strane se dopunjuje iz BAZE kad ga klijent nema: filter na
+  // board-u može da sakrije tiket koji stvarno stoji između — tako sakriveni
+  // ostaje sa svoje strane umesto da ga premešteni preskoči.
+  let prev: number | null = null;
+  let next: number | null = null;
+  if (beforeIdx >= 0) {
+    prev = rows[beforeIdx]!.position;
+    next = afterIdx >= 0 ? rows[afterIdx]!.position : (rows[beforeIdx + 1]?.position ?? null);
+  } else if (afterIdx >= 0) {
+    next = rows[afterIdx]!.position;
+    prev = rows[afterIdx - 1]?.position ?? null;
+  }
+
+  // Nijedan sused nije pronađen (dno kolone ili zastarela klijentska lista).
+  if (prev == null && next == null) {
+    const max = rows.length > 0 ? rows[rows.length - 1]!.position : 0;
+    return max + TICKET_POSITION_STEP;
+  }
+  if (prev == null) return next! - TICKET_POSITION_STEP; // vrh kolone
+  if (next == null) return prev + TICKET_POSITION_STEP; // dno kolone
+
+  if (next - prev >= MIN_POSITION_GAP) return (prev + next) / 2;
+
+  // Razmak potrošen → prenumeracija cele kolone; tiket ulazi na svoje mesto.
+  const insertIndex = beforeIdx >= 0 ? beforeIdx + 1 : afterIdx;
+  return renumberColumn(supabase, rows, movingId, insertIndex);
 }

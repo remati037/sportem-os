@@ -7,6 +7,7 @@ import { requireRole } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import {
   nextPositionInColumn,
+  positionForMove,
   searchCustomerOptions,
   searchOrderOptions,
   searchTicketOptions,
@@ -150,7 +151,7 @@ export async function updateTicket(
     .maybeSingle();
   if (!existing) return { error: "Tiket nije pronađen." };
 
-  // Promenjena kolona → tiket ide na dno nove (redosled u T3).
+  // Promenjena kolona iz dijaloga → tiket ide na dno nove (DnD ima svoj put).
   const movedColumn = (existing as { column_id: string }).column_id !== fields.column_id;
   const position = movedColumn ? await nextPositionInColumn(supabase, fields.column_id) : undefined;
 
@@ -183,22 +184,47 @@ export async function deleteTicket(id: string): Promise<TicketActionState> {
 }
 
 /**
- * Premeštanje u drugu kolonu iz menija (rezerva za DnD iz T3). Tiket ide na
- * dno ciljne kolone; `completed_at` postavlja trigger.
+ * Premeštanje tiketa — drag & drop (T3) i meni „⋮" (T2) idu kroz istu akciju.
+ *
+ * `neighbors` su id-jevi kartica iznad (`beforeId`) i ispod (`afterId`) mesta
+ * ispuštanja; server iz NJIH računa `position` (fractional indexing) — klijent
+ * ne šalje broj, pa zastareo board ne može da upiše pogrešnu poziciju. Bez
+ * suseda (meni ili prazna kolona) tiket ide na dno.
+ *
+ * `completed_at` postavlja trigger `tickets_sync_completed_at`, ne app.
  */
-export async function moveTicket(id: string, columnId: string): Promise<TicketActionState> {
+export async function moveTicket(
+  id: string,
+  columnId: string,
+  neighbors?: { beforeId?: string | null; afterId?: string | null },
+): Promise<TicketActionState> {
   await requireRole("admin", "manager");
 
-  const parsed = moveTicketSchema.safeParse({ id, column_id: columnId });
+  const parsed = moveTicketSchema.safeParse({
+    id,
+    column_id: columnId,
+    before_id: neighbors?.beforeId ?? null,
+    after_id: neighbors?.afterId ?? null,
+  });
   if (!parsed.success) return { error: firstZodError(parsed.error) };
 
+  const { id: ticketId, column_id, before_id, after_id } = parsed.data;
   const supabase = await createClient();
-  const position = await nextPositionInColumn(supabase, parsed.data.column_id);
+
+  let position: number;
+  try {
+    position =
+      before_id || after_id
+        ? await positionForMove(supabase, column_id, ticketId, before_id, after_id)
+        : await nextPositionInColumn(supabase, column_id);
+  } catch {
+    return { error: "Premeštanje tiketa nije uspelo." };
+  }
 
   const { error } = await supabase
     .from("tickets")
-    .update({ column_id: parsed.data.column_id, position })
-    .eq("id", parsed.data.id);
+    .update({ column_id, position })
+    .eq("id", ticketId);
   if (error) return { error: "Premeštanje tiketa nije uspelo." };
 
   revalidateTickets();
