@@ -2,9 +2,11 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
   AlertTriangle,
+  CalendarClock,
   ClipboardCheck,
   Info,
   PackageCheck,
+  Ticket,
   Truck,
   Wallet,
 } from "lucide-react";
@@ -12,6 +14,7 @@ import {
 import { getProfile } from "@/lib/auth";
 import { getDashboardMetrics, getWaitingOrders } from "@/db/dashboard";
 import { getLowStockVariants, getUncountedVariantCount } from "@/db/catalog";
+import { getMyTicketsSummary } from "@/db/tickets";
 import { rsd, num } from "@/lib/format";
 import { resolvePeriod } from "@/lib/period";
 import { EmptyState } from "@/components/patterns/empty-state";
@@ -42,11 +45,12 @@ export default async function DashboardPage({
 
   const period = resolvePeriod(await searchParams);
 
-  const [metrics, waiting, lowStock, uncounted] = await Promise.all([
+  const [metrics, waiting, lowStock, uncounted, myTickets] = await Promise.all([
     getDashboardMetrics({ from: period.from, to: period.to }),
     getWaitingOrders(),
     getLowStockVariants(),
     getUncountedVariantCount(),
+    getMyTicketsSummary(session.userId),
   ]);
 
   const marzaPct = Math.round(metrics.marza * 100);
@@ -56,6 +60,23 @@ export default async function DashboardPage({
   const readyHref = waiting.createdStatusId
     ? `/porudzbine?status=${waiting.createdStatusId}`
     : "/porudzbine";
+
+  // „Moji tiketi" (T6) — otvoreni tiketi dodeljeni meni, po hitnosti roka.
+  const ticketCards = [
+    {
+      label: "Kasni",
+      count: myTickets.overdue,
+      href: "/tiketi?moji=1&rok=probijen",
+      icon: AlertTriangle,
+    },
+    {
+      label: "Rok danas",
+      count: myTickets.today,
+      href: "/tiketi?moji=1&rok=danas",
+      icon: CalendarClock,
+    },
+    { label: "Otvoreni", count: myTickets.open, href: "/tiketi?moji=1", icon: Ticket },
+  ];
 
   const waitingCards = [
     { label: "Čeka VP", count: waiting.needsVp, href: "/porudzbine?needs_vp=1", icon: AlertTriangle },
@@ -141,6 +162,59 @@ export default async function DashboardPage({
             );
           })}
         </div>
+      </section>
+
+      {/* Moji tiketi */}
+      <section className="mb-8">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-ink text-sm font-semibold">Moji tiketi</h2>
+          <Link href="/tiketi" className="text-green text-xs font-medium hover:underline">
+            Otvori board
+          </Link>
+        </div>
+        {myTickets.open === 0 ? (
+          <div className="border-border bg-surface text-ink-soft flex items-start gap-2 rounded-lg border px-4 py-3 text-sm">
+            <Ticket className="text-ink-faint mt-0.5 size-4 shrink-0" />
+            <div>Nemaš otvorenih tiketa. Sve što ti je dodeljeno je završeno.</div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-3">
+            {ticketCards.map(({ label, count, href, icon: Icon }) => {
+              const muted = count === 0;
+              // Samo probijen rok viče (crveno); ostalo je neutralno.
+              const urgent = label === "Kasni" && count > 0;
+              return (
+                <Link
+                  key={label}
+                  href={href}
+                  className={
+                    "flex flex-col gap-1 rounded-lg border px-4 py-4 transition-colors " +
+                    (muted
+                      ? "border-border bg-surface text-ink-faint hover:bg-surface-2"
+                      : urgent
+                        ? "border-danger/30 bg-danger-soft hover:bg-danger-soft/70"
+                        : "border-border bg-surface hover:bg-surface-2")
+                  }
+                >
+                  <Icon
+                    className={
+                      "size-4 " + (muted ? "text-ink-faint" : urgent ? "text-danger" : "text-green")
+                    }
+                  />
+                  <span
+                    className={
+                      "num text-2xl font-bold " +
+                      (muted ? "" : urgent ? "text-danger" : "text-ink")
+                    }
+                  >
+                    {num(count)}
+                  </span>
+                  <span className="text-ink-soft text-xs">{label}</span>
+                </Link>
+              );
+            })}
+          </div>
+        )}
       </section>
 
       {/* Niska zaliha */}

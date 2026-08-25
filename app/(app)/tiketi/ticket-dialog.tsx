@@ -52,10 +52,23 @@ export type TicketOptions = {
 
 type LinkKind = "order" | "variant" | "customer" | "ticket";
 
+/**
+ * Unapred popunjene veze za NOV tiket (Korak T6) — „Napravi tiket" sa detalja
+ * porudžbine ili proizvoda. Kod izmene se ignorišu (tada vrede veze tiketa).
+ */
+export type TicketPrefill = {
+  order?: TicketLinkOption | null;
+  variant?: TicketLinkOption | null;
+  customer?: TicketLinkOption | null;
+  /** Pretraga koja se odmah nudi u biraču artikla (proizvod sa više varijanti). */
+  variantTerm?: string;
+};
+
 export function TicketDialog({
   options,
   ticket,
   defaultColumnId,
+  prefill,
   trigger,
   open: controlledOpen,
   onOpenChange,
@@ -65,6 +78,8 @@ export function TicketDialog({
   ticket?: TicketListRow;
   /** Kolona u koju pada nov tiket (npr. „+" u zaglavlju kolone). */
   defaultColumnId?: string;
+  /** Pred-popunjene veze pri kreiranju (detalj porudžbine / proizvoda). */
+  prefill?: TicketPrefill;
   trigger?: ReactNode;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -86,6 +101,7 @@ export function TicketDialog({
           options={options}
           ticket={ticket}
           defaultColumnId={defaultColumnId}
+          prefill={prefill}
           onDone={() => setOpen(false)}
         />
       </DialogContent>
@@ -97,11 +113,13 @@ function TicketForm({
   options,
   ticket,
   defaultColumnId,
+  prefill,
   onDone,
 }: {
   options: TicketOptions;
   ticket?: TicketListRow;
   defaultColumnId?: string;
+  prefill?: TicketPrefill;
   onDone: () => void;
 }) {
   const router = useRouter();
@@ -129,6 +147,7 @@ function TicketForm({
   );
   const [tagIds, setTagIds] = useState<string[]>(ticket?.tags.map((t) => t.id) ?? []);
 
+  // Pri IZMENI vrede veze samog tiketa; `prefill` važi samo za nov tiket.
   const [orderLink, setOrderLink] = useState<TicketLinkOption | null>(
     ticket?.order
       ? {
@@ -137,12 +156,16 @@ function TicketForm({
             ticket.order.woo_order_id != null ? `#${ticket.order.woo_order_id}` : "Bez Woo broja",
           hint: ticket.order.ship_name ?? undefined,
         }
-      : null,
+      : isEdit
+        ? null
+        : (prefill?.order ?? null),
   );
   const [variantLink, setVariantLink] = useState<TicketLinkOption | null>(
     ticket?.variant
       ? { id: ticket.variant.id, label: ticket.variant.sku, hint: ticket.variant.label }
-      : null,
+      : isEdit
+        ? null
+        : (prefill?.variant ?? null),
   );
   const [customerLink, setCustomerLink] = useState<TicketLinkOption | null>(
     ticket?.customer
@@ -151,7 +174,9 @@ function TicketForm({
           label: ticket.customer.name ?? "Bez imena",
           hint: ticket.customer.phone ?? undefined,
         }
-      : null,
+      : isEdit
+        ? null
+        : (prefill?.customer ?? null),
   );
   const [blockedLink, setBlockedLink] = useState<TicketLinkOption | null>(
     ticket?.blocked_by
@@ -366,6 +391,7 @@ function TicketForm({
             placeholder="SKU ili naziv proizvoda…"
             value={variantLink}
             onChange={setVariantLink}
+            defaultTerm={isEdit ? undefined : prefill?.variantTerm}
           />
           <LinkPicker
             kind="customer"
@@ -408,6 +434,7 @@ function LinkPicker({
   value,
   onChange,
   excludeId,
+  defaultTerm,
 }: {
   kind: LinkKind;
   label: string;
@@ -415,11 +442,14 @@ function LinkPicker({
   value: TicketLinkOption | null;
   onChange: (option: TicketLinkOption | null) => void;
   excludeId?: string;
+  /** Pretraga koja se odmah izvršava (T6: proizvod sa više varijanti). */
+  defaultTerm?: string;
 }) {
-  const [term, setTerm] = useState("");
+  const [term, setTerm] = useState(defaultTerm ?? "");
   const [results, setResults] = useState<TicketLinkOption[]>([]);
   const [searching, setSearching] = useState(false);
-  const [openList, setOpenList] = useState(false);
+  // Sa zadatom početnom pretragom lista je odmah otvorena — jedan klik do veze.
+  const [openList, setOpenList] = useState(Boolean(defaultTerm) && !value);
 
   // Debounce pretrage (300ms, kao filter bar porudžbina).
   useEffect(() => {

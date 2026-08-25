@@ -948,3 +948,130 @@ export async function getTicketSnapshot(
     tag_ids: ((tags as { tag_id: string }[]) ?? []).map((t) => t.tag_id),
   };
 }
+
+/* ── Veze iz ostatka aplikacije (Korak T6) ──────────────────────────────── */
+
+/** Koliko vezanih tiketa se prikazuje na detalju porudžbine/proizvoda. */
+const LINKED_TICKETS_LIMIT = 20;
+
+/**
+ * Najnoviji tiketi (šifra opadajuće) — redosled prikaza kolona sređuje sam
+ * ekran, koji kolone ionako već ima (bez još jednog upita na config).
+ */
+export function sortLinkedTickets(
+  rows: TicketListRow[],
+  columns: TicketColumnRow[],
+): TicketListRow[] {
+  const rank = new Map(columns.map((c, i) => [c.id, i]));
+  return [...rows].sort(
+    (a, b) =>
+      (rank.get(a.column_id) ?? 999) - (rank.get(b.column_id) ?? 999) ||
+      a.position - b.position ||
+      a.code - b.code,
+  );
+}
+
+/**
+ * Tiketi vezani za jednu porudžbinu (sekcija „Tiketi" na detalju porudžbine).
+ * Prikazuju se i završeni — kontekst „šta smo radili oko ove porudžbine".
+ */
+export async function listTicketsForOrder(orderId: string): Promise<TicketListRow[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("tickets")
+    .select(TICKET_COLS)
+    .eq("order_id", orderId)
+    .order("code", { ascending: false })
+    .range(0, LINKED_TICKETS_LIMIT - 1);
+
+  const raw = (data as unknown as TicketRaw[]) ?? [];
+  if (raw.length === 0) return [];
+
+  const { rows } = await hydrateTickets(supabase, raw);
+  return rows;
+}
+
+/**
+ * Tiketi vezani za BILO KOJU varijantu proizvoda (sekcija „Tiketi" na detalju
+ * proizvoda) — veza na tiketu je varijanta, ali ekran je proizvod.
+ */
+export async function listTicketsForProduct(productId: string): Promise<TicketListRow[]> {
+  const supabase = await createClient();
+  const { data: variants } = await supabase
+    .from("product_variants")
+    .select("id")
+    .eq("product_id", productId);
+
+  const variantIds = ((variants as { id: string }[]) ?? []).map((v) => v.id);
+  if (variantIds.length === 0) return [];
+
+  const { data } = await supabase
+    .from("tickets")
+    .select(TICKET_COLS)
+    .in("variant_id", variantIds)
+    .order("code", { ascending: false })
+    .range(0, LINKED_TICKETS_LIMIT - 1);
+
+  const raw = (data as unknown as TicketRaw[]) ?? [];
+  if (raw.length === 0) return [];
+
+  const { rows } = await hydrateTickets(supabase, raw);
+  return rows;
+}
+
+/* ── Kartica „Moji tiketi" na Dashboardu (Korak T6) ─────────────────────── */
+
+export type MyTicketsSummary = {
+  /** Otvoreni tiketi dodeljeni meni (van završne kolone). */
+  open: number;
+  /** Od toga: rok je prošao. */
+  overdue: number;
+  /** Od toga: rok je danas. */
+  today: number;
+};
+
+/**
+ * Sažetak mojih otvorenih tiketa. „Otvoren" = `completed_at is null` I kolona
+ * bez `is_done` (zastavica, nikad hardkodovan UUID) — isti kriterijum kao
+ * dnevni podsetnik za rok u cron-u.
+ *
+ * Ide „od tiketa ka izvršiocima" (otvorenih tiketa je malo, dodela kroz vreme
+ * ima mnogo), pa nema dugačkog `.in()` URL-a.
+ */
+export async function getMyTicketsSummary(userId: string): Promise<MyTicketsSummary> {
+  const empty: MyTicketsSummary = { open: 0, overdue: 0, today: 0 };
+  const supabase = await createClient();
+
+  const [{ data: openRows }, columns] = await Promise.all([
+    supabase
+      .from("tickets")
+      .select("id, due_date, column_id")
+      .is("completed_at", null)
+      .range(0, SCAN_CAP - 1),
+    getTicketColumns(),
+  ]);
+
+  const doneColumnIds = new Set(columns.filter((c) => c.is_done).map((c) => c.id));
+  const rows = ((openRows as { id: string; due_date: string | null; column_id: string }[]) ?? [])
+    .filter((t) => !doneColumnIds.has(t.column_id));
+  if (rows.length === 0) return empty;
+
+  const { data: mine } = await supabase
+    .from("ticket_assignees")
+    .select("ticket_id")
+    .eq("user_id", userId);
+
+  const mineIds = new Set(((mine as { ticket_id: string }[]) ?? []).map((r) => r.ticket_id));
+  if (mineIds.size === 0) return empty;
+
+  const today = todayBelgrade();
+  const summary = { ...empty };
+  for (const t of rows) {
+    if (!mineIds.has(t.id)) continue;
+    summary.open += 1;
+    if (!t.due_date) continue;
+    if (t.due_date < today) summary.overdue += 1;
+    else if (t.due_date === today) summary.today += 1;
+  }
+  return summary;
+}

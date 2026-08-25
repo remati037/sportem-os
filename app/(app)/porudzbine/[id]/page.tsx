@@ -10,11 +10,13 @@ import {
   getOrderStatusHistory,
 } from "@/db/orders";
 import { getOrderCancellationHistory, porudzbinePlural } from "@/db/customer-risk";
+import { listTicketsForOrder } from "@/db/tickets";
 import { otkupOf } from "@/db/finance";
 import { rsd, datum, datumVreme } from "@/lib/format";
 import { APP_STATUS } from "@/lib/woo";
 import { Badge } from "@/components/ui/badge";
 
+import { RelatedTickets } from "../../tiketi/related-tickets";
 import { StatusPill } from "../status-pill";
 import { OrderItemsEditor } from "./order-items-editor";
 import { OrderStatusControl, ResolveReviewButton, type FlowIds } from "./order-status-control";
@@ -46,11 +48,12 @@ export default async function PorudzbinaPage({
   const order = await getOrderDetail(id);
   if (!order) notFound();
 
-  const [statuses, history, variantOptions, riskyHistory] = await Promise.all([
+  const [statuses, history, variantOptions, riskyHistory, tickets] = await Promise.all([
     getOrderStatuses(),
     getOrderStatusHistory(order.id),
     isAdmin && !order.invoice_id ? getActiveVariantOptions() : Promise.resolve([]),
     getOrderCancellationHistory(order),
+    listTicketsForOrder(order.id),
   ]);
 
   // Poznati (seed) statusi toka — razrešeni po imenu (nikad hardkodovan UUID).
@@ -225,6 +228,27 @@ export default async function PorudzbinaPage({
         isAdmin={isAdmin}
         locked={Boolean(order.invoice_id)}
         variantOptions={variantOptions}
+      />
+
+      {/* Tiketi vezani za ovu porudžbinu (T6) — samo čitanje + nov tiket. */}
+      <RelatedTickets
+        className="mt-8"
+        tickets={tickets}
+        emptyText="Nema tiketa vezanih za ovu porudžbinu."
+        prefill={{
+          order: {
+            id: order.id,
+            label: order.woo_order_id != null ? `#${order.woo_order_id}` : "Bez Woo broja",
+            hint: order.ship_name ?? undefined,
+          },
+          customer: order.customer_id
+            ? {
+                id: order.customer_id,
+                label: order.customer?.name ?? order.ship_name ?? "Bez imena",
+                hint: order.customer?.phone ?? order.ship_phone ?? undefined,
+              }
+            : null,
+        }}
       />
 
       <section className="mt-8">

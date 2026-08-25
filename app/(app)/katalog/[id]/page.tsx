@@ -4,11 +4,13 @@ import { ArrowLeft, ImageIcon, Package, Plus } from "lucide-react";
 
 import { requireRole } from "@/lib/auth";
 import { getCategories, getProductWithVariants } from "@/db/catalog";
+import { listTicketsForProduct } from "@/db/tickets";
 import { catalogImageUrl } from "@/lib/image-url";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/patterns/empty-state";
 
+import { RelatedTickets } from "../../tiketi/related-tickets";
 import { ProductActions } from "../product-actions";
 import { VariantFormDialog } from "../variant-form";
 import { VariantsTable } from "../variants-table";
@@ -27,6 +29,12 @@ export default async function ProizvodPage({ params }: { params: Promise<{ id: s
     getCategories(),
   ]);
   if (!product) notFound();
+
+  // Tiketi su samo za Admina i Menadžera — Logistika ih ne vidi ni u RLS-u.
+  const tickets = canSeeFinance ? await listTicketsForProduct(product.id) : [];
+  // Pred-popunjena veza: jedina aktivna varijanta; inače pretraga po nazivu.
+  const activeVariants = product.variants.filter((v) => v.archived_at == null);
+  const soleVariant = activeVariants.length === 1 ? activeVariants[0] : null;
 
   const imageUrl = catalogImageUrl(product.image);
   const categoryOptions = categories.map((c) => ({ id: c.id, name: c.name }));
@@ -127,6 +135,25 @@ export default async function ProizvodPage({ params }: { params: Promise<{ id: s
           canCount={role === "admin" || role === "logistics"}
         />
       )}
+
+      {/* Tiketi vezani za varijante ovog proizvoda (T6). */}
+      {canSeeFinance ? (
+        <RelatedTickets
+          className="mt-8"
+          tickets={tickets}
+          emptyText="Nema tiketa vezanih za ovaj proizvod."
+          prefill={{
+            variant: soleVariant
+              ? {
+                  id: soleVariant.id,
+                  label: soleVariant.sku,
+                  hint: [product.name, soleVariant.variant_name].filter(Boolean).join(" — "),
+                }
+              : null,
+            variantTerm: soleVariant ? undefined : product.name,
+          }}
+        />
+      ) : null}
     </main>
   );
 }

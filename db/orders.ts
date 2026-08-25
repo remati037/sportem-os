@@ -67,6 +67,8 @@ export type OrderDetail = {
   paid_at: string | null;
   cancelled_at: string | null;
   status: { name: string; color: string | null } | null;
+  /** Veza na kupca — koristi je i „Napravi tiket" (T6) za pred-popunjenu vezu. */
+  customer_id: string | null;
   customer: { name: string | null; phone: string | null; email: string | null } | null;
   items: OrderItemRow[];
 };
@@ -383,7 +385,7 @@ export async function getOrderDetail(param: string): Promise<OrderDetail | null>
   const query = supabase
     .from("orders")
     .select(
-      `id, woo_order_id, delivery_method, payment_status, invoice_id, needs_vp, needs_review,
+      `id, woo_order_id, customer_id, delivery_method, payment_status, invoice_id, needs_vp, needs_review,
        review_reason, woo_status, ship_name, ship_phone, ship_address, ship_city,
        ship_postal_code, ship_note, goods_total, shipping_charged, shipping_actual,
        weight_grams, package_count, cod_amount,

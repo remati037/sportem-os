@@ -8,6 +8,7 @@ import {
 } from "@/db/customer-risk";
 import { notifyRoles } from "@/lib/push";
 import { syncOrderStock } from "@/lib/stock";
+import { createRiskyCustomerTicket } from "@/lib/tickets-auto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   APP_STATUS,
@@ -283,6 +284,17 @@ async function insertOrder(
         body: `#${order.id}${shipName ? ` — ${shipName}` : ""} je ranije otkazao/vratio ${prior.length} ${porudzbinePlural(prior.length)}`,
         url: `/porudzbine/${order.id}`,
         tag: `risky-${order.id}`,
+      });
+
+      // Jedini automatski tiket (T6): „Pozovi i potvrdi porudžbinu #{woo}".
+      // Best-effort i idempotentno (unique indeks po `order_id`) — webhook
+      // nikad ne pada zbog tiketa.
+      await createRiskyCustomerTicket({
+        orderId: created.id,
+        wooOrderId: order.id,
+        customerName: shipName,
+        customerId,
+        prior,
       });
     }
   }
