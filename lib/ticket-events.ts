@@ -51,29 +51,43 @@ export type TicketEventInput = {
   meta?: Record<string, unknown> | null;
 };
 
-/** Upis jednog audit reda. Nikad ne baca. */
-export async function logTicketEvent(event: TicketEventInput): Promise<void> {
-  await logTicketEvents([event]);
+/**
+ * Upis jednog audit reda. Nikad ne baca. Vraća `ticket_events.id` — obaveštenja
+ * (T5) ga koriste kao `reference_id` (dedup je vezan za DOGAĐAJ, ne za tiket, pa
+ * ponovna dodela iste osobe nije zauvek „već poslato"). `null` = upis nije uspeo.
+ */
+export async function logTicketEvent(event: TicketEventInput): Promise<string | null> {
+  const ids = await logTicketEvents([event]);
+  return ids[0] ?? null;
 }
 
-/** Upis više audit redova odjednom (jedan insert). Nikad ne baca. */
-export async function logTicketEvents(events: TicketEventInput[]): Promise<void> {
-  if (events.length === 0) return;
+/**
+ * Upis više audit redova odjednom (jedan insert). Nikad ne baca.
+ * Vraća id-jeve upisanih redova PO REDOSLEDU ulaza (PostgREST vraća redove
+ * onim redom kojim su umetnuti) — prazan niz znači da upis nije uspeo.
+ */
+export async function logTicketEvents(events: TicketEventInput[]): Promise<string[]> {
+  if (events.length === 0) return [];
   try {
     const supabase = await createClient();
-    const { error } = await supabase.from("ticket_events").insert(
-      events.map((e) => ({
-        ticket_id: e.ticketId,
-        actor_id: e.actorId,
-        kind: e.kind,
-        from_text: e.from ?? null,
-        to_text: e.to ?? null,
-        meta: e.meta ?? null,
-      })),
-    );
+    const { data, error } = await supabase
+      .from("ticket_events")
+      .insert(
+        events.map((e) => ({
+          ticket_id: e.ticketId,
+          actor_id: e.actorId,
+          kind: e.kind,
+          from_text: e.from ?? null,
+          to_text: e.to ?? null,
+          meta: e.meta ?? null,
+        })),
+      )
+      .select("id");
     if (error) throw new Error(error.message);
+    return ((data as { id: string }[]) ?? []).map((r) => r.id);
   } catch (err) {
     Sentry.captureException(err);
+    return [];
   }
 }
 
@@ -210,9 +224,12 @@ export async function assigneeChanges(before: string[], after: string[]): Promis
 
   const staff = await listStaffProfiles();
   const name = (id: string) => staff.find((s) => s.id === id)?.full_name ?? "Bez imena";
+  // `meta.user_id` je jedini pouzdan način da se posle upisa zna KOME je tiket
+  // dodeljen (prikaz koristi čitljivo ime iz `to_text`) — obaveštenje
+  // `ticket_assigned` iz T5 pari korisnika sa id-jem upravo upisanog događaja.
   return [
-    ...added.map((id) => ({ kind: "assignee" as const, to: name(id) })),
-    ...removed.map((id) => ({ kind: "assignee" as const, from: name(id) })),
+    ...added.map((id) => ({ kind: "assignee" as const, to: name(id), meta: { user_id: id } })),
+    ...removed.map((id) => ({ kind: "assignee" as const, from: name(id), meta: { user_id: id } })),
   ];
 }
 
@@ -230,13 +247,21 @@ export async function tagChanges(before: string[], after: string[]): Promise<Tic
   ];
 }
 
-/** Upis liste promena za jedan tiket (dopisuje identitet tiketa i aktera). */
+/** Upisana promena — `eventId` je `null` ako audit red nije uspeo (best-effort). */
+export type LoggedTicketChange = TicketChange & { eventId: string | null };
+
+/**
+ * Upis liste promena za jedan tiket (dopisuje identitet tiketa i aktera).
+ * Vraća iste promene sa id-jem upisanog događaja — obaveštenja (T5) traže
+ * svoj okidač u toj listi (npr. `kind === "assignee"` sa `to`).
+ */
 export async function logTicketChanges(
   ticketId: string,
   actorId: string | null,
   changes: TicketChange[],
-): Promise<void> {
-  await logTicketEvents(changes.map((c) => ({ ...c, ticketId, actorId })));
+): Promise<LoggedTicketChange[]> {
+  const ids = await logTicketEvents(changes.map((c) => ({ ...c, ticketId, actorId })));
+  return changes.map((c, i) => ({ ...c, eventId: ids[i] ?? null }));
 }
 
 /** Diff + upis u jednom pozivu (best-effort, kao i sve ostalo ovde). */
@@ -245,11 +270,12 @@ export async function logTicketUpdate(
   actorId: string | null,
   before: TicketFieldSnapshot,
   after: TicketFieldSnapshot,
-): Promise<void> {
+): Promise<LoggedTicketChange[]> {
   try {
-    await logTicketChanges(ticketId, actorId, await ticketUpdateChanges(before, after));
+    return await logTicketChanges(ticketId, actorId, await ticketUpdateChanges(before, after));
   } catch (err) {
     Sentry.captureException(err);
+    return [];
   }
 }
 

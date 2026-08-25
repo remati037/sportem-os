@@ -16,7 +16,7 @@ import {
   wouldCreateCycle,
   type TicketLinkOption,
 } from "@/db/tickets";
-import { getTicketColumns } from "@/db/tickets-config";
+import { getTicketColumns, type TicketColumnRow } from "@/db/tickets-config";
 import {
   assigneeChanges,
   logTicketChanges,
@@ -24,6 +24,12 @@ import {
   logTicketUpdate,
   tagChanges,
 } from "@/lib/ticket-events";
+import {
+  assignedFromChanges,
+  notifyTicketAssigned,
+  notifyTicketComment,
+  notifyTicketCompleted,
+} from "@/lib/ticket-notify";
 import { formatTicketCode } from "@/lib/tickets";
 import {
   addChecklistItemSchema,
@@ -54,6 +60,11 @@ import {
  * Korak T4 dopunjuje: komentari, checklist, zavisnost i dupliranje, plus
  * ISTORIJU PROMENA — svaka mutirajuća akcija (i one iz T2/T3) upisuje audit
  * red kroz `lib/ticket-events.ts`. Upis je best-effort i nikad ne obara akciju.
+ *
+ * Korak T5 dopunjuje OBAVEŠTENJA (`lib/ticket-notify.ts`): dodela, komentar,
+ * završetak i oslobođena blokada. I ona su best-effort — nijedna greška
+ * obaveštenja ne sme da obori akciju, pa se nikad ne proverava povratna
+ * vrednost i nikad se ne stavlja u `error`.
  */
 
 export type TicketActionState = {
@@ -115,6 +126,22 @@ async function replaceTags(ticketId: string, tagIds: string[]): Promise<string |
   return error ? "Izmena tagova nije uspela." : null;
 }
 
+/**
+ * Da li je tiket upravo UŠAO u završnu kolonu (okidač za `ticket_done` i
+ * `ticket_unblocked`). Zastavica `is_done`, nikad hardkodovan UUID — kolone su
+ * podesive. Prelaz unutar živog toka ili izlazak iz „Završeno" ne javlja ništa.
+ */
+async function enteredDoneColumn(
+  fromColumnId: string | null,
+  toColumnId: string,
+  known?: TicketColumnRow[],
+) {
+  if (!fromColumnId || fromColumnId === toColumnId) return false;
+  const columns = known ?? (await getTicketColumns());
+  const isDone = (id: string) => columns.find((c) => c.id === id)?.is_done === true;
+  return isDone(toColumnId) && !isDone(fromColumnId);
+}
+
 /* ── CRUD ────────────────────────────────────────────────────────────────── */
 
 export async function createTicket(
@@ -144,6 +171,15 @@ export async function createTicket(
     (await replaceAssignees(ticketId, assignee_ids)) ?? (await replaceTags(ticketId, tag_ids));
 
   await logTicketEvent({ ticketId, actorId: userId, kind: "created", to: fields.title });
+
+  // Dodela na kreiranju nema svoj audit red (istorija nosi samo „napravio
+  // tiket"), pa obaveštenje ide bez `eventId` — dedup ključ tada nosi id tiketa
+  // i korisnika (v. `reference()` u `lib/ticket-notify.ts`).
+  await notifyTicketAssigned(
+    ticketId,
+    userId,
+    assignee_ids.map((id) => ({ userId: id, eventId: null })),
+  );
 
   revalidateTickets();
   if (linkError) return { error: null, success: `Tiket kreiran. (${linkError})` };
@@ -194,7 +230,18 @@ export async function updateTicket(
 
   const linkError = (await replaceAssignees(id, assignee_ids)) ?? (await replaceTags(id, tag_ids));
 
-  await logTicketUpdate(id, userId, before, { ...before, ...fields, assignee_ids, tag_ids });
+  const logged = await logTicketUpdate(id, userId, before, {
+    ...before,
+    ...fields,
+    assignee_ids,
+    tag_ids,
+  });
+
+  await notifyTicketAssigned(id, userId, assignedFromChanges(logged));
+  if (movedColumn && (await enteredDoneColumn(before.column_id, fields.column_id))) {
+    const columnEvent = logged.find((c) => c.kind === "column");
+    await notifyTicketCompleted(id, userId, columnEvent?.eventId ?? null);
+  }
 
   revalidateTickets();
   if (linkError) return { error: null, success: `Tiket izmenjen. (${linkError})` };
@@ -272,13 +319,17 @@ export async function moveTicket(
   if (fromColumnId && fromColumnId !== column_id) {
     const columns = await getTicketColumns();
     const name = (id: string) => columns.find((c) => c.id === id)?.name ?? null;
-    await logTicketEvent({
+    const eventId = await logTicketEvent({
       ticketId,
       actorId: userId,
       kind: "column",
       from: name(fromColumnId),
       to: name(column_id),
     });
+
+    if (await enteredDoneColumn(fromColumnId, column_id, columns)) {
+      await notifyTicketCompleted(ticketId, userId, eventId);
+    }
   }
 
   revalidateTickets();
@@ -302,11 +353,13 @@ export async function setAssignees(id: string, userIds: string[]): Promise<Ticke
   const linkError = await replaceAssignees(parsed.data.id, parsed.data.assignee_ids);
   if (linkError) return { error: linkError };
 
-  await logTicketChanges(
+  const logged = await logTicketChanges(
     parsed.data.id,
     userId,
     await assigneeChanges(before, parsed.data.assignee_ids),
   );
+
+  await notifyTicketAssigned(parsed.data.id, userId, assignedFromChanges(logged));
 
   revalidateTickets();
   return { error: null, success: "Izvršioci sačuvani." };
@@ -397,14 +450,22 @@ export async function addComment(
   if (!parsed.success) return { error: firstZodError(parsed.error) };
 
   const supabase = await createClient();
-  const { error } = await supabase.from("ticket_comments").insert({
-    ticket_id: parsed.data.ticket_id,
-    author_id: userId,
-    body: parsed.data.body,
-  });
-  if (error) return { error: "Slanje komentara nije uspelo." };
+  const { data: created, error } = await supabase
+    .from("ticket_comments")
+    .insert({
+      ticket_id: parsed.data.ticket_id,
+      author_id: userId,
+      body: parsed.data.body,
+    })
+    .select("id")
+    .single();
+  if (error || !created) return { error: "Slanje komentara nije uspelo." };
 
   await logTicketEvent({ ticketId: parsed.data.ticket_id, actorId: userId, kind: "comment" });
+
+  // Izvršiocima i autoru tiketa — bez onoga ko je komentarisao.
+  // `reference_id = comment.id` → svaki komentar javlja tačno jednom.
+  await notifyTicketComment(parsed.data.ticket_id, (created as { id: string }).id, userId);
 
   revalidateTickets();
   return { error: null, success: "Komentar dodat." };

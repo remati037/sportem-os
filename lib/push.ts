@@ -9,9 +9,11 @@ import { resolveChannel, type ChannelPref } from "@/lib/notifications";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /*
- * Obaveštenja — jezgro fan-out-a (Korak 1.9). Šalje događaj korisnicima traženih
- * rola, poštujući svaku korisničku preferencu: master prekidač (enabled) i izbor
- * kanala po tipu (push / email / oba / isključeno).
+ * Obaveštenja — jezgro fan-out-a (Korak 1.9, dopunjeno u T5). Šalje događaj
+ * korisnicima traženih ROLA (`notifyRoles`) ili poimence odabranim KORISNICIMA
+ * (`notifyUsers` — izvršioci tiketa), poštujući svaku korisničku preferencu:
+ * master prekidač (enabled) i izbor kanala po tipu (push / email / oba /
+ * isključeno). Oba ulaza dele isto jezgro `deliver()`.
  *
  * ISKLJUČIVO server (`server-only`): service-role klijent (zaobilazi RLS) čita
  * tuđe `push_subscriptions` + `notification_preferences` i piše `notification_log`.
@@ -90,11 +92,89 @@ async function userEmail(supabase: Admin, userId: string): Promise<string | null
 }
 
 /**
- * Glavni fan-out. Za svakog korisnika traženih rola:
+ * Zajedničko jezgro (T5): preference → kanal → push/email, uz dedup ledger.
+ *
+ * Za svakog primaoca:
  *  - master `enabled=false` → preskoči;
  *  - `resolveChannel(prefs, type)` → push i/ili email (default: push, bez email-a).
  * Kanal se broji samo ako je konfigurisan (VAPID / RESEND). Dedup log se piše tek
  * kad postoji makar jedan primalac na nekom kanalu (da se ne „potroši" ključ).
+ *
+ * Baca samo na neočekivanu grešku — ulazne funkcije (`notifyRoles`/`notifyUsers`)
+ * je hvataju, pa pozivalac nikad ne pukne zbog obaveštenja.
+ */
+async function deliver(
+  supabase: Admin,
+  type: string,
+  referenceId: string,
+  userIds: string[],
+  payload: PushPayload,
+): Promise<void> {
+  const ids = [...new Set(userIds.filter(Boolean))];
+  if (ids.length === 0) return;
+
+  const pushReady = pushConfigured();
+  const emailReady = emailConfigured();
+  if (!pushReady && !emailReady) return; // nijedan kanal nije konfigurisan
+
+  // Preference po korisniku (nedostaje red → default: sve uključeno, push).
+  const { data: prefData } = await supabase
+    .from("notification_preferences")
+    .select("user_id, enabled, prefs")
+    .in("user_id", ids);
+  const prefByUser = new Map((prefData as PrefRow[] | null)?.map((p) => [p.user_id, p]) ?? []);
+
+  // Podeli primaoce po kanalu prema preferenci + dostupnosti kanala.
+  const pushUserIds: string[] = [];
+  const emailUserIds: string[] = [];
+  for (const uid of ids) {
+    const row = prefByUser.get(uid);
+    if (row && row.enabled === false) continue; // master isključen
+    const ch = resolveChannel(row?.prefs, type);
+    if (ch.push && pushReady) pushUserIds.push(uid);
+    if (ch.email && emailReady) emailUserIds.push(uid);
+  }
+  if (pushUserIds.length === 0 && emailUserIds.length === 0) return;
+
+  // Dedup ledger — tek kad ima kome slati.
+  const { error: logError } = await supabase
+    .from("notification_log")
+    .insert({ type, reference_id: referenceId });
+  if (logError) {
+    if ((logError as { code?: string }).code === "23505") return; // već poslato
+    throw logError;
+  }
+
+  const tasks: Promise<unknown>[] = [];
+
+  // Push kanal — svi uređaji odabranih korisnika.
+  if (pushUserIds.length > 0) {
+    const { data: subs } = await supabase
+      .from("push_subscriptions")
+      .select("id, user_id, subscription")
+      .in("user_id", pushUserIds);
+    const rows = (subs as SubscriptionRow[] | null) ?? [];
+    const body = JSON.stringify(payload);
+    for (const row of rows) tasks.push(sendOnePush(supabase, row, body));
+  }
+
+  // Email kanal.
+  if (emailUserIds.length > 0) {
+    for (const uid of emailUserIds) {
+      tasks.push(
+        userEmail(supabase, uid).then((email) =>
+          email ? sendEmail(email, payload.title, payload.body, payload.url) : false,
+        ),
+      );
+    }
+  }
+
+  await Promise.allSettled(tasks);
+}
+
+/**
+ * Fan-out ka svim korisnicima traženih rola (Korak 1.9). Best-effort: nikad ne
+ * baca — pozivaoci (webhook, cron) ne smeju pući zbog obaveštenja.
  */
 export async function notifyRoles(
   type: string,
@@ -103,70 +183,39 @@ export async function notifyRoles(
   payload: PushPayload,
 ): Promise<void> {
   try {
-    const pushReady = pushConfigured();
-    const emailReady = emailConfigured();
-    if (!pushReady && !emailReady) return; // nijedan kanal nije konfigurisan
+    if (!pushConfigured() && !emailConfigured()) return;
 
     const supabase = createAdminClient();
 
     // Korisnici traženih rola (nema direktnog FK profiles↔subs; oba gledaju auth.users).
     const { data: profiles } = await supabase.from("profiles").select("id").in("role", roles);
     const userIds = (profiles ?? []).map((p) => p.id as string);
+
+    await deliver(supabase, type, referenceId, userIds, payload);
+  } catch (err) {
+    Sentry.captureException(err);
+  }
+}
+
+/**
+ * Fan-out ka POIMENCE odabranim korisnicima (Korak T5) — izvršioci tiketa, autor
+ * tiketa, korisnik kome je nešto dodeljeno. Rola se ovde NE proverava: pozivalac
+ * bira primaoce, a tiketi ionako postoje samo za Admina i Menadžera.
+ *
+ * Best-effort, isto kao `notifyRoles` — nijedna greška obaveštenja ne sme da
+ * obori akciju iz koje je pozvano.
+ */
+export async function notifyUsers(
+  type: string,
+  referenceId: string,
+  userIds: string[],
+  payload: PushPayload,
+): Promise<void> {
+  try {
     if (userIds.length === 0) return;
+    if (!pushConfigured() && !emailConfigured()) return;
 
-    // Preference po korisniku (nedostaje red → default: sve uključeno, push).
-    const { data: prefData } = await supabase
-      .from("notification_preferences")
-      .select("user_id, enabled, prefs")
-      .in("user_id", userIds);
-    const prefByUser = new Map((prefData as PrefRow[] | null)?.map((p) => [p.user_id, p]) ?? []);
-
-    // Podeli primaoce po kanalu prema preferenci + dostupnosti kanala.
-    const pushUserIds: string[] = [];
-    const emailUserIds: string[] = [];
-    for (const uid of userIds) {
-      const row = prefByUser.get(uid);
-      if (row && row.enabled === false) continue; // master isključen
-      const ch = resolveChannel(row?.prefs, type);
-      if (ch.push && pushReady) pushUserIds.push(uid);
-      if (ch.email && emailReady) emailUserIds.push(uid);
-    }
-    if (pushUserIds.length === 0 && emailUserIds.length === 0) return;
-
-    // Dedup ledger — tek kad ima kome slati.
-    const { error: logError } = await supabase
-      .from("notification_log")
-      .insert({ type, reference_id: referenceId });
-    if (logError) {
-      if ((logError as { code?: string }).code === "23505") return; // već poslato
-      throw logError;
-    }
-
-    const tasks: Promise<unknown>[] = [];
-
-    // Push kanal — svi uređaji odabranih korisnika.
-    if (pushUserIds.length > 0) {
-      const { data: subs } = await supabase
-        .from("push_subscriptions")
-        .select("id, user_id, subscription")
-        .in("user_id", pushUserIds);
-      const rows = (subs as SubscriptionRow[] | null) ?? [];
-      const body = JSON.stringify(payload);
-      for (const row of rows) tasks.push(sendOnePush(supabase, row, body));
-    }
-
-    // Email kanal.
-    if (emailUserIds.length > 0) {
-      for (const uid of emailUserIds) {
-        tasks.push(
-          userEmail(supabase, uid).then((email) =>
-            email ? sendEmail(email, payload.title, payload.body, payload.url) : false,
-          ),
-        );
-      }
-    }
-
-    await Promise.allSettled(tasks);
+    await deliver(createAdminClient(), type, referenceId, userIds, payload);
   } catch (err) {
     Sentry.captureException(err);
   }

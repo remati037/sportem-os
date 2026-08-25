@@ -1,7 +1,8 @@
 import type { Role } from "@/lib/auth";
 
 /*
- * Tipovi obaveštenja (Korak 1.9) + rezolucija kanala po korisničkoj preferenci.
+ * Tipovi obaveštenja (Korak 1.9, dopunjeno tiketima u T5) + rezolucija kanala
+ * po korisničkoj preferenci.
  * Deljeno klijent/server (bez server-only importa). Redosled = redosled u UI-ju.
  *
  * `roles` = kome tip uopšte može stići (uz to notifyRoles bira ciljne role po
@@ -28,6 +29,33 @@ export const NOTIFICATION_TYPES = [
   {
     key: "risky_customer",
     label: "Rizičan kupac",
+    roles: ["admin", "manager"] as Role[],
+  },
+  // Tiketi (Korak T5) — modul je dostupan samo Adminu i Menadžeru, pa Logistika
+  // ove tipove nikad ne vidi ni u listi preferenci.
+  {
+    key: "ticket_assigned",
+    label: "Dodeljen mi tiket",
+    roles: ["admin", "manager"] as Role[],
+  },
+  {
+    key: "ticket_due",
+    label: "Rok tiketa (danas / probijen)",
+    roles: ["admin", "manager"] as Role[],
+  },
+  {
+    key: "ticket_comment",
+    label: "Nov komentar na tiketu",
+    roles: ["admin", "manager"] as Role[],
+  },
+  {
+    key: "ticket_done",
+    label: "Tiket završen",
+    roles: ["admin", "manager"] as Role[],
+  },
+  {
+    key: "ticket_unblocked",
+    label: "Oslobođena blokada tiketa",
     roles: ["admin", "manager"] as Role[],
   },
 ] as const;

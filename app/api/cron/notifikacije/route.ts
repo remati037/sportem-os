@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 
 import { todayBelgrade } from "@/lib/date-belgrade";
 import { notifyRoles } from "@/lib/push";
+import { notifyTicketDue } from "@/lib/ticket-notify";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { APP_STATUS } from "@/lib/woo";
 
@@ -13,6 +14,10 @@ import { APP_STATUS } from "@/lib/woo";
  * Ciljanje po roli: Admin+Menadžer sve; Logistika SAMO low stock (zaključana
  * odluka). Dedup: notifyRoles kroz notification_log (type, reference_id) — pa i
  * ponovni poziv istog dana ne šalje duplo.
+ *
+ * Korak T5 dodaje podsetnik za ROKOVE TIKETA — jedini okidač koji ne ide po
+ * roli nego POIMENCE izvršiocima (`notifyUsers`), i to kao JEDAN sažetak po
+ * korisniku („2 tiketa kasne, 1 ima rok danas"), ne po tiketu.
  */
 
 export const dynamic = "force-dynamic";
@@ -60,6 +65,10 @@ export async function GET(request: Request) {
         sent.push("delivered_unpaid");
       }
     }
+
+    // ── Svaki dan: rokovi tiketa → IZVRŠIOCIMA, jedan sažetak po korisniku ──
+    const dueNotified = await notifyTicketDue(today);
+    if (dueNotified > 0) sent.push("ticket_due");
 
     // ── Nedelja (0) i sreda (3) uveče: podsetnik za pripremu slanja ──────────
     if (weekday === 0 || weekday === 3) {
