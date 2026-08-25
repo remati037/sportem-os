@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getTicketColumns, type TicketColumnRow } from "@/db/tickets-config";
 import { listStaffProfiles } from "@/db/profiles";
 import { todayBelgrade } from "@/lib/date-belgrade";
+import type { TicketEventRow, TicketFieldSnapshot } from "@/lib/ticket-events";
 import { TICKET_ARCHIVE_DAYS, TICKET_POSITION_STEP, parseTicketParam } from "@/lib/tickets";
 
 /*
@@ -621,4 +622,329 @@ export async function positionForMove(
   // Razmak potrošen → prenumeracija cele kolone; tiket ulazi na svoje mesto.
   const insertIndex = beforeIdx >= 0 ? beforeIdx + 1 : afterIdx;
   return renumberColumn(supabase, rows, movingId, insertIndex);
+}
+
+/* ── Detalj tiketa: komentari, checklist, istorija, veze (Korak T4) ──────── */
+
+export type TicketCommentRow = {
+  id: string;
+  body: string;
+  created_at: string;
+  updated_at: string;
+  /** Autor sme da menja/briše svoj komentar — klijent poredi sa svojim id-jem. */
+  author_id: string | null;
+  authorName: string | null;
+};
+
+export type TicketChecklistItem = {
+  id: string;
+  label: string;
+  done: boolean;
+  sort_order: number;
+  done_at: string | null;
+  doneByName: string | null;
+};
+
+/** Nit komentara (najstariji prvo, kao istorija statusa porudžbine). */
+export async function getTicketComments(ticketId: string): Promise<TicketCommentRow[]> {
+  const supabase = await createClient();
+  const [{ data }, staff] = await Promise.all([
+    supabase
+      .from("ticket_comments")
+      .select("id, body, created_at, updated_at, author_id")
+      .eq("ticket_id", ticketId)
+      .order("created_at", { ascending: true }),
+    listStaffProfiles(),
+  ]);
+
+  // Imena idu iz `listStaffProfiles()` (service-role): RLS na `profiles`
+  // Menadžeru pokazuje samo njegov red, pa embed ne bi vratio tuđa imena.
+  const nameById = new Map(staff.map((p) => [p.id, p.full_name]));
+  return (
+    (data as {
+      id: string;
+      body: string;
+      created_at: string;
+      updated_at: string;
+      author_id: string | null;
+    }[]) ?? []
+  ).map((c) => ({
+    ...c,
+    authorName: c.author_id ? (nameById.get(c.author_id) ?? null) : null,
+  }));
+}
+
+/** Checklist tiketa u redosledu unosa (progres „2/3" računa prikaz). */
+export async function getTicketChecklist(ticketId: string): Promise<TicketChecklistItem[]> {
+  const supabase = await createClient();
+  const [{ data }, staff] = await Promise.all([
+    supabase
+      .from("ticket_checklist_items")
+      .select("id, label, done, sort_order, done_at, done_by")
+      .eq("ticket_id", ticketId)
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: true }),
+    listStaffProfiles(),
+  ]);
+
+  const nameById = new Map(staff.map((p) => [p.id, p.full_name]));
+  return (
+    (data as {
+      id: string;
+      label: string;
+      done: boolean;
+      sort_order: number;
+      done_at: string | null;
+      done_by: string | null;
+    }[]) ?? []
+  ).map((i) => ({
+    id: i.id,
+    label: i.label,
+    done: i.done,
+    sort_order: i.sort_order,
+    done_at: i.done_at,
+    doneByName: i.done_by ? (nameById.get(i.done_by) ?? null) : null,
+  }));
+}
+
+/** Hronologija promena (najnovije prvo). Piše je `lib/ticket-events.ts`. */
+export async function getTicketEvents(ticketId: string): Promise<TicketEventRow[]> {
+  const supabase = await createClient();
+  const [{ data }, staff] = await Promise.all([
+    supabase
+      .from("ticket_events")
+      .select("id, kind, from_text, to_text, meta, created_at, actor_id")
+      .eq("ticket_id", ticketId)
+      .order("created_at", { ascending: false })
+      .limit(200),
+    listStaffProfiles(),
+  ]);
+
+  const nameById = new Map(staff.map((p) => [p.id, p.full_name]));
+  return (
+    (data as {
+      id: string;
+      kind: string;
+      from_text: string | null;
+      to_text: string | null;
+      meta: Record<string, unknown> | null;
+      created_at: string;
+      actor_id: string | null;
+    }[]) ?? []
+  ).map((e) => ({
+    id: e.id,
+    kind: e.kind,
+    from_text: e.from_text,
+    to_text: e.to_text,
+    meta: e.meta,
+    created_at: e.created_at,
+    actorName: e.actor_id ? (nameById.get(e.actor_id) ?? null) : null,
+  }));
+}
+
+/** Tiketi koji ČEKAJU ovaj (obrnuta strana zavisnosti) — samo upozorenje. */
+export async function getDependentTickets(ticketId: string): Promise<TicketRef[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("tickets")
+    .select("id, code, title, completed_at")
+    .eq("blocked_by_ticket_id", ticketId)
+    .order("code", { ascending: true });
+
+  return (
+    (data as { id: string; code: number; title: string; completed_at: string | null }[]) ?? []
+  ).map((t) => ({ id: t.id, code: t.code, title: t.title, done: t.completed_at != null }));
+}
+
+/* ── Panel vezanih zapisa ────────────────────────────────────────────────── */
+
+/**
+ * Panel NIKAD ne prikazuje finansije — samo broj/naziv/status/kontakt. Iznosi,
+ * MP/VP i profit se ne čitaju ovde (zamrznute cene se ne diraju).
+ */
+export type TicketLinkedOrder = {
+  id: string;
+  woo_order_id: number | null;
+  ship_name: string | null;
+  ship_city: string | null;
+  ordered_at: string | null;
+  delivery_method: string;
+  statusName: string | null;
+  statusColor: string | null;
+};
+
+export type TicketLinkedVariant = {
+  id: string;
+  sku: string;
+  productId: string | null;
+  productName: string | null;
+  variantName: string | null;
+  stockQuantity: number;
+  archived: boolean;
+};
+
+export type TicketLinkedCustomer = {
+  id: string;
+  name: string | null;
+  phone: string | null;
+  city: string | null;
+};
+
+export type TicketLinkedContext = {
+  order: TicketLinkedOrder | null;
+  variant: TicketLinkedVariant | null;
+  customer: TicketLinkedCustomer | null;
+};
+
+/** Vezani zapisi tiketa (porudžbina / artikal / kupac) u jednom pozivu. */
+export async function getLinkedContext(ticket: {
+  order_id: string | null;
+  variant_id: string | null;
+  customer_id: string | null;
+}): Promise<TicketLinkedContext> {
+  const supabase = await createClient();
+
+  const [order, variant, customer] = await Promise.all([
+    ticket.order_id
+      ? supabase
+          .from("orders")
+          .select(
+            "id, woo_order_id, ship_name, ship_city, ordered_at, delivery_method, status:order_statuses(name, color)",
+          )
+          .eq("id", ticket.order_id)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+    ticket.variant_id
+      ? supabase
+          .from("product_variants")
+          .select(
+            "id, sku, variant_name, stock_quantity, archived_at, product_id, product:products(name)",
+          )
+          .eq("id", ticket.variant_id)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+    ticket.customer_id
+      ? supabase
+          .from("customers")
+          .select("id, name, phone, city")
+          .eq("id", ticket.customer_id)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+  ]);
+
+  const orderRow = order.data as unknown as {
+    id: string;
+    woo_order_id: number | null;
+    ship_name: string | null;
+    ship_city: string | null;
+    ordered_at: string | null;
+    delivery_method: string;
+    status: { name: string; color: string | null } | null;
+  } | null;
+
+  const variantRow = variant.data as unknown as {
+    id: string;
+    sku: string;
+    variant_name: string | null;
+    stock_quantity: number;
+    archived_at: string | null;
+    product_id: string | null;
+    product: { name: string } | null;
+  } | null;
+
+  return {
+    order: orderRow
+      ? {
+          id: orderRow.id,
+          woo_order_id: orderRow.woo_order_id,
+          ship_name: orderRow.ship_name,
+          ship_city: orderRow.ship_city,
+          ordered_at: orderRow.ordered_at,
+          delivery_method: orderRow.delivery_method,
+          statusName: orderRow.status?.name ?? null,
+          statusColor: orderRow.status?.color ?? null,
+        }
+      : null,
+    variant: variantRow
+      ? {
+          id: variantRow.id,
+          sku: variantRow.sku,
+          productId: variantRow.product_id,
+          productName: variantRow.product?.name ?? null,
+          variantName: variantRow.variant_name,
+          stockQuantity: variantRow.stock_quantity,
+          archived: variantRow.archived_at != null,
+        }
+      : null,
+    customer: (customer.data as TicketLinkedCustomer | null) ?? null,
+  };
+}
+
+/* ── Zavisnost („čeka drugi tiket") ──────────────────────────────────────── */
+
+/** Koliko koraka lanca zavisnosti se prati pre nego što se odustane. */
+const CYCLE_SCAN_LIMIT = 50;
+
+/**
+ * Da li bi `ticketId` koji čeka `blockedById` napravio CIKLUS (A čeka B, B čeka
+ * A). Ide uzvodno lancem `blocked_by_ticket_id` od kandidata; ako naiđe na sam
+ * tiket → ciklus. Server odbija takvu vezu srpskom porukom.
+ */
+export async function wouldCreateCycle(
+  supabase: SupabaseClient,
+  ticketId: string,
+  blockedById: string,
+): Promise<boolean> {
+  if (ticketId === blockedById) return true;
+
+  const seen = new Set<string>([ticketId]);
+  let current: string | null = blockedById;
+
+  for (let step = 0; step < CYCLE_SCAN_LIMIT && current; step += 1) {
+    if (seen.has(current)) return true;
+    seen.add(current);
+
+    // Eksplicitna anotacija: bez nje TS vidi kružnu zavisnost `current` ↔ `data`.
+    const { data }: { data: { blocked_by_ticket_id: string | null } | null } = await supabase
+      .from("tickets")
+      .select("blocked_by_ticket_id")
+      .eq("id", current)
+      .maybeSingle();
+    current = data?.blocked_by_ticket_id ?? null;
+  }
+
+  return false;
+}
+
+/* ── Snapshot polja (diff za istoriju + dupliranje) ──────────────────────── */
+
+/**
+ * Stanje tiketa pre izmene — ulaz u `logTicketUpdate` (istorija) i osnova za
+ * `duplicateTicket`. Vraća id-jeve; nazive razrešava `lib/ticket-events.ts`.
+ */
+export async function getTicketSnapshot(
+  supabase: SupabaseClient,
+  ticketId: string,
+): Promise<TicketFieldSnapshot | null> {
+  const [{ data }, { data: assignees }, { data: tags }] = await Promise.all([
+    supabase
+      .from("tickets")
+      .select(
+        `id, title, description, column_id, priority_id, due_date, estimate_minutes,
+         blocked_by_ticket_id, order_id, variant_id, customer_id`,
+      )
+      .eq("id", ticketId)
+      .maybeSingle(),
+    supabase.from("ticket_assignees").select("user_id").eq("ticket_id", ticketId),
+    supabase.from("ticket_tag_links").select("tag_id").eq("ticket_id", ticketId),
+  ]);
+
+  if (!data) return null;
+  const row = data as Omit<TicketFieldSnapshot, "assignee_ids" | "tag_ids">;
+
+  return {
+    ...row,
+    assignee_ids: ((assignees as { user_id: string }[]) ?? []).map((a) => a.user_id),
+    tag_ids: ((tags as { tag_id: string }[]) ?? []).map((t) => t.tag_id),
+  };
 }

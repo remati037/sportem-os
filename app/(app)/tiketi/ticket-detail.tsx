@@ -2,26 +2,43 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Link2 } from "lucide-react";
 
+import { getProfile } from "@/lib/auth";
 import { listStaffProfiles } from "@/db/profiles";
-import { getTicketDetail } from "@/db/tickets";
+import {
+  getDependentTickets,
+  getLinkedContext,
+  getTicketChecklist,
+  getTicketComments,
+  getTicketDetail,
+  getTicketEvents,
+} from "@/db/tickets";
 import { getTicketColumns, getTicketPriorities, getTicketTags } from "@/db/tickets-config";
 import { todayBelgrade } from "@/lib/date-belgrade";
 import { datum, datumVreme } from "@/lib/format";
 import { dueState, formatEstimate, formatTicketCode, initials } from "@/lib/tickets";
 import { cn } from "@/lib/utils";
+import { Linkify } from "@/components/patterns/linkify";
 import { Badge } from "@/components/ui/badge";
 
 import { StatusPill } from "../porudzbine/status-pill";
+import { Activity } from "./[id]/activity";
+import { BlockedControl } from "./[id]/blocked-control";
+import { Checklist } from "./[id]/checklist";
+import { Comments } from "./[id]/comments";
+import { LinkedPanel } from "./[id]/linked-panel";
 import { TicketActions } from "./ticket-actions";
 import type { TicketOptions } from "./ticket-dialog";
 
 /*
- * Sadržaj detalja tiketa (Korak T2) — deljen između PUNE STRANE
- * (`/tiketi/[id]`, direktan link / refresh / novi tab) i MODALA nad board-om
- * (presretnuta ruta `@modal/(.)tiketi/[id]`). Jedan izvor istine za prikaz;
- * razlikuje se samo okvir (naslov modala vs `<h1>` na strani).
+ * Sadržaj detalja tiketa — deljen između PUNE STRANE (`/tiketi/[id]`, direktan
+ * link / refresh / novi tab) i MODALA nad board-om (presretnuta ruta
+ * `@modal/(.)tiketi/[id]`). Jedan izvor istine za prikaz; razlikuje se samo
+ * okvir (naslov modala vs `<h1>` na strani).
  *
- * Komentari, checklist, istorija promena i dupliranje dolaze u T4.
+ * Korak T4: komentari, checklist sa progresom, istorija promena, zavisnost
+ * („čeka drugi tiket" — upozorenje, ne blokira) i panel vezanih zapisa.
+ * Panel NIKAD ne prikazuje finansije, a `order_items` (zamrznute cene) se ovde
+ * i ne dodiruju.
  */
 export async function TicketDetail({
   param,
@@ -35,18 +52,26 @@ export async function TicketDetail({
   const ticket = await getTicketDetail(param);
   if (!ticket) notFound();
 
-  const [columns, priorities, tags, staff] = await Promise.all([
-    getTicketColumns(),
-    getTicketPriorities(),
-    getTicketTags(),
-    listStaffProfiles(),
-  ]);
+  const [columns, priorities, tags, staff, session, comments, checklist, events, linked, blocking] =
+    await Promise.all([
+      getTicketColumns(),
+      getTicketPriorities(),
+      getTicketTags(),
+      listStaffProfiles(),
+      getProfile(),
+      getTicketComments(ticket.id),
+      getTicketChecklist(ticket.id),
+      getTicketEvents(ticket.id),
+      getLinkedContext(ticket),
+      getDependentTickets(ticket.id),
+    ]);
 
   const options: TicketOptions = { columns, priorities, tags, staff };
   const column = columns.find((c) => c.id === ticket.column_id) ?? null;
   const due = dueState(ticket.due_date, todayBelgrade(), ticket.completed_at);
   const estimate = formatEstimate(ticket.estimate_minutes);
   const isModal = variant === "modal";
+  const waiting = blocking.filter((t) => !t.done);
 
   return (
     <>
@@ -84,16 +109,35 @@ export async function TicketDetail({
               >
                 {formatTicketCode(ticket.blocked_by.code)}
               </Link>{" "}
-              — {ticket.blocked_by.title}
+              — {ticket.blocked_by.title}. Zavisnost je samo upozorenje, ništa nije blokirano.
             </p>
           </div>
+        </div>
+      ) : null}
+
+      {waiting.length > 0 ? (
+        <div className="border-border bg-surface-2 text-ink-soft mb-6 rounded-lg border px-4 py-3 text-sm">
+          Ovaj tiket čeka{waiting.length > 1 ? "ju" : ""}:{" "}
+          {waiting.map((t, i) => (
+            <span key={t.id}>
+              {i > 0 ? ", " : ""}
+              <Link
+                href={`/tiketi/${formatTicketCode(t.code)}`}
+                className="text-green-deep num font-medium underline"
+              >
+                {formatTicketCode(t.code)}
+              </Link>
+            </span>
+          ))}
         </div>
       ) : null}
 
       {ticket.description ? (
         <section className="border-border bg-surface shadow-soft mb-6 rounded-lg border px-4 py-4">
           <div className="eyebrow mb-2">Opis</div>
-          <p className="text-ink-soft text-sm whitespace-pre-wrap">{ticket.description}</p>
+          <p className="text-ink-soft text-sm whitespace-pre-wrap">
+            <Linkify text={ticket.description} />
+          </p>
         </section>
       ) : null}
 
@@ -148,43 +192,19 @@ export async function TicketDetail({
           {estimate ? <span>{estimate}</span> : <span className="text-ink-faint">—</span>}
         </Row>
 
-        <Row label="Porudžbina">
-          {ticket.order ? (
-            <Link
-              href={`/porudzbine/${ticket.order.woo_order_id ?? ticket.order.id}`}
-              className="text-green-deep num font-medium underline"
-            >
-              {ticket.order.woo_order_id != null
-                ? `#${ticket.order.woo_order_id}`
-                : "Otvori porudžbinu"}
-            </Link>
-          ) : (
-            <span className="text-ink-faint">—</span>
-          )}
-        </Row>
-
-        <Row label="Artikal">
-          {ticket.variant ? (
-            <span>
-              <span className="num">{ticket.variant.sku}</span>
-              <span className="text-ink-faint"> · {ticket.variant.label}</span>
-            </span>
-          ) : (
-            <span className="text-ink-faint">—</span>
-          )}
-        </Row>
-
-        <Row label="Kupac">
-          {ticket.customer ? (
-            <span>
-              {ticket.customer.name ?? "Bez imena"}
-              {ticket.customer.phone ? (
-                <span className="text-ink-faint num"> · {ticket.customer.phone}</span>
-              ) : null}
-            </span>
-          ) : (
-            <span className="text-ink-faint">—</span>
-          )}
+        <Row label="Čeka tiket">
+          <BlockedControl
+            ticketId={ticket.id}
+            current={
+              ticket.blocked_by
+                ? {
+                    id: ticket.blocked_by.id,
+                    code: ticket.blocked_by.code,
+                    title: ticket.blocked_by.title,
+                  }
+                : null
+            }
+          />
         </Row>
 
         <Row label="Kreiran">
@@ -201,9 +221,13 @@ export async function TicketDetail({
         ) : null}
       </section>
 
-      <p className="text-ink-faint text-xs">
-        Komentari, checklist i istorija promena stižu u sledećem koraku.
-      </p>
+      <LinkedPanel context={linked} />
+
+      <Checklist ticketId={ticket.id} items={checklist} />
+
+      <Comments ticketId={ticket.id} comments={comments} currentUserId={session?.userId ?? ""} />
+
+      <Activity events={events} />
     </>
   );
 }

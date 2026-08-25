@@ -40,7 +40,7 @@ export function TicketModal({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-h-[90vh] sm:max-w-2xl">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader className="pr-8">
           <DialogDescription className="eyebrow num text-left">{code}</DialogDescription>
           <DialogTitle className="text-left text-lg">{title}</DialogTitle>

@@ -2,20 +2,24 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { ArrowRightLeft, Pencil, Trash2 } from "lucide-react";
+import { ArrowRightLeft, Copy, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import type { TicketListRow } from "@/db/tickets";
 import { RowActions } from "@/components/patterns/row-actions";
 import { DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 
-import { deleteTicket, moveTicket, type TicketActionState } from "./actions";
+import { deleteTicket, duplicateTicket, moveTicket, type TicketActionState } from "./actions";
 import { TicketDialog, type TicketOptions } from "./ticket-dialog";
 
 /*
- * „⋮" akcije tiketa (Korak T2): izmena, premeštanje u drugu kolonu i brisanje.
- * Premeštanje kroz meni je i rezerva za drag & drop (T3). Admin i Menadžer su
- * ravnopravni — nema dodatnog gejta u UI-ju (RLS pokriva obe role).
+ * „⋮" akcije tiketa (Korak T2): izmena, dupliranje, premeštanje u drugu kolonu
+ * i brisanje. Premeštanje kroz meni je i rezerva za drag & drop (T3). Admin i
+ * Menadžer su ravnopravni — nema dodatnog gejta u UI-ju (RLS pokriva obe role).
+ *
+ * „Dupliraj" (T4) kopira naslov + „ (kopija)", opis, prioritet, tagove,
+ * izvršioce, procenu i checklist (neštikliran); komentari, istorija, rok i veze
+ * se NE kopiraju — pravila su u samoj akciji.
  */
 export function TicketActions({
   ticket,
@@ -53,6 +57,9 @@ export function TicketActions({
       <RowActions label={`Akcije za SPT-${ticket.code}`}>
         <DropdownMenuItem onSelect={() => setEditOpen(true)}>
           <Pencil /> Izmeni
+        </DropdownMenuItem>
+        <DropdownMenuItem disabled={pending} onSelect={() => run(() => duplicateTicket(ticket.id))}>
+          <Copy /> Dupliraj
         </DropdownMenuItem>
 
         {targets.length > 0 ? <DropdownMenuSeparator /> : null}

@@ -196,3 +196,53 @@ export const setTagsSchema = z.object({
 export const ticketIdSchema = z.object({
   id: uuid("Neispravan tiket."),
 });
+
+/* ── Detalj tiketa (Korak T4): komentari, checklist, zavisnost ───────────── */
+
+/** Tekst komentara — prazan komentar nema smisla, gornja granica čuva prikaz. */
+const commentBody = z
+  .string()
+  .trim()
+  .min(1, "Unesite tekst komentara.")
+  .max(4000, "Komentar je predugačak (max 4000 znakova).");
+
+export const addCommentSchema = z.object({
+  ticket_id: uuid("Neispravan tiket."),
+  body: commentBody,
+});
+
+/** Izmena komentara — server dodatno proverava da je pozivalac AUTOR. */
+export const editCommentSchema = z.object({
+  id: uuid("Neispravan komentar."),
+  body: commentBody,
+});
+
+export const commentIdSchema = z.object({
+  id: uuid("Neispravan komentar."),
+});
+
+export const addChecklistItemSchema = z.object({
+  ticket_id: uuid("Neispravan tiket."),
+  label: z
+    .string()
+    .trim()
+    .min(1, "Unesite stavku.")
+    .max(200, "Stavka je predugačka (max 200 znakova)."),
+});
+
+export const toggleChecklistItemSchema = z.object({
+  id: uuid("Neispravna stavka."),
+  done: z
+    .union([z.boolean(), z.literal("on"), z.literal("true"), z.literal("false")])
+    .transform((v) => v === true || v === "on" || v === "true"),
+});
+
+export const checklistItemIdSchema = z.object({
+  id: uuid("Neispravna stavka."),
+});
+
+/** Zavisnost „čeka drugi tiket" — prazno/„none" skida vezu. Ciklus odbija server. */
+export const setBlockedBySchema = z.object({
+  id: uuid("Neispravan tiket."),
+  blocked_by_ticket_id: optionalLink("Neispravan tiket."),
+});

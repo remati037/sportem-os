@@ -11,7 +11,8 @@ import type { TicketOptions } from "./ticket-dialog";
 
 /*
  * Kartica tiketa na board-u (Korak T2): šifra, naslov, tagovi, prioritet,
- * izvršioci (inicijali), rok (bojen kad kasni) i badge-ovi veza.
+ * izvršioci (inicijali), rok (bojen kad kasni) i badge-ovi veza. Tiket koji
+ * čeka drugi se sivi (T4) — upozorenje, ne blokada.
  * Cela kartica vodi na detalj; „⋮" akcije stoje iznad overlay linka (z-10).
  */
 export function TicketCard({
@@ -27,9 +28,16 @@ export function TicketCard({
   const due = dueState(ticket.due_date, today, ticket.completed_at);
   const estimate = formatEstimate(ticket.estimate_minutes);
   const priorityHex = ticket.priority?.color ?? null;
+  // Zavisnost je samo VIZUELNA: kartica se sivi, ali ništa nije blokirano.
+  const blocked = Boolean(ticket.blocked_by && !ticket.blocked_by.done);
 
   return (
-    <div className="border-border bg-surface shadow-soft hover:bg-green-soft relative rounded-lg border p-3 transition-colors">
+    <div
+      className={cn(
+        "border-border bg-surface shadow-soft hover:bg-green-soft relative rounded-lg border p-3 transition-colors",
+        blocked && "opacity-70",
+      )}
+    >
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -113,7 +121,7 @@ export function TicketCard({
           </span>
         ) : null}
 
-        {ticket.blocked_by && !ticket.blocked_by.done ? (
+        {blocked && ticket.blocked_by ? (
           <span className="text-warning inline-flex items-center gap-1 font-semibold">
             <Link2 className="size-3.5" /> Čeka {formatTicketCode(ticket.blocked_by.code)}
           </span>
