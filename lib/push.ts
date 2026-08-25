@@ -66,7 +66,11 @@ type Admin = ReturnType<typeof createAdminClient>;
  * Šalje jedan push. Na `410 Gone`/`404` (endpoint više ne postoji) briše taj red
  * iz `push_subscriptions` (self-cleanup). Ostale greške → Sentry.
  */
-async function sendOnePush(supabase: Admin, row: SubscriptionRow, payload: string): Promise<void> {
+async function sendOnePush(
+  supabase: Admin,
+  row: SubscriptionRow,
+  payload: string,
+): Promise<boolean> {
   try {
     // `urgency: "high"` → push servis (FCM/APNs) isporučuje ODMAH, ne čeka da se
     // telefon probudi zbog nečeg drugog (Doze/štednja baterije). Bez ovoga default
@@ -76,12 +80,14 @@ async function sendOnePush(supabase: Admin, row: SubscriptionRow, payload: strin
       urgency: "high",
       TTL: 60 * 60 * 24,
     });
+    return true;
   } catch (err) {
     if (err instanceof WebPushError && (err.statusCode === 410 || err.statusCode === 404)) {
       await supabase.from("push_subscriptions").delete().eq("id", row.id);
-      return;
+      return false;
     }
     Sentry.captureException(err);
+    return false;
   }
 }
 
@@ -218,5 +224,49 @@ export async function notifyUsers(
     await deliver(createAdminClient(), type, referenceId, userIds, payload);
   } catch (err) {
     Sentry.captureException(err);
+  }
+}
+
+/* ── Probno obaveštenje ──────────────────────────────────────────────────── */
+
+/** Ishod probnog slanja — svaki razlog ima svoju srpsku poruku u akciji. */
+export type TestPushResult =
+  | { ok: true; devices: number }
+  | { ok: false; reason: "not-configured" | "no-subscriptions" | "failed" };
+
+/**
+ * Pošalji push SAMO sebi, odmah, ZAOBILAZEĆI preference i dedup ledger — ovo je
+ * dijagnostika („da li push uopšte stiže na ovaj telefon"), ne događaj sistema.
+ * Zato se ništa ne upisuje u `notification_log` i može se ponavljati.
+ *
+ * Vraća precizan razlog neuspeha da korisnik zna gde je zastalo: nema VAPID
+ * ključeva (env), nema nijedne pretplate na nalogu (nije uključeno na uređaju),
+ * ili je push servis odbio sve endpointe.
+ */
+export async function sendTestPush(userId: string): Promise<TestPushResult> {
+  try {
+    if (!pushConfigured()) return { ok: false, reason: "not-configured" };
+
+    const supabase = createAdminClient();
+    const { data } = await supabase
+      .from("push_subscriptions")
+      .select("id, user_id, subscription")
+      .eq("user_id", userId);
+    const rows = (data as SubscriptionRow[] | null) ?? [];
+    if (rows.length === 0) return { ok: false, reason: "no-subscriptions" };
+
+    const payload = JSON.stringify({
+      title: "Probno obaveštenje",
+      body: "Push radi na ovom uređaju.",
+      url: "/obavestenja",
+      tag: "test-push",
+    } satisfies PushPayload);
+
+    const results = await Promise.all(rows.map((row) => sendOnePush(supabase, row, payload)));
+    const devices = results.filter(Boolean).length;
+    return devices > 0 ? { ok: true, devices } : { ok: false, reason: "failed" };
+  } catch (err) {
+    Sentry.captureException(err);
+    return { ok: false, reason: "failed" };
   }
 }

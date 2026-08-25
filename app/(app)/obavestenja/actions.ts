@@ -4,6 +4,7 @@ import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
 
 import { firstZodError, type ActionState } from "@/lib/actions";
+import { sendTestPush } from "@/lib/push";
 import { createClient } from "@/lib/supabase/server";
 
 /*
@@ -42,4 +43,36 @@ export async function savePreferences(input: SavePrefsInput): Promise<SavePrefsS
     return { error: "Greška pri čuvanju." };
   }
   return { error: null, success: "Sačuvano." };
+}
+
+/**
+ * Probno obaveštenje samom sebi — dijagnostika „stiže li push uopšte na ovaj
+ * uređaj". Zaobilazi preference i dedup (v. `sendTestPush`), pa se može
+ * ponavljati; poruka razlikuje gde je zastalo (env / pretplata / push servis).
+ */
+export async function sendTestNotification(): Promise<SavePrefsState> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Niste prijavljeni." };
+
+  const res = await sendTestPush(user.id);
+  if (res.ok) {
+    return {
+      error: null,
+      success:
+        res.devices === 1
+          ? "Poslato — obaveštenje bi trebalo da stigne za koji sekund."
+          : `Poslato na ${res.devices} uređaja.`,
+    };
+  }
+
+  if (res.reason === "no-subscriptions") {
+    return { error: "Nijedan uređaj nije pretplaćen — uključi obaveštenja iznad." };
+  }
+  if (res.reason === "not-configured") {
+    return { error: "Push nije podešen na serveru (nedostaju VAPID ključevi)." };
+  }
+  return { error: "Slanje nije uspelo — pretplata je verovatno istekla, isključi pa uključi." };
 }

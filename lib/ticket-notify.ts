@@ -111,8 +111,14 @@ export function assignedFromChanges(changes: LoggedTicketChange[]): AssignedEntr
 }
 
 /**
- * „Dodeljen ti je tiket" — svakom NOVO dodatom izvršiocu, osim onome ko je
- * dodelu uradio (sebi ne javljamo).
+ * „Dodeljen ti je tiket" — svakom NOVO dodatom izvršiocu, UKLJUČUJUĆI onoga ko
+ * je dodelu uradio.
+ *
+ * PROMENJENA ODLUKA: ranije se akter izuzimao („sebi se ne javlja"), pa tiket
+ * koji napraviš i dodeliš SEBI nije slao ništa — a to je najčešći slučaj i
+ * obaveštenje tu radi kao podsetnik (ostane u listi na telefonu). Ostali tipovi
+ * (`ticket_comment`, `ticket_done`, `ticket_unblocked`) i dalje preskaču aktera
+ * — tamo je to eho sopstvene akcije, ne podsetnik.
  */
 export async function notifyTicketAssigned(
   ticketId: string,
@@ -120,8 +126,7 @@ export async function notifyTicketAssigned(
   added: AssignedEntry[],
 ): Promise<void> {
   try {
-    const targets = added.filter((a) => a.userId !== actorId);
-    if (targets.length === 0) return;
+    if (added.length === 0) return;
 
     const supabase = createAdminClient();
     const ticket = await ticketInfo(supabase, ticketId);
@@ -129,13 +134,13 @@ export async function notifyTicketAssigned(
 
     const label = ticketLabel(ticket);
     await Promise.all(
-      targets.map((a) =>
+      added.map((a) =>
         notifyUsers(
           "ticket_assigned",
           reference(a.eventId, `ticket_assigned:${ticketId}:${a.userId}`),
           [a.userId],
           {
-            title: "Dodeljen ti je tiket",
+            title: a.userId === actorId ? "Uzeo si tiket" : "Dodeljen ti je tiket",
             body: label.body,
             url: label.url,
             tag: label.tag,

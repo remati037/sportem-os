@@ -1,11 +1,13 @@
 "use client";
 
 import { useTransition } from "react";
-import { Bell, BellOff } from "lucide-react";
+import { Bell, BellOff, Send } from "lucide-react";
 import { toast } from "sonner";
 
 import { usePush } from "@/components/push/use-push";
 import { Button } from "@/components/ui/button";
+
+import { sendTestNotification } from "./actions";
 
 /*
  * Push podešavanja (Korak 1.9) — uključi/isključi obaveštenja na OVOM uređaju.
@@ -23,6 +25,16 @@ export function PushSettings() {
       const res = await subscribe();
       if (res.ok) toast.success("Obaveštenja uključena na ovom uređaju.");
       else toast.error(res.error ?? "Nije uspelo.");
+    });
+  };
+
+  // Probno slanje — jedini način da se sa uređaja proveri ceo lanac (VAPID na
+  // serveru → pretplata → push servis → service worker), bez čekanja događaja.
+  const handleTest = () => {
+    startTransition(async () => {
+      const res = await sendTestNotification();
+      if (res.error) toast.error(res.error);
+      else toast.success(res.success ?? "Poslato.");
     });
   };
 
@@ -62,10 +74,16 @@ export function PushSettings() {
             </p>
             <p className="text-ink-soft text-sm">Ovaj uređaj prima push obaveštenja.</p>
           </div>
-          <Button variant="ghost" onClick={handleUnsubscribe} disabled={working}>
-            <BellOff aria-hidden />
-            Isključi
-          </Button>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button variant="subtle" onClick={handleTest} disabled={working}>
+              <Send aria-hidden />
+              Probno
+            </Button>
+            <Button variant="ghost" onClick={handleUnsubscribe} disabled={working}>
+              <BellOff aria-hidden />
+              Isključi
+            </Button>
+          </div>
         </div>
       ) : (
         <div className="flex items-center justify-between gap-4">
