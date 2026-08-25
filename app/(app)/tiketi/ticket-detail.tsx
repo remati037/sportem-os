@@ -80,7 +80,7 @@ export async function TicketDetail({
           {isModal ? null : (
             <>
               <div className="eyebrow num">{formatTicketCode(ticket.code)}</div>
-              <h1 className="text-ink text-xl font-bold">{ticket.title}</h1>
+              <h1 className="text-ink text-xl font-bold break-words">{ticket.title}</h1>
             </>
           )}
           <div className="flex flex-wrap items-center gap-2">
@@ -135,7 +135,7 @@ export async function TicketDetail({
       {ticket.description ? (
         <section className="border-border bg-surface shadow-soft mb-6 rounded-lg border px-4 py-4">
           <div className="eyebrow mb-2">Opis</div>
-          <p className="text-ink-soft text-sm whitespace-pre-wrap">
+          <p className="text-ink-soft text-sm break-words whitespace-pre-wrap">
             <Linkify text={ticket.description} />
           </p>
         </section>

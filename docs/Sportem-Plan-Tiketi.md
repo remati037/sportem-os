@@ -1,6 +1,6 @@
 # Sportem — Plan implementacije: Tiketi (kanban za tim)
 
-> Verzija 1.0 · 25.08.2026 · status: **odobren za implementaciju**
+> Verzija 1.0 · 25.08.2026 · status: **ZAVRŠENO** (T1–T7 urađeni, direktno na `main`, 25.08.2026)
 > Prati pravila iz `CLAUDE.md` (zaključane odluke, migracije, RLS, srpski UI, zamrznute cene).
 > **Jedan korak = jedna sesija.** Za svaku sesiju: `CLAUDE.md` + tekst tog koraka + „PROMPT ZA SESIJU".
 
@@ -116,7 +116,7 @@ bez lomljenja prethodne. Svaki korak = svoj commit na grani **`korak-2-tiketi`**
 
 ---
 
-### T1 — Baza + Podešavanja (kolone, prioriteti, tagovi)
+### ✅ T1 — Baza + Podešavanja (kolone, prioriteti, tagovi) — URAĐENO
 
 **Cilj:** šema, RLS, podrazumevani config, i ekran gde Admin pravi kolone/prioritete/tagove.
 
@@ -153,7 +153,7 @@ kolonu, prioritet i tag (+ arhivira tag); Menadžer i Logistika ne vide te sekci
 
 ---
 
-### T2 — Board + kartica + kreiranje/izmena tiketa
+### ✅ T2 — Board + kartica + kreiranje/izmena tiketa — URAĐENO
 
 **Cilj:** upotrebljiv kanban (bez DnD) — vidiš, praviš i menjaš tikete, na desktopu i telefonu.
 
@@ -204,7 +204,7 @@ Logistika na `/tiketi` dobija redirect; završeni stariji od 14 dana su sakriven
 
 ---
 
-### T3 — Drag & drop + ručni redosled
+### ✅ T3 — Drag & drop + ručni redosled — URAĐENO
 
 **Cilj:** kartica se prevlači između kolona i unutar kolone, redosled se pamti.
 
@@ -235,7 +235,7 @@ da naprave dupli `position`; WIP limit i dalje samo upozorava.
 
 ---
 
-### T4 — Detalj tiketa: komentari, checklist, istorija, zavisnost, dupliranje
+### ✅ T4 — Detalj tiketa: komentari, checklist, istorija, zavisnost, dupliranje — URAĐENO
 
 **Cilj:** sve što ubija komunikaciju van tiketa.
 
@@ -273,7 +273,7 @@ i izbor tiketa koji ga blokira.
 
 ---
 
-### T5 — Obaveštenja (push + email) i dnevni podsetnik za rok
+### ✅ T5 — Obaveštenja (push + email) i dnevni podsetnik za rok — URAĐENO
 
 **Cilj:** tiket sam javlja; ništa se ne pita van aplikacije.
 
@@ -315,7 +315,7 @@ Dodela, komentar, završetak i oslobođena blokada stižu kao push (i email ako 
 
 ---
 
-### T6 — Auto-tiket „rizičan kupac" + veze iz ostatka aplikacije
+### ✅ T6 — Auto-tiket „rizičan kupac" + veze iz ostatka aplikacije — URAĐENO
 
 **Cilj:** sistem sam otvara jedini dogovoreni automatski tiket i povezuje tikete sa mestima gde radiš.
 
@@ -349,7 +349,7 @@ porudžbine i proizvoda vidiš vezane tikete i praviš nov u jednom kliku; Dashb
 
 ---
 
-### T7 — QA, dozvole i dokumentacija
+### ✅ T7 — QA, dozvole i dokumentacija — URAĐENO
 
 **Cilj:** dokazati da radi i da Logistika ne vidi ništa; zapisati odluke.
 
@@ -365,6 +365,34 @@ porudžbine i proizvoda vidiš vezane tikete i praviš nov u jednom kliku; Dashb
 **Rezultat**
 `npm run rls:test` zelen, klik-test prošao, `CLAUDE.md` dopunjen, sve spojeno u `main`.
 
+**Kako je urađeno (odstupanja od plana)**
+- RLS test je **dopuna `scripts/rls-test.mjs`**, ne nova `scripts/tickets-rls-test.mjs` (plan je dozvoljavao
+  oba) — `npm run rls:test` ostaje jedina komanda.
+- Dodate su i **statičke provere koje rade bez test naloga**: matrica politika iz migracije (RLS uključen
+  na svih 9 tabela, config write admin-only, nijedna politika ne pominje `logistics`) i kapije ruta
+  (`/tiketi` strana, detalj, presretnuti modal i svih 15 server akcija zovu `requireRole("admin","manager")`).
+  Idu **prve** u izlazu.
+- Živi deo testa **piše u bazu** (tiket + kolona sa prefiksom `__rls-test`, oba se odmah brišu) — bez toga se
+  „Menadžer sme da piše" ne može dokazati. `ticket_code_seq` time odmakne za jedan.
+- Pre Logistike se redovi prebroje **kao Admin**: kad je tabela prazna i za Admina, izlaz kaže „provera je
+  prazna" umesto lažnog ✓.
+- Menadžer je **opcion** (`RLS_TEST_MANAGER_EMAIL`/`_PASSWORD` u `.env.example`): bez kredencijala se ta
+  sekcija preskače uz upozorenje umesto da test padne.
+- **Mobilni (360px):** jedini nalaz — dugačak neprekinut string (URL iz `Linkify`, dug naslov) je izlazio iz
+  okvira. Dodato `break-words` na naslov kartice, `<h1>` detalja, opis i telo komentara. Ostalo je već bilo
+  `flex-wrap` / `min-w-0` / `overflow-x-auto` (board je `hidden md:flex`, filteri su `Sheet`).
+- **Prazna stanja:** proverena sva (board bez kolona, board bez tiketa vs bez rezultata filtera, prazna kolona
+  na oba prikaza, komentari, checklist, istorija, vezani tiketi, „Moji tiketi" na Dashboardu, Podešavanja) —
+  nije bilo šta da se dopiše.
+
+**Ostaje korisniku (živi deo)**
+Trenutno u bazi postoje samo Admin nalozi, pa živi deo `npm run rls:test` još nije pokrenut:
+1. dodati **Menadžera** i **Logistiku** kroz `/korisnici`;
+2. upisati kredencijale u `.env.test.local` (`RLS_TEST_*`, uklj. nove `RLS_TEST_MANAGER_*`);
+3. pokrenuti `npm run rls:test` — statički deo je već zelen;
+4. ručni klik-test (kreiranje → DnD → komentar → checklist → završetak → filteri → mobilni tabovi;
+   push samo u prod build-u).
+
 > **PROMPT ZA SESIJU (T7)**
 > ```
 > Pročitaj CLAUDE.md i docs/Sportem-Plan-Tiketi.md (korak T7). T1–T6 su gotovi.
@@ -376,6 +404,9 @@ porudžbine i proizvoda vidiš vezane tikete i praviš nov u jednom kliku; Dashb
 ---
 
 ## 3. Pre produkcije (čeklista)
+
+> **Status 25.08.2026:** tačka 1. je **urađena** — migracija je primenjena na cloud (config: 4 kolone,
+> 4 prioriteta, 4 taga). Tačke 2. i 4. ne traže ništa; 3. (push na telefonu) ostaje uz klik-test.
 
 1. `supabase db push` — migracija `20260825120000_tiketi.sql` (bez toga svi `/tiketi` upiti vraćaju prazno).
 2. `npm install` na Vercelu pokupi `@dnd-kit` sam (nema novih env promenljivih).

@@ -56,7 +56,7 @@ export function TicketCard({
               </span>
             ) : null}
           </div>
-          <p className="text-ink mt-1 text-sm font-medium">{ticket.title}</p>
+          <p className="text-ink mt-1 text-sm font-medium break-words">{ticket.title}</p>
         </div>
         <div className="relative z-10 shrink-0">
           <TicketActions ticket={ticket} options={options} />

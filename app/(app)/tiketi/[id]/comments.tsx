@@ -133,7 +133,7 @@ export function Comments({
                     }
                   />
                 ) : (
-                  <p className="text-ink-soft mt-2 text-sm whitespace-pre-wrap">
+                  <p className="text-ink-soft mt-2 text-sm break-words whitespace-pre-wrap">
                     <Linkify text={comment.body} />
                   </p>
                 )}

@@ -46,6 +46,27 @@ Vlasnici: **korisnik (Admin)** i **brat (Menadžer)**. **Drug (Logistika)** je d
 - Meta integracija, XExpress API i auto-decrement inventara **NISU u Fazi 1.**
 - **Auth: Supabase Auth** — 3 fiksna interna korisnika + 1 vendor, bez javne registracije, native RLS.
 
+### Tiketi (kanban) — zaključane odluke
+
+> Modul „Tiketi" (`docs/Sportem-Plan-Tiketi.md`, faze T1–T7 — **sve urađeno**). Odluke ispod se ne
+> menjaju bez izmene plana; implementacione beleške po koracima su u §10 („Korak T1"…„Korak T7").
+
+- **Pristup: SAMO Admin i Menadžer.** Logistika **nema nijednu RLS politiku** ni na jednoj od 9 `ticket_*` tabela (deny-by-default, kao finansije) i na `/tiketi` dobija redirect.
+- **Menadžer je ravnopravan Adminu nad tiketima** (pravi, menja, dodeljuje, briše). **Podešavanja board-a (kolone / prioriteti / tagovi) piše SAMO Admin.**
+- **Kolone, prioriteti i tagovi su podesivi** u `/podesavanja` (Admin). Start: kolone `Za rad · U toku · Čeka · Završeno`; prioriteti `Nizak · Srednji (default) · Visok · Hitno`; tagovi `Poziv · XExpress · Reklamacija · Nabavka`. Čitaju se **po zastavici/imenu** (`is_done`, `is_default`, `TICKET_DEFAULTS`) — **nikad po hardkodovanom UUID-u** (obrazac `APP_STATUS`).
+- **WIP limit je SOFT** — kolona broji `4/3` i pocrveni, ali pomeranje **nije** blokirano.
+- **Šifra `SPT-{code}`** iz Postgres sekvence; URL `/tiketi/SPT-42` (prima i `42`, UUID je rezerva).
+- **Više izvršilaca po tiketu** (M:N); tiket sme biti nedodeljen. Veze na **porudžbinu / varijantu / kupca** su opcione i nezavisne — panel vezanih zapisa **nikad ne prikazuje finansije**.
+- **`completed_at` postavlja DB trigger** kad tiket uđe/izađe iz kolone sa `is_done` — app ga nikad ne piše ručno. Završeni stariji od **14 dana** se sakrivaju iza „Prikaži arhivu"; **ništa se ne briše i nema crona**.
+- **`position` je `numeric`** (fractional indexing, bez float tipova — §5). **Server ne veruje klijentskoj poziciji**: prima susede i sam računa broj; prenumeriše kolonu kad razmak padne ispod `0.0001`.
+- **Drag & drop samo na desktopu (`md+`)**; na telefonu su **tabovi po kolonama** + lista kartica, a kolona se menja kroz „⋮" meni. Donji bar: Dashboard · Porudžbine · **Tiketi** · Finansije · „Više" — **Katalog silazi u „Više"** za Admina i Menadžera (Logistici ostaje u baru).
+- **Zavisnost „čeka drugi tiket" je upozorenje, ne blokada** (kartica se sivi). **Ciklus server odbija.**
+- **Istorija (`ticket_events`) se piše iz akcija, ne iz DB trigera** (samo akcija zna aktera; obrazac `order_status_history`), čuva **čitljive nazive** umesto UUID-jeva i **nikad ne obara akciju**. Komentar sme da menja/briše **samo autor** (server proverava).
+- **Obaveštenja** (push + email, po preferencama iz 1.9): `ticket_assigned`, `ticket_due`, `ticket_comment`, `ticket_done`, `ticket_unblocked`. **`reference_id` je vezan za DOGAĐAJ, ne za tiket**; cron šalje **jedan sažetak po korisniku** dnevno. Sve best-effort.
+- **Jedini auto-tiket je „rizičan kupac"** (iz Woo webhook-a): nedodeljen, prioritet **Visok**, tag **Poziv**, veza na porudžbinu i kupca, `source='auto_risky_customer'`, idempotentno preko parcijalnog unique indeksa. **Ništa drugo se ne pravi automatski**, i webhook nikad ne pada zbog tiketa.
+- **Van opsega v1:** ponavljajući tiketi, prilozi/fajlovi, markdown opis, vreme (sat) u roku, tvrdi WIP limit, blokiranje napretka zavisnošću, pristup za Logistiku.
+- **Modul NE dira:** zamrznute cene (`order_items`), finansije, RLS politike postojećih tabela, tok statusa porudžbina, `syncOrderStock`, restriktovani view za Logistiku.
+
 ---
 
 ## 4. Centralni princip: zamrznute cene (snapshot) — NE DIRATI bez potvrde
@@ -379,3 +400,14 @@ supabase db push       # primeni migracije iz supabase/migrations
 - **`db/orders.ts`:** `OrderDetail` dobio `customer_id` (za pred-popunjenu vezu „kupac"). Ništa drugo u porudžbinama nije dirano.
 - **Dashboard (`app/(app)/page.tsx`):** nova sekcija **„Moji tiketi"** (Kasni / Rok danas / Otvoreni → `/tiketi?moji=1[&rok=…]`); prazno stanje kad nemaš otvorenih. Metrike, period i ostale sekcije nedirane.
 - **Nedirano:** zamrznute cene i `order_items`, finansije, tok statusa i `order_status_history`, RLS politike, `syncOrderStock`, obaveštenja iz T5.
+
+**Korak T7 — Tiketi: QA, dozvole i dokumentacija (zatvara modul):**
+- **Bez migracije i bez nove zavisnosti.** Zaključane odluke modula su sada u §3, podsekcija „Tiketi (kanban) — zaključane odluke"; plan `docs/Sportem-Plan-Tiketi.md` je označen kao urađen (T1–T7).
+- **RLS test je DOPUNA postojećeg `scripts/rls-test.mjs`** (ne nova skripta) — `npm run rls:test` sada pokriva i tikete. Četiri nove sekcije: **Logistika → 0 redova na svih 9 `ticket_*` tabela + odbijen insert u `tickets`**; **Menadžer → čita sve, PIŠE tiket (insert+delete), ali mu je odbijen insert u `ticket_columns`/`ticket_priorities`/`ticket_tags` i update kolone ne menja nijedan red**; **Admin → prolazi i config write**; **kapije ruta** (statička provera da `/tiketi` strana, detalj, presretnuti modal i **svih 15 server akcija** zovu `requireRole("admin","manager")`).
+- **Test PIŠE u bazu** (jedan tiket + jedna kolona sa prefiksom `__rls-test`, oba se odmah brišu) — jedini pošten dokaz da Menadžer sme da piše. **`ticket_code_seq` time odmakne za jedan** (rupa u SPT brojevima); ništa drugo se ne dira.
+- **Prazna provera se prijavljuje, ne prećutkuje:** pre Logistike se prebroje redovi kao Admin, pa kad je tabela prazna i za Admina, u izlazu stoji „provera je prazna" umesto lažnog ✓.
+- **Menadžer je OPCION** (`RLS_TEST_MANAGER_EMAIL`/`_PASSWORD` u `.env.example`): bez kredencijala se ta sekcija preskače uz upozorenje, ostatak testa i dalje važi.
+- **Statičke provere idu PRVE** (matrica politika iz migracije `20260825120000_tiketi.sql` + kapije ruta) — daju rezultat i na mašini bez test naloga; hvataju regresiju tipa „neko je dopisao `logistics` u ticket politiku" pre nego što stigne na bazu.
+- **Mobilni prikaz (360px):** jedini nalaz — dugačak neprekinut string (URL iz `Linkify`, dug naslov) je izlazio iz okvira. Dodato `break-words` na **naslov kartice**, **`<h1>` detalja**, **opis** i **telo komentara**. Sve ostalo je već `flex-wrap`/`min-w-0`/`overflow-x-auto` (board je `hidden md:flex`, filteri su `Sheet`), pa nema horizontalnog skrola strane.
+- **Prazna stanja proverena i kompletna:** board bez kolona (link na Podešavanja), board bez tiketa (razlikuje „nema tiketa" od „nema za ove filtere"), prazna kolona na mobilnom i na desktopu, „Još nema komentara/promena", „Nema stavki", „Nema tiketa vezanih za ovu porudžbinu/proizvod", „Nemaš otvorenih tiketa" na Dashboardu, „Još nema kolona/prioriteta/tagova" u Podešavanjima. Sve na srpskom sa punim dijakriticima.
+- **Preduslov za živi deo testa:** postoje samo Admin nalozi — **Menadžer i Logistika se prvo dodaju kroz `/korisnici`**, pa se kredencijali upišu u `.env.test.local`. Migracija tiketa je već primenjena na cloud (config: 4 kolone / 4 prioriteta / 4 taga).
