@@ -2,8 +2,11 @@
 
 > **Namena ovog dokumenta.** Ovo je jedan fajl koji sadrži sve o Sportem aplikaciji: biznis, ljude, tokove novca, tehničku arhitekturu, sva pravila i formule, istoriju odluka, stanje danas, poznate bagove i planirane korake. Ubacuje se u Claude projekat kao izvor konteksta — kad se postavi bilo koje pitanje o Sportemu, odgovor treba da dolazi odavde.
 >
-> **Stanje na dan:** 01.08.2026. · **Grana:** `main` @ `9c3c4c9` (+ nekomitovan rad na automatskom skidanju zaliha)
-> **Kodbaza:** ~20.000 linija TS/TSX, 956 linija SQL migracija, 34 rute, 55 server akcija, 18 tabela.
+> **Stanje na dan:** 22.09.2026. · **Grana:** `main` @ `832598f`
+> **Kodbaza:** ~27.500 linija TS/TSX (183 fajla), 1.301 linija SQL (16 migracija), 26 stranica + 5 API ruta, 77 server akcija, **27 tabela**.
+>
+> **Šta je živo, a šta nije:** važeće odluke su u `CLAUDE.md` (§3 zaključane, §10 razrešene po koracima) — ovaj brief ih prepričava,
+> ne zamenjuje. Ono što je otvoreno je u `docs/backlog.md`. Odrađeni planovi i audit iz jula su u `docs/arhiva/` (istorija, ne izvor istine).
 
 ---
 
@@ -197,7 +200,7 @@ Ovo su tvrda pravila. Svako odstupanje traži eksplicitnu potvrdu korisnika.
 
 | Sloj | Izbor | Napomena |
 |---|---|---|
-| Framework | **Next.js 16.2.10** (App Router) + TypeScript 5 + React 19 | |
+| Framework | **Next.js 16.2.10** (App Router) + TypeScript 5 + React 19 | ⚠ zastarelo — 1 kritična + 6 „high" CVE, treba `16.3.5` (`docs/backlog.md` #1) |
 | Build | **`next build --webpack`** | OBAVEZNO — Serwist radi kroz webpack; Turbopack tiho ne generiše `sw.js` |
 | Stilizacija | Tailwind CSS 4 + shadcn/ui (radix-ui) | prebojeno po `docs/Sportem-Dizajn-Sistem.md` |
 | Baza / Auth / Storage | **Supabase** (Postgres, Supabase Auth, Storage, native RLS) | migracije kroz Supabase CLI, cloud bez Docker-a |
@@ -219,9 +222,11 @@ Ovo su tvrda pravila. Svako odstupanje traži eksplicitnu potvrdu korisnika.
 app/
   (app)/                    # zaštićene rute (AppShell + auth)
     page.tsx                # Dashboard
-    porudzbine/             # lista, detalj [id], akcije
+    porudzbine/             # lista, detalj [woo_order_id], akcije
+    tiketi/                 # kanban board, detalj [SPT-42] (Admin + Menadžer)
+    @modal/(.)tiketi/[id]/  # presretnuta ruta — detalj tiketa u modalu nad board-om
     katalog/                # lista, detalj [id], uvoz/
-    finansije/              # uplate/, fakture/, postarina/
+    finansije/              # uplate/, fakture/, postarina/ (+ postarina/fakture = XExpress)
     troskovi/
     korisnici/              # admin-only
     obavestenja/
@@ -243,20 +248,25 @@ components/
 db/                         # upiti nad bazom (server-only)
   orders.ts · finance.ts · catalog.ts · metrics.ts · dashboard.ts
   expenses.ts · customer-risk.ts · catalog-types.ts
+  tickets.ts · tickets-config.ts · profiles.ts
 lib/
   auth.ts · roles.ts · nav.ts · format.ts · period.ts · date-belgrade.ts
   woo.ts · woo-client.ts · push.ts · email.ts · notifications.ts
   stock.ts · storage.ts · image-url.ts · actions.ts · utils.ts
+  tickets.ts · ticket-events.ts · ticket-notify.ts · tickets-auto.ts
   supabase/ (client, server, admin, middleware)
-  validation/ (catalog, orders, finance, expenses, push, uuid)
+  validation/ (catalog, orders, finance, expenses, push, tickets, uuid)
 supabase/
-  migrations/               # 15 migracija — JEDINI put za izmenu šeme
+  migrations/               # 16 migracija — JEDINI put za izmenu šeme
   seed.sql                  # trajni bootstrap (statusi + kategorije troškova)
   dev-fixtures.sql · dev-fixtures-teardown.sql · profiles.sql
 scripts/
-  woo-backfill.mjs · woo-webhook-test.mjs · rls-test.mjs
-  generate-icons.mjs · fix-goods-total.mjs
-docs/                       # izvori istine
+  woo-backfill.mjs · woo-webhook-test.mjs · rls-test.mjs · generate-icons.mjs
+docs/
+  sportem-kontekst.md · Sportem-Dizajn-Sistem.md   # izvori istine
+  sportem-brief.md                                  # ovaj fajl
+  backlog.md                                        # šta je još otvoreno
+  arhiva/                                           # odrađeni planovi + audit 31.07. (istorija)
 proxy.ts                    # Next 16 „proxy" (bivši middleware) — zaštita ruta
 ```
 
@@ -300,7 +310,7 @@ Font: **Geist** (UI) + **Geist Mono** (SKU, brojevi porudžbina, fakture). Svi b
 
 ## 7. Model podataka
 
-18 tabela, sve sa uključenim RLS-om. Sve cene `integer` RSD.
+27 tabela, sve sa uključenim RLS-om. Sve cene `integer` RSD.
 
 ### 7.1 Katalog
 
@@ -384,19 +394,38 @@ Font: **Geist** (UI) + **Geist Mono** (SKU, brojevi porudžbina, fakture). Svi b
 **`notification_log`** — `type`, `reference_id`, `sent_at`; **unique `(type, reference_id)`** = dedup obaveštenja
 **`notification_preferences`** — `user_id` PK, `enabled bool` (master prekidač), `prefs jsonb` `{"<type>": {push, email}}`, `updated_at`
 
-### 7.6 RPC funkcije
+### 7.6 Tiketi (modul T1–T7)
+
+9 tabela, sve **nedostupne Logistici** (nijedna RLS politika — deny-by-default, kao finansije).
+
+**`tickets`** — `code int` (iz sekvence `ticket_code_seq`, prikaz `SPT-42`), `title`, `description`, `column_id` → ticket_columns (RESTRICT), `priority_id` → ticket_priorities (SET NULL), `position numeric` (fractional indexing, **nikad float tip**), `due_date date`, `estimate_minutes`, `blocked_by_ticket_id` (samoveza, upozorenje ne blokada), opcione veze `order_id` / `variant_id` / `customer_id`, `source`, `created_by`, `completed_at`.
+Parcijalni unique `(order_id) where source = 'auto_risky_customer'` — anti-duplikat auto-tiketa.
+
+**`ticket_columns`** — `name`, `color`, `sort_order`, **`is_done bool`** (završna kolona), `wip_limit` (**soft** — kolona pocrveni, ne blokira)
+**`ticket_priorities`** — `name`, `color`, `level`, `is_default` (parcijalni unique `where is_default`)
+**`ticket_tags`** — `name`, `color`, `archived_at`; unique na `lower(name) where archived_at is null`
+**`ticket_assignees`** / **`ticket_tag_links`** — M:N (više izvršilaca, više tagova po tiketu)
+**`ticket_checklist_items`** — `text`, `done_at`, `done_by`, `sort_order`
+**`ticket_comments`** — menja i briše **samo autor** (server proverava; RLS pušta ceo tim)
+**`ticket_events`** — audit; piše se **iz akcija, ne iz trigera** (samo akcija zna aktera) i čuva **čitljive nazive**, ne UUID-jeve
+
+**Trigger `tickets_sync_completed_at`** (`before insert or update of column_id`) — ulazak u kolonu sa `is_done` → `now()`, izlazak → `null`. **App `completed_at` nikad ne piše ručno.**
+
+Podrazumevani config (4 kolone / 4 prioriteta / 4 taga) je **u migraciji**, ne u `seed.sql` — jer se seed ne primenjuje na postojeću produkcionu bazu. Čita se **po zastavici/imenu** (`is_done`, `is_default`, `TICKET_DEFAULTS`), nikad po hardkodovanom UUID-u.
+
+### 7.7 RPC funkcije
 
 - **`public.current_app_role()`** — `SECURITY DEFINER`, `search_path = ''`, vraća `profiles.role` za `auth.uid()`. Koriste je sve RLS politike.
-- **`public.apply_stock_delta(p_items jsonb)`** — `SECURITY DEFINER`, jedan atomični `UPDATE product_variants set stock_quantity = stock_quantity + delta`. Grant samo `service_role`. *(Nekomitovano — migracija još nije na produkciji.)*
+- **`public.apply_stock_delta(p_items jsonb)`** — `SECURITY DEFINER`, `search_path = ''`, jedan atomični `UPDATE product_variants set stock_quantity = stock_quantity + delta`. `revoke all … from public, anon, authenticated` + `grant execute … to service_role`. **Poslato u produkciju** (commit `d0713f6`).
 
-### 7.7 Storage bucket-i
+### 7.8 Storage bucket-i
 
 | Bucket | Javnost | Sadržaj | Pristup |
 |---|---|---|---|
 | `product-images` | javan | slike proizvoda/varijanti | čitaju svi authenticated; piše Admin |
 | `expense-attachments` | **privatan** (5 MiB, slike + PDF) | prilozi troškova | select admin+manager, write admin; prikaz **isključivo kroz signed URL (1h)** |
 
-### 7.8 Migracije hronološki
+### 7.9 Migracije hronološki
 
 | Fajl | Šta donosi |
 |---|---|
@@ -414,7 +443,8 @@ Font: **Geist** (UI) + **Geist Mono** (SKU, brojevi porudžbina, fakture). Svi b
 | `20260721120000_xexpress_invoices` | XExpress fakture + `orders.xexpress_invoice_id` |
 | `20260722120000_payout_invoice_link` | `payouts.invoice_id` (faktura po uplatama) |
 | `20260731120000_stock_count` | `stock_counted_at/by` + backfill popisa |
-| `20260731140000_order_stock_decrement` | `orders.stock_applied` + `apply_stock_delta` **← NIJE NA PRODUKCIJI** |
+| `20260731140000_order_stock_decrement` | `orders.stock_applied` + `apply_stock_delta` |
+| `20260825120000_tiketi` | ceo modul Tiketi — 9 tabela, sekvenca, trigger `completed_at`, RLS + podrazumevani config |
 
 ---
 
@@ -444,19 +474,24 @@ Supabase koristi **jednu Postgres rolu `authenticated`** za sve ulogovane korisn
 | `expenses`, `expense_categories` | admin + manager | Admin |
 | `push_subscriptions`, `notification_preferences` | svoj red | svoj red |
 | `notification_log` | RLS on, bez politika = **samo service-role** |
+| `ticket_columns`, `ticket_priorities`, `ticket_tags` | admin + manager | **Admin** (podešavanja board-a) |
+| `tickets`, `ticket_assignees`, `ticket_tag_links`, `ticket_checklist_items`, `ticket_comments`, `ticket_events` | admin + manager (`*_staff_all`) | **admin + manager** |
+
+**Tiketi su jedini modul gde Menadžer piše kroz RLS, ravnopravno sa Adminom** (osim podešavanja board-a). Logistika nema **nijednu** politiku ni na jednoj od 9 `ticket_*` tabela i na `/tiketi` dobija redirect.
 
 **Menadžer je read-only na nivou RLS-a.** Ciljani write (promena statusa, poštarina) ide kroz **service-role klijent** (`lib/supabase/admin.ts`) uz `requireRole()` guard na serveru. Service role zaobilazi RLS i koristi se za: webhook, cron, invite, popis Logistike, izmene statusa.
 
 ### Šta je audit potvrdio kao bezbedno
 
 - Logistika ne dolazi do cena **nijednim putem** — ni kroz `product_variants` (RLS), ni kroz view (nema tih kolona), ni kroz PostgREST embed, ni kroz `order_profit` (`security_invoker = true`), ni kroz RPC, ni kroz storage, ni kroz PDF rutu (403).
-- RLS uključen na **svih 18 tabela**, nijedna bez politike.
-- Svih ~45 server akcija ima autorizaciju. Nema IDOR-a. Eskalacija role zatvorena.
+- RLS uključen na **svih 27 tabela**. (`notification_log` i `ticket_*` za Logistiku su namerno bez politika = deny-by-default.)
+- Sve server akcije imaju autorizaciju. Nema IDOR-a. Eskalacija role zatvorena.
+- `npm run rls:test` to **dokazuje nad živom bazom** — uključujući tikete (Logistika 0 redova na svih 9 tabela + odbijen insert; Menadžer piše tiket ali mu je config write odbijen).
 - Service-role ključ nikad ne dospeva u klijentski bundle; nijedan `NEXT_PUBLIC_*` ne nosi tajnu.
 - Nula `dangerouslySetInnerHTML`. CSRF pokriven. Open redirect na `/auth/callback` testiran — nije iskoristiv.
 - **Nema kritičnih sigurnosnih nalaza.**
 
-(Ozbiljni sigurnosni nalazi B1–B4 su u sekciji 15.)
+(Ozbiljni sigurnosni nalazi su u sekciji 15 i u `docs/backlog.md`.)
 
 ---
 
@@ -501,7 +536,8 @@ Supabase koristi **jednu Postgres rolu `authenticated`** za sve ulogovane korisn
 
 **Skripta:** `scripts/woo-backfill.mjs` · `npm run backfill` (dry-run) / `backfill:apply`.
 
-- **Izvor istine = `docs/backfill/porudzbine.csv`** (finalni Sheets izvoz, 941 porudžbina, 02.02–08.07.2026). Woo REST API se koristi samo za `--reconcile` jer Woo **ne nosi VP ni zaradu**.
+- **Izvor istine bio je `docs/backfill/porudzbine.csv`** (finalni Sheets izvoz, 941 porudžbina, 02.02–08.07.2026). Woo REST API se koristi samo za `--reconcile` jer Woo **ne nosi VP ni zaradu**.
+  **Backfill je odrađen; CSV je uklonjen iz repoa** (PII kupaca) — skripta `scripts/woo-backfill.mjs` ostaje radi istorije i `--reconcile`. Za ponovno pokretanje treba vratiti izvorni CSV na tu putanju.
 - **VP rekonstrukcija:** `mp_at_sale = Cena` (po komadu), `vp_at_sale = round(Cena − Zarada/Količina)`. Reprodukuje CSV zaradu sa **0 RSD greške** na svih 1571 stavki. Prazna zarada (145 stavki) → `vp_at_sale` null + `needs_vp`.
 - **Izolacija iz živih finansija:** istorijske plaćene xexpress porudžbine su vezane za sintetičku fakturu **`ISTORIJA-BACKFILL`** (isključuje ih iz „drug mi duguje" i novih faktura); lične+plaćene → `payment_status='kes'` bez fakture; otvorene (Processing/Poslato) → `neuplaceno`, teku u živi app.
 - Idempotentno po `woo_order_id`.
@@ -537,8 +573,17 @@ Postoji samo **rekonsilijacija faktura poštarine** (`/finansije/postarina/faktu
 | `delivered_unpaid` | Isporučeno a neuplaćeno | admin, manager |
 | `invoice_reminder` | Podsetnik za fakturu | admin, manager |
 | `risky_customer` | Rizičan kupac | admin, manager |
+| `ticket_assigned` | Dodeljen ti je tiket | admin, manager |
+| `ticket_due` | Rok tiketa (danas / probijen) | admin, manager |
+| `ticket_comment` | Nov komentar na tiketu | admin, manager |
+| `ticket_done` | Tiket završen | admin, manager |
+| `ticket_unblocked` | Oslobođena blokada | admin, manager |
 
-**Logistika u praksi dobija samo `low_stock`** (zaključana odluka).
+**Logistika u praksi dobija samo `low_stock`** (zaključana odluka) — tiketi joj se ne nude ni u preferencama.
+
+**Dva ulaza u fan-out** (`lib/push.ts`): `notifyRoles` (po roli) i **`notifyUsers`** (poimence — izvršioci/autor tiketa, ne proverava rolu jer pozivalac bira primaoce). Oba dele jezgro `deliver()`.
+**`reference_id` je vezan za DOGAĐAJ, ne za tiket** — inače bi ponovna dodela iste osobe zauvek bila „već poslato": `ticket_assigned`/`ticket_done` → `ticket_events.id`, `ticket_comment` → `comment.id`, `ticket_unblocked` → `{eventId}:{dependentTicketId}`, `ticket_due` → `ticket_due:{userId}:{datum}`.
+**Dodela SEBI takođe šalje push** (naslov „Uzeo si tiket") — ostali tipovi preskaču aktera. Na `/obavestenja` postoji dugme **„Probno"** koje zaobilazi i preference i dedup (dijagnostika, ne događaj).
 
 ### 9.6 Cron
 
@@ -551,6 +596,7 @@ Postoji samo **rekonsilijacija faktura poštarine** (`/finansije/postarina/faktu
 | svaki dan | nisko stanje (sve role) + isporučeno-neuplaćeno (staff) |
 | nedelja i sreda | podsetnik za pripremu slanja (staff) |
 | 1. i 15. u mesecu | podsetnik na fakturu — broji nefakturisane uplate (staff) |
+| svaki dan | **rok tiketa** — `notifyTicketDue`, **jedan sažetak po korisniku** („2 tiketa kasne, 1 ima rok danas"), poimence izvršiocima |
 
 ---
 
@@ -565,6 +611,7 @@ Postoji samo **rekonsilijacija faktura poštarine** (`/finansije/postarina/faktu
   - **Zarada / promet / marža isključuju Otkazano/Vraćeno.**
   - Sve iz zamrznutih `order_items`, troškovi iz `expenses` po `date`.
 - **„Porudžbine koje čekaju"** i **„Niska zaliha"** liste; ispod liste stoji koliko varijanti nema unetu količinu + link `/katalog?popis=fali`.
+- **„Moji tiketi"** — Kasni / Rok danas / Otvoreni, sa linkovima na `/tiketi?moji=1[&rok=…]`; prazno stanje kad nemaš otvorenih.
 - Kartice „Za fakturisanje" i „Saldo poštarine" su **uklonjene** sa Dashboarda (v. sekciju 12).
 - `orders-refresh.tsx` radi `router.refresh()` svakih 60 s.
 
@@ -572,7 +619,7 @@ Postoji samo **rekonsilijacija faktura poštarine** (`/finansije/postarina/faktu
 
 - **Filteri u drawer-u** (desna ivica na desktopu, dno na telefonu): status, način isporuke, datum, `payment_status`, `needs_vp`, rizičan kupac.
 - Pretraga po imenu / telefonu / broju porudžbine / atributu.
-- Traka **„Za ovaj filter"**: Zarada / Promet / Marža. *(Danas prikazuje 0 RSD — bug Ž1.)*
+- Traka **„Za ovaj filter"**: Zarada / Promet / Marža. **⚠ Danas prikazuje 0 RSD** — `CHUNK = 500` puca na dužini URL-a, a greška se ne proverava (`docs/backlog.md` #0).
 - **Bulk akcije** kroz dropdown: „Označi poslato", promena statusa (do 200 porudžbina po potezu).
 - Kursorska paginacija, badge-ovi statusa, „Rizičan kupac" flag.
 - **PDF lista za slanje** — selekcija → `/api/porudzbine/lista-za-slanje` (A4, ime/telefon/adresa/otkupnina/artikli/paketi).
@@ -588,6 +635,18 @@ Postoji samo **rekonsilijacija faktura poštarine** (`/finansije/postarina/faktu
 - **Plaćena/fakturisana porudžbina:** prelazak u Otkazano/Vraćeno vraća `requiresForce: true` → dijalog „Ipak nastavi" šalje `force=true`. **`force` je Admin-only.** Force menja samo `status_id` + `cancelled_at`; **oznaka „plaćeno" se NE dira** (novac je stvarno primljen, povraćaj je van app-a).
 - **Forma paketa:** naplaćena poštarina, stvarna poštarina, težina, broj paketa.
 - Promena statusa gura status i u WooCommerce (best-effort).
+- **Sekcija „Tiketi"** (Admin i Menadžer) — vezani tiketi + „Napravi tiket" sa pred-popunjenom vezom na porudžbinu i kupca. Prikaz je samo čitanje: šifra, naslov, prioritet, kolona, rok, inicijali — **nikad iznosi**.
+
+### `/tiketi` — kanban (SAMO Admin i Menadžer)
+
+- **Desktop (`md+`):** kolone sa **drag & drop** (`@dnd-kit`) i ručnim redosledom. **Telefon:** tabovi po kolonama sa brojačem + lista kartica, kolona se menja kroz „⋮" (bez DnD — dodir i skrol se ne mešaju).
+- **WIP limit je SOFT** — kolona broji `4/3` i pocrveni, ali ništa ne blokira.
+- **Server ne veruje klijentskoj poziciji:** `moveTicket` prima **susede**, čita njihove stvarne `position` iz baze i računa sredinu; prenumeriše kolonu kad razmak padne ispod `0.0001`.
+- **Filteri u URL-u:** `?kolona=&osoba=&tag=&prioritet=&q=&moji=1&rok=probijen|danas&arhiva=1` — deljiv link = deljiv pogled.
+- **Detalj se otvara u modalu nad board-om** (presretnuta ruta `@modal/(.)tiketi/[id]`), a URL ostaje `/tiketi/SPT-42` — direktan link, refresh i „otvori u novom tabu" daju punu stranu. Sadržaj deli isti kod (`ticket-detail.tsx`).
+- Detalj nosi: opis (običan tekst + auto-linkovi za URL, `SPT-42`, `#2419`), **komentare** (menja i briše samo autor), **checklist** (ne utiče na završetak), **istoriju promena**, **zavisnost „čeka tiket"** (upozorenje, ne blokada; **ciklus server odbija**), **panel vezanih zapisa** (porudžbina / artikal / kupac — **nikad finansije**) i **Dupliraj**.
+- **Završeni stariji od 14 dana** se sakrivaju iza „Prikaži arhivu". Ništa se ne briše, nema crona.
+- **Jedini auto-tiket u sistemu je „rizičan kupac"** — iz Woo webhook-a, nedodeljen, prioritet Visok, tag Poziv, idempotentno preko parcijalnog unique indeksa. Webhook nikad ne pada zbog tiketa.
 
 ### `/katalog` — lista i detalj
 
@@ -596,6 +655,7 @@ Postoji samo **rekonsilijacija faktura poštarine** (`/finansije/postarina/faktu
 - CRUD proizvoda, varijanti, kategorija; upload slika (resize kroz sharp); arhiviranje umesto brisanja kad postoje istorijske stavke.
 - **`/katalog/uvoz`** — CSV uvoz sa mapiranjem kolona, grupisanjem po osnovi SKU i dry-run pregledom. **⚠ Trenutno destruktivan** — v. sekciju 15.
 - **Logistika vidi isti ekran bez cenovnih kolona** (izvor je restriktovani view — cene ne stižu ni u payload).
+- **Sekcija „Tiketi"** na detalju proizvoda — renderuje se **samo Adminu i Menadžeru** (Logistika nema tikete ni u RLS-u).
 
 ### `/finansije` — redirect na `/finansije/uplate`
 
@@ -631,11 +691,15 @@ Filter po mesecu (`?mesec=YYYY-MM`), zbir, desktop tabela / mobilne kartice, dij
 
 - Korisnici: invite e-mailom, izmena imena/e-maila/role/lozinke.
 - Obaveštenja: „Ovaj uređaj" (push pretplata per-uređaj) + „Šta i kako da stiže" (master prekidač + tabela tip × [Push][Email], filtrirano po roli).
-- Podešavanja: profil (ime, lozinka) + statusi porudžbine (ime, boja, redosled).
+- Podešavanja: profil (ime, lozinka) + statusi porudžbine (ime, boja, redosled) + **sekcija „Tiketi"** (kolone / prioriteti / tagovi) koja se renderuje **samo Adminu**.
 
 ### `/stil`, `/stil/komponente`
 
-Dizajn showcase. **Jedine rute pod `(app)` bez role guarda** — samo demo podaci, ali Logistika vidi demo tabelu sa kolonama MP/VP/Zarada.
+Dizajn showcase. **Jedine rute pod `(app)` bez role guarda** — samo demo podaci, ali Logistika vidi demo tabelu sa kolonama MP/VP/Zarada. *(Otvoreno — `docs/backlog.md`, P2.)*
+
+### Donji bar na telefonu
+
+Dashboard · Porudžbine · **Tiketi** · Finansije · „Više". **Katalog je sišao u „Više"** za Admina i Menadžera (`lib/nav.ts`, `primaryRoles`); Logistici ostaje u baru jer im je jedini ekran.
 
 ---
 
@@ -693,7 +757,7 @@ isVariantLowStock(v) = v.stock_counted_at != null
 - `setStockCount` je jedina katalog akcija dostupna Logistici; ide kroz service-role jer Logistika nema write RLS. Patch dira isključivo `stock_quantity` + `stock_counted_at/by` — **nikad cene**.
 - Filter „Stanje 0" broji **samo popisanu nulu**; nepopisana nula pripada filteru „Fali količina".
 
-### Automatsko skidanje zaliha *(nekomitovano, migracija nije na produkciji)*
+### Automatsko skidanje zaliha *(na produkciji od commita `d0713f6`)*
 
 - Roba je skinuta dok je porudžbina u **živom toku** (Kreirano / Poslato / Isporučeno); **vraća se** čim ode u Otkazano ili Vraćeno; povratak iz njih je **ponovo skida**. Prelazi unutar živog toka ne diraju stanje.
 - Idempotentnost kroz uslovni UPDATE `orders.stock_applied` (`.eq("stock_applied", !next)`).
@@ -719,7 +783,7 @@ Ovo je najčešći izvor pitanja „zašto je ovako". Odluke koje su se **promen
 | # | Odluka | Bilo | Sada | Zašto |
 |---|---|---|---|---|
 | 1 | **Email obaveštenja** | „nije u Fazi 1" | jeste — Resend, opcioni kanal po korisniku | korisnik je tražio izbor kanala po tipu obaveštenja |
-| 2 | **Auto-decrement inventara** | „nije u Fazi 1" | implementirano (`lib/stock.ts`), čeka `db push` | stanje je bilo netačno čim stigne prva porudžbina |
+| 2 | **Auto-decrement inventara** | „nije u Fazi 1" | **poslato** (`lib/stock.ts`, migracija `20260731140000`) | stanje je bilo netačno čim stigne prva porudžbina |
 | 3 | **`date-fns-tz`** | konvencija iz plana | **ne koristi se** — `Intl` + `timeZone` | manje zavisnosti, konzistentno s kodbazom |
 | 4 | **„Otkazano/Vraćeno"** | jedan status | **dva** zasebna + obavezan razlog | operativno se razlikuju |
 | 5 | **Dashboard metrike** | realizovano (Isporučeno + plaćeno, po `delivered_at`) | **sve kreirano u periodu** (`ordered_at`), bez otkazanih | jasnija slika prodaje |
@@ -733,8 +797,16 @@ Ovo je najčešći izvor pitanja „zašto je ovako". Odluke koje su se **promen
 | 13 | **Popis inline u listi kataloga** | postojao | **uklonjen** — samo na detalju proizvoda | lista ostaje čist prikaz |
 | 14 | **Lokalni razvoj** | `supabase start` (Docker) | **cloud + CLI bez Docker-a** | jednostavnije |
 | 15 | **Otkazivanje plaćene porudžbine** | ćorsokak (`needs_review` bez promene statusa) | **force potvrda** (Admin-only) | status nikad nije mogao da pređe u Vraćeno |
+| 16 | **Tiket sistem** | nije postojao | **modul Tiketi (T1–T7)**, 9 tabela, kanban | zadaci su se dogovarali van aplikacije |
+| 17 | **Menadžer i write kroz RLS** | read-only na nivou RLS-a svuda | **nad tiketima piše ravnopravno s Adminom** | tiketi nisu finansije; podešavanja board-a ostaju Adminu |
+| 18 | **Katalog u donjem baru** | primarna stavka za sve | **sišao u „Više"** za Admina i Menadžera | Tiketi su ušli u bar; Logistici Katalog ostaje |
+| 19 | **Dodela tiketa SEBI** | akter se izuzimao („sebi se ne javlja") | **šalje push** („Uzeo si tiket") | to je najčešći slučaj — napraviš i uzmeš tiket |
+| 20 | **Feature grane po koraku** | plan ih je tražio (`korak-2-tiketi`) | **commit i push direktno na `main`** | tim od dvoje; Vercel deployuje s `main` |
 
 Odluke koje **stoje od početka:** PWA online-only · tri role · Supabase jedini izvor istine · sve porudžbine kroz Woo webhook · nema ručnog kreiranja porudžbina · faktura bez PDF-a · Meta Ads i XExpress API nisu u Fazi 1 · zamrznute cene · statusi po imenu.
+
+> **Gde se odluke stvarno vode:** `CLAUDE.md` §3 (zaključane) i §10 (razrešene po koracima). Ova tabela je pregled, ne izvor.
+> Stari planovi u `docs/arhiva/` **sadrže prevaziđene odluke** (npr. `2026-07-08-Plan-Implementacije-v2.md` još tvrdi „Email nije u Fazi 1") — ne citirati ih kao važeće.
 
 **Jednokratne data operacije** (nisu kod, urađene kroz service-role):
 - Obrisane sve `payouts` sa datumom 12–13.07.2026 (ručno peglanje) → 39 porudžbina otkačeno, ostale `uplaceno`.
@@ -744,54 +816,55 @@ Odluke koje **stoje od početka:** PWA online-only · tri role · Supabase jedin
 
 ## 13. Stanje sistema danas
 
-**Datum snimka:** 31.07.2026, iz produkcione baze.
+**Izvor:** izvozi iz aplikacije od **06–08.09.2026** (katalog, porudžbine, stavke, ponovni kupci).
+Cifre koje traže direktan upit nad bazom (rekonsilijacija sa Woo-om, `needs_review`, duplikati, broj naloga) **nisu ponovo merene** od 31.07. — te redove nosi oznaka *(31.07.)*.
 
-| Podatak | Vrednost |
-|---|---|
-| Porudžbine | **1045** (941 backfill + 104 žive) |
-| Stavke porudžbina | 1710 |
-| Proizvodi / varijante | 219 / 372 |
-| Kupci | 960 |
-| Uplate / fakture | 23 / 3 |
-| Troškovi | 19 unosa |
-| Korisnici (`profiles`) | **2 — oba `admin`** (brat i drug još nemaju naloge) |
-| Vremenski opseg | 02.02.2026 – 31.07.2026 |
+| Podatak | 31.07.2026 | **07.09.2026** |
+|---|---|---|
+| Porudžbine | 1045 | **1191** |
+| Stavke porudžbina | 1710 | **1917** |
+| Proizvodi / varijante | 219 / 372 | **235 / 392** |
+| Vremenski opseg | 02.02 – 31.07.2026 | **02.02 – 07.09.2026** |
+| Korisnici (`profiles`) | 2 — oba `admin` | *(31.07.)* nepromenjeno koliko je poznato |
 
-**Statusi:** Isporučeno 923 · Otkazano 95 · Vraćeno 17 · Kreirano 8 · Poslato 2
-**Plaćanje:** uplaćeno 802 · keš 123 · neuplaćeno 120
+**Statusi (07.09.):** Isporučeno 1035 · Otkazano 98 · Kreirano 29 · Vraćeno 27 · Poslato 2
+**Plaćanje:** uplaćeno 902 · keš 130 · **neuplaćeno 159**
+**Dostava:** XExpress 1055 · Lično 136 · **fakturisano 885**
 
 ### Zdravlje podataka
 
 | Provera | Rezultat |
 |---|---|
-| `needs_vp` / `needs_review` | **0 / 0** — čisto |
-| Stavke bez VP | 0 |
-| Duplikati `woo_order_id` | 0 |
-| **Porudžbine u Woo-u kojih nema u app-u** | **0** — webhook ne gubi ništa |
-| Varijante bez popisa | 0 |
-| Varijante u minusu | 0 |
-| **Stavke bez `variant_id`** | **1591 / 1710 (93%)** |
-| Porudžbine bez `shipping_charged` | 890 |
-
-**Rekonsilijacija sa WooCommerce-om:** 1045 u app-u, 1045 u Woo-u, **0 propuštenih, 0 viška**. Samo 4 neslaganja statusa, sva iz backfill-a.
+| **`needs_vp`** | **0** — nijedna porudžbina bez VP-a ✅ |
+| Varijante bez popisa | **0** — ceo katalog popisan ✅ |
+| Arhivirane varijante | 0 |
+| **Varijante u minusu** | **7** — očekivano: automatsko skidanje radi, a minus je dozvoljen po odluci (v. §5.2). Vredi ih popisati. |
+| Porudžbine bez naplaćene poštarine | **890** — skoro sve backfill; saldo poštarine ih ne broji (traži oba polja) |
+| `needs_review`, duplikati `woo_order_id`, rekonsilijacija sa Woo-om | *(31.07.: 0 / 0 / 0 propuštenih)* — nije ponovo mereno |
+| **Stavke bez `variant_id`** | *(31.07.: 1591 / 1710)* — v. „a)" ispod |
 
 ### Dve stvari koje vrede pažnje
 
-**a) 93% stavki nije povezano sa katalogom.** Svih 1571 backfill stavki ima `variant_id = null` (backfill nije spajao SKU sa varijantama), plus 20 živih stavki iz porudžbina #2797–#2816 (SKU-ovi tada nisu postojali u katalogu). Posledice: nema izveštaja „prodaja po artiklu" za feb–jul; automatsko skidanje zaliha te stavke **preskače**; nema akcije u app-u koja bi stavku naknadno povezala. Popravka je jednokratan `UPDATE` po SKU-u — SKU-ovi postoje na stavkama.
+**a) Većina istorijskih stavki nije povezana sa katalogom.** Svih 1571 backfill stavki ima `variant_id = null` (backfill nije spajao SKU sa varijantama), plus stavke iz porudžbina #2797–#2816 čiji SKU tada nije postojao u katalogu. Posledice: nema izveštaja „prodaja po artiklu" za feb–jul iz baze; automatsko skidanje zaliha te stavke **preskače**; nema akcije u app-u koja bi stavku naknadno povezala. Popravka je jednokratan `UPDATE` po SKU-u — SKU-ovi na stavkama postoje.
 
-**b) Uplata datirana 03.08.2026** — u budućnosti. `payouts` nema proveru datuma; vredi proveriti da nije omaška.
+**b) 159 neuplaćenih porudžbina.** Poraslo sa 120 (31.07.). Deo je normalan tok (isporučeno, čeka uplatu druga), ali vredi proći kroz `/finansije/uplate` — junske i julske su namerno ostavljene `neuplaceno` (v. §12, jednokratne operacije).
 
-### Ocena po oblastima (iz audita)
+### Ocena po oblastima
+
+Iz audita od 31.07.2026, **korigovano posle provere nad današnjim kodom** (22.09.2026):
 
 | Oblast | Ocena | Komentar |
 |---|---|---|
-| Sigurnost / RLS | ★★★★★ | Nema kritičnih nalaza |
-| Zamrznute cene (ustav) | ★★★★★ | Poštovan svuda |
-| Woo integracija | ★★★★☆ | Pouzdana i idempotentna; fale replay zaštita i pomirenje `refunded` posle `cancelled` |
-| Finansijska logika | ★★★☆☆ | Formule i timezone tačni; agregacija ima tihe rupe koje rastu sa obimom |
-| Katalog / uvoz | ★★☆☆☆ | CSV uvoz destruktivan; nema istorije kretanja zaliha |
-| Arhitektura / testovi | ★★☆☆☆ | Nula testova, nema CI-ja, 38–46 upita bez provere greške |
-| UX / mobilni | ★★☆☆☆ | Desktop solidan, mobilni znatno slabiji — 16 kritičnih nalaza, dva sa gubitkom podataka |
+| Sigurnost / RLS | ★★★★★ | Nema kritičnih nalaza. Tiketi dodali 9 tabela — Logistika nema nijednu politiku, `rls:test` to dokazuje. |
+| Zamrznute cene (ustav) | ★★★★★ | Poštovan svuda. **Ali:** `order_profit` view sumira preko NULL-ova → faktura može biti umanjena (backlog #5). |
+| Woo integracija | ★★★★☆ | Pouzdana i idempotentna; fale replay zaštita i pomirenje `refunded` posle `cancelled`. |
+| Finansijska logika | ★★★☆☆ | Formule i timezone tačni; agregacija i dalje ima tihe rupe koje rastu sa obimom (backlog #6, #8). |
+| Katalog / uvoz | ★★☆☆☆ | **CSV uvoz je i dalje destruktivan** (backlog #2–#4); nema istorije kretanja zaliha. |
+| Arhitektura / testovi | ★★☆☆☆ | Nula testova, nema CI-ja, `error` se i dalje guta kroz ceo `db/` sloj. |
+| UX / mobilni | ★★☆☆☆ | Desktop solidan, mobilni slabiji. Odjave na telefonu i dalje nema; nema `error.tsx`. |
+| Tiketi (novo) | ★★★★☆ | Modul je zaokružen i pokriven RLS testom; nije prošao poseban dubinski audit. |
+
+> **Puna, proverena lista otvorenog je u `docs/backlog.md`.** Sekcija 15 ispod je duži opis istih stvari.
 
 ---
 
@@ -837,7 +910,11 @@ Sve ove cifre postoje u zamrznutim `order_items` — fali samo ekran koji ih agr
 
 ## 15. Poznati bagovi i tehnički dug
 
-Iz audita od 31.07.2026 (šest paralelnih dubinskih analiza + provera nad produkcionom bazom). Puni izveštaji: `docs/audit/*.md`, sažetak `docs/izvestaj-stanja.md`.
+Iz audita od 31.07.2026 (šest paralelnih dubinskih analiza + provera nad produkcionom bazom), **prepročitano nad kodom 22.09.2026**.
+Puni izveštaji: `docs/arhiva/2026-07-31-audit/`. **Kratka, prioritizovana lista onoga što je još otvoreno: `docs/backlog.md`** — to je spisak po kome se radi; ova sekcija je duži opis.
+
+> **Šta je u međuvremenu popravljeno** (ne traži ponovo): trke u automatskom skidanju zaliha (`claimFlag` uslovni UPDATE), `force` potvrda za otkazivanje plaćene porudžbine, čekboks „Popisano" za potvrdu nepromenjene cifre.
+> **Šta i dalje stoji** (provereno 22.09.): Ž1–Ž4, ceo 15.2, ceo 15.3, 15.5, 15.6 i 15.7.
 
 ### 15.1 Živi bagovi — dešavaju se sada
 
@@ -893,19 +970,19 @@ Dodatno: uvoz radi ~560 sekvencijalnih upita bez transakcije; prekid na pola (ne
 
 **Popravke po ceni:** (1) prekidač „Samo dodaj nove, ne diraj postojeće" · (2) graditi UPDATE patch **samo od mapiranih polja** · (3) preuzeti `parseRsd` + sanity guard „nova cena > 10× stara" · (4) `import_batches` + „Poništi poslednji uvoz".
 
-### 15.4 Nekomitovano: automatsko skidanje zaliha
+### 15.4 Automatsko skidanje zaliha — **poslato**, ostatak nalaza stoji
 
-**Migracija NIJE na produkciji** (`orders.stock_applied` ne postoji) — ima vremena da se model popravi.
+**Migracija `20260731140000` je na produkciji** (commit `d0713f6`); izvoz kataloga od 06.09. pokazuje **7 varijanti u minusu**, što znači da mehanizam radi.
 
 **Urađeno dobro (ne treba ponovo gledati):** `apply_stock_delta` je jedan `UPDATE ... + delta` (otporan na lost update) · `claimFlag` je pravi mutex (`.eq("stock_applied", !next)`) → Woo retry ne može duplo da skine · migracija je tehnički čista (`security definer` + `search_path=''`, `not null default false` bez rewrite-a) · snapshot i `stock_counted_at` se ne diraju.
 
-**S1 · `claimFlag` i `applyDeltas` nisu atomični** — dva odvojena HTTP poziva.
+**S1 · `claimFlag` i `applyDeltas` nisu atomični** — dva odvojena HTTP poziva. *(Provereno 22.09. — i dalje tako, `lib/stock.ts:83-97`.)*
 - Proces umre između njih → `stock_applied = true`, roba **nije** skinuta; nikad se samo ne popravi.
 - RPC uspe ali odgovor ne stigne (timeout/504 — realno na Vercelu) → `catch` vraća flag na `false` → **sledeći pokušaj skida drugi put**.
 - Ista trka između `syncItemStock` i `syncOrderStock` (dva taba).
 **Popravka:** jedna plpgsql funkcija `apply_order_stock(p_order_id, p_reserve)` koja u istoj transakciji radi `select ... for update`, flipne prekidač, pročita stavke i primeni UPDATE.
 
-**S2 · Popis i rezervacija mere dve različite stvari, a pišu u istu kolonu**
+**S2 · Popis i rezervacija mere dve različite stvari, a pišu u istu kolonu** — **najvažnija otvorena dizajn odluka u zalihama**
 Rezervacija je na **„Kreirano"**, a roba fizički odlazi tek na **„Poslato"** (pon/čet). U tom prozoru (do 4 dana) `stock_quantity` je umanjen ali je roba na polici. Logistika prebroji policu, ukuca stvarnu cifru → **rezervacija je izbrisana**. Greška se akumulira svake nedelje — i kvari tačno onaj problem koji je popis trebalo da reši.
 
 | Opcija | Šta | Trud |
@@ -961,6 +1038,10 @@ Rezervacija je na **„Kreirano"**, a roba fizički odlazi tek na **„Poslato"*
 
 **A8 · CLAUDE.md je postao changelog** — 55 KB, 10 sekcija uputstva + **19 hronološki nalepljenih dodataka** od kojih neki poništavaju gornje sekcije (email, auto-decrement, `date-fns-tz`, Otkazano/Vraćeno). Model čita ceo fajl na startu svake sesije; kontradikcije daju nedeterministično ponašanje.
 **Predlog:** `CLAUDE.md` ≤150 linija sa samo onim što važi danas · `docs/odluke/NNN-*.md` (ADR-ovi) · `docs/CHANGELOG.md` za hronologiju. Pravilo: kad se odluka promeni — **prepiši je**, ne dodaj ispod.
+
+### 15.6b Modul Tiketi — nije prošao audit
+
+Audit od 31.07.2026 je snimljen **pre** nego što je modul postojao, pa ga uopšte ne pokriva. Prošao je `npm run rls:test` (dozvole po rolama), QA praznih stanja i mobilnog prikaza (360px), ali **nije bio predmet dubinske analize** kao ostatak app-a. Obrasci koje deli sa ostatkom kodbaze (neprovereni PostgREST `error`, nedostatak transakcija, `.in()` bez chunk-a) po svoj prilici važe i ovde.
 
 ### 15.7 UX i mobilni
 
@@ -1031,10 +1112,13 @@ App se koristi na telefonu (brat u pokretu, drug u magacinu), a **mobilna verzij
 
 **Nije završeno iz Faze 1:**
 - **Korak 1.10 — QA i lansiranje:** push na realnim uređajima nije testiran; **paralelni ciklus sa Sheets-om nije odrađen**; Make scenariji i Sheets tok formalno nisu ugašeni.
-- **Nalozi:** u bazi su samo 2 korisnika, **oba `admin`**. Brat (Menadžer) i drug (Logistika) još nemaju naloge — cela role-based logika je implementirana ali se u praksi ne koristi.
-- **Migracija `20260731140000_order_stock_decrement` nije primenjena** — automatsko skidanje zaliha ne radi u produkciji.
+- **Nalozi:** u bazi su samo 2 korisnika, **oba `admin`**. Brat (Menadžer) i drug (Logistika) još nemaju naloge — cela role-based logika je implementirana ali se **u praksi ne koristi**.
+  To ujedno blokira **živi deo `npm run rls:test`** (sekcije za Menadžera i Logistiku se preskaču) i ceo modul Tiketi, koji ima smisla tek kad postoje dva naloga.
+  **Prvi korak:** dodati ih kroz `/korisnici`, pa upisati kredencijale u `.env.test.local`.
 
-**Nedostaje kao infrastruktura:** testovi, CI, generisani Supabase tipovi, `error.tsx`/`not-found.tsx`, offline stranica, rollback plan za migracije, dokumentovana backup politika, izvoz podataka (nema **nijednog** izvoza u celoj aplikaciji).
+**Urađeno posle 01.08.2026:** ceo **modul Tiketi** (T1–T7) — kanban, DnD, komentari, checklist, istorija, zavisnosti, obaveštenja, auto-tiket „rizičan kupac", RLS test. Time je Faza 1 + jedan modul van plana.
+
+**Nedostaje kao infrastruktura:** testovi, CI, generisani Supabase tipovi, `error.tsx`/`not-found.tsx`, offline stranica, rollback plan za migracije, dokumentovana backup politika, **izvoz podataka** — app i dalje nema **nijedan** izvoz (jedino `Content-Disposition` je PDF lista za slanje). Izvozi od 06–08.09.2026 (katalog, prodaja, ponovni kupci) su rađeni **ručno, van aplikacije** — jasan signal da ekran „Izveštaji / Izvoz" vredi.
 
 **Nikad implementirano a podrazumevalo se:** ekran za kupce, izveštaj prodaje po artiklu, poređenje perioda / trend, aging potraživanja, „Zaboravljena lozinka", globalna pretraga.
 
@@ -1071,20 +1155,24 @@ Poređano po odnosu vrednost/trud. Prve četiri su „podaci već postoje, fali 
 
 ## 18. Predloženi redosled rada
 
+> **Ažurirano 22.09.2026.** Plan je iz jula; ono što je u međuvremenu urađeno je precrtano, a dve stavke su se promenile:
+> tačka 5 je sada `next@16.3.5` (**1 kritična** + 6 „high"), a tačka 6 je nebitna jer je `apply_stock_delta` **već na produkciji** u `public` šemi — ako se seli, seli se migracijom.
+> Kraća, prioritizovana verzija ovog spiska je `docs/backlog.md`.
+
 **Nedelja 1 — zaustavi krvarenje (~1,5 dan)**
 1. `sumOrderItems` CHUNK 500 → 200 + paginacija + `error` check *(Ž1 — pogrešna cifra na ekranu)*
 2. Popis: prazan string ≠ 0, snimi i nepromenjenu cifru, toast uspeha *(U1, U2 — gubitak podataka)*
 3. XExpress forma: ne slati prazna polja *(U3)*
 4. Prekidač „samo dodaj nove" u CSV uvozu *(privremena brana)*
-5. `npm i next@16.2.12` *(5 CVE)*
-6. `apply_stock_delta` premestiti iz `public` šeme — **pre `db push`** *(B1)*
+5. `npm audit fix` + `npm i next@16.3.5` *(**1 kritična** + 6 „high" — u julu ih je bilo 5)*
+6. ~~`apply_stock_delta` premestiti iz `public` šeme — pre `db push`~~ — **prošlo**, migracija je na produkciji; premeštanje sada traži novu migraciju i nije hitno *(grant je `service_role`-only)*
 7. Sitno a bolno: skloniti `noopener` sa „Štampaj" *(U4)* · `ConfirmDialog` na bulk „Poslato" i „Označi plaćeno" *(U8)* · zaključati imena seed statusa *(U7)*
 
 **Nedelja 2 — temelj (~1,5 dan)**
 8. Vitest + Traka A (novčani helperi, Belgrade vreme, HMAC) — ~4 h
 9. CI: `typecheck + lint + test + npm audit` + branch protection na `main`
 10. `supabase gen types` → brisanje 23 `as unknown as` castova
-11. Mobilni header sa odjavom + `components/ui/checkbox.tsx` (40px) + `error.tsx` / `not-found.tsx` / `/offline` *(U5, U9, U10)*
+11. Mobilni header sa odjavom + `components/ui/checkbox.tsx` (40px) + `error.tsx` / `not-found.tsx` / `/offline` *(U5, U9, U10 — sve troje i dalje otvoreno, provereno 22.09.)*
 
 **Nedelja 3 — sistemski (~1,5 dan)**
 12. `selectAll()` + `chunked()` helper → zameniti svih 9 mesta *(P1–P9)*
@@ -1101,7 +1189,9 @@ Poređano po odnosu vrednost/trud. Prve četiri su „podaci već postoje, fali 
 
 **Zatim, po vrednosti:** F1 (prodaja po artiklu) → F3 (izvoz) → F2 (poređenje perioda) → F10 (aging) → F9 (razlozi otkaza).
 
-**Paralelno:** restrukturirati CLAUDE.md *(A8)* — svaka naredna sesija radi bolje.
+**Paralelno:** restrukturirati CLAUDE.md *(A8)* — narastao je na ~90 KB jer je §10 postao hronološki changelog; svaka naredna sesija radi bolje ako se razdvoji „važeće odluke" od istorije.
+
+**Pre svega toga — jedna stvar koja ne košta ništa:** dodati **Menadžera i Logistiku** kroz `/korisnici`. Bez njih se role-based deo app-a (uključujući ceo modul Tiketi) ne koristi, a živi RLS test se preskače.
 
 ---
 
@@ -1175,9 +1265,14 @@ Pravila za Claude u ovom projektu:
 5. **Jedan korak = jedna sesija.** Posle svakog koraka proveriti definiciju gotovog, pa commit.
 6. **Pre svakog predloga proveri da li već postoji u sekciji 15 ili 17** — velika većina očiglednih ideja je već analizirana i ima procenu truda.
 7. **Kontekst korisnika:** vlasnik biznisa koji sam razvija app uz rad, radi kroz Claude Code, nije full-time programer. Odgovori treba da budu konkretni, sa jasnim redosledom i cenom (trud), bez ponavljanja onoga što je već odlučeno.
-8. **Ako je pitanje o brojevima biznisa** — koristi sekciju 14, ali napomeni da je snimak od 31.07.2026.
-9. **Kad nešto nije u ovom dokumentu, reci to** umesto da pogađaš — kodbaza se menja, a ovo je snimak stanja na 01.08.2026.
+8. **Ako je pitanje o brojevima biznisa** — koristi sekciju 14 (snimak **31.07.2026**) i sekciju 13 (svežije cifre, iz izvoza **06–08.09.2026**); uvek reci koji je snimak.
+9. **Kad nešto nije u ovom dokumentu, reci to** umesto da pogađaš — kodbaza se menja, a ovo je snimak stanja na **22.09.2026**.
+10. **Hijerarhija izvora, kad se razilaze:** `CLAUDE.md` (važeće odluke) → kod → ovaj brief → `docs/arhiva/` (istorija, sme biti prevaziđena). **Arhivu nikad ne citirati kao važeću odluku.**
+11. **Za pitanje „šta je još otvoreno / šta da radim sledeće"** — odgovor je `docs/backlog.md`, ne sekcija 15 (sekcija 15 je duži opis istih stvari, uključujući i one koje su u međuvremenu popravljene).
 
 ---
 
-*Kraj dokumenta. Izvori: `CLAUDE.md`, `docs/sportem-kontekst.md`, `docs/Sportem-Plan-Implementacije-v2.md`, `docs/Sportem-Dizajn-Sistem.md`, `docs/izvestaj-stanja.md`, `docs/audit/*.md`, kodbaza i produkciona baza na dan 31.07.2026.*
+*Kraj dokumenta.*
+
+*Izvori: `CLAUDE.md`, `docs/sportem-kontekst.md`, `docs/Sportem-Dizajn-Sistem.md`, `docs/backlog.md`, `docs/arhiva/2026-07-31-audit/`, `docs/arhiva/2026-07-08-Plan-Implementacije-v2.md`, `docs/arhiva/2026-08-25-Plan-Tiketi.md`, kodbaza na `main` @ `832598f`.*
+*Poslednje osvežavanje: **22.09.2026** — dopunjeno modulom Tiketi, cifre iz izvoza 06–08.09.2026, svi nalazi audita prepročitani nad tadašnjim kodom.*

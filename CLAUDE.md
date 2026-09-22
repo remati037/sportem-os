@@ -12,8 +12,11 @@ Vlasnici: **korisnik (Admin)** i **brat (Menadžer)**. **Drug (Logistika)** je d
 
 **Izvori istine (`docs/`):**
 - `docs/sportem-kontekst.md` — biznis kontekst, tokovi novca, ljudi, struktura baze, edge case-ovi. **Master dokument.**
-- `docs/Sportem-Plan-Implementacije-v2.md` — plan implementacije po fazama i koracima (v2.0).
+- `docs/arhiva/2026-07-08-Plan-Implementacije-v2.md` — plan Faze 0 i 1, **odrađen u celosti**. Istorijski;
+  za važeće odluke gleda se §3 ovog fajla, ne plan (plan još tvrdi „Email nije u Fazi 1", što više ne važi).
 - `docs/Sportem-Dizajn-Sistem.md` — dizajn tokeni, boje, tipografija, komponente. Izvor istine za UI (Korak 0.2/0.3).
+- `docs/Sportem-Plan-Izvestaji.md` — **živi plan**: modul Izveštaji / Izvoz, faze R0–R8. Bez migracije.
+- `docs/backlog.md` — šta je još otvoreno (P0/P1/P2), provereno nad kodom 22.09.2026.
 
 ---
 
@@ -48,7 +51,7 @@ Vlasnici: **korisnik (Admin)** i **brat (Menadžer)**. **Drug (Logistika)** je d
 
 ### Tiketi (kanban) — zaključane odluke
 
-> Modul „Tiketi" (`docs/Sportem-Plan-Tiketi.md`, faze T1–T7 — **sve urađeno**). Odluke ispod se ne
+> Modul „Tiketi" (`docs/arhiva/2026-08-25-Plan-Tiketi.md`, faze T1–T7 — **sve urađeno**). Odluke ispod se ne
 > menjaju bez izmene plana; implementacione beleške po koracima su u §10 („Korak T1"…„Korak T7").
 
 - **Pristup: SAMO Admin i Menadžer.** Logistika **nema nijednu RLS politiku** ni na jednoj od 9 `ticket_*` tabela (deny-by-default, kao finansije) i na `/tiketi` dobija redirect.
@@ -110,17 +113,19 @@ Razlog: u Sheetsu se desio bag — promena cene je retroaktivno promenila zaradu
 
 ## 7. Struktura foldera
 
-> Nastaje u Koraku 0.1 (`create-next-app`). Trenutno postoji samo `docs/`.
-
 ```
 app/                 # Next.js App Router (rute, layout, server akcije)
-components/           # UI komponente (shadcn/ui + brend obrasci)
+components/          # UI komponente (shadcn/ui + brend obrasci)
 lib/                 # helperi (rsd(), num(), getUser(), requireRole(), supabase klijenti)
 db/                  # tipovi/upiti vezani za bazu
+hooks/               # klijentski React hook-ovi
+scripts/             # pomoćne skripte (rls-test, woo-webhook-test, woo-backfill, generate-icons)
 supabase/
   migrations/        # SVE izmene šeme idu ovde (nikad dashboard)
-docs/                # kontekst, plan, dizajn sistem (izvori istine)
-CLAUDE.md            # ovaj fajl
+  seed.sql           # trajni bootstrap config; dev-fixtures*.sql = test podaci
+docs/                # kontekst + dizajn sistem (izvori istine) + backlog.md
+  arhiva/            # odrađeni planovi i stari auditi — istorija, NE izvor istine
+CLAUDE.md            # ovaj fajl — jedini izvor važećih odluka
 ```
 
 ---
@@ -129,10 +134,16 @@ CLAUDE.md            # ovaj fajl
 
 ```bash
 npm run dev            # lokalni dev server (Next.js)
-supabase start         # lokalna Postgres instanca (razvoj bez produkcione baze)
-supabase db push       # primeni migracije iz supabase/migrations
-# testovi: dopuniti kad se postave (Korak 0.1+)
+npm run build          # produkcioni build — MORA --webpack (Serwist), v. Korak 0.7
+supabase db push       # primeni migracije iz supabase/migrations na CLOUD
+
+npm run rls:test       # dokaz da RLS drži po rolama (traži .env.test.local)
+npm run woo:test       # test webhook rute (traži pokrenut `npm run dev`)
+npm run icons          # regeneriši PWA ikonice
 ```
+
+> **`supabase start` se NE koristi** — radi se Cloud + CLI, bez Docker-a (v. §10, Korak 0.4).
+> Automatizovanih testova nema; `rls:test` i `woo:test` su namenske provere, ne test suite (v. `docs/backlog.md`).
 
 ---
 
@@ -189,7 +200,7 @@ supabase db push       # primeni migracije iz supabase/migrations
 - **Test:** `npm run woo:test` (`scripts/woo-webhook-test.mjs`) — 30 provera (snapshot, idempotentnost, needs_vp, otkazivanje, needs_review guard, potpis, ping, dedup telefona); traži `npm run dev` + `WOO_WEBHOOK_SECRET` u `.env.local`. **Pre uključivanja pravog webhooka:** teardown dev-fixtures (woo_order_id 1001/1002 sudar) + isti secret u Woo i Vercel env; URL `https://app.sportem.rs/api/webhooks/woo`.
 
 **Korak 1.3 — Backfill istorijskih porudžbina (potvrđeno sa korisnikom):**
-- **Izvor istine za istoriju = `docs/backfill/porudzbine.csv`** (finalni Sheets izvoz, 941 porudžbina, 02.02–08.07.2026). Woo REST API se koristi SAMO za `--reconcile` (poređenje) jer Woo NE nosi VP/zaradu. Skripta: `scripts/woo-backfill.mjs`; komande `npm run backfill` (dry-run, default) i `npm run backfill:apply`.
+- **Izvor istine za istoriju bio je `docs/backfill/porudzbine.csv`** (finalni Sheets izvoz, 941 porudžbina, 02.02–08.07.2026). **Backfill je odrađen i CSV je uklonjen iz repoa (PII); skripta ostaje radi istorije i `--reconcile`.** Woo REST API se koristi SAMO za `--reconcile` (poređenje) jer Woo NE nosi VP/zaradu. Skripta: `scripts/woo-backfill.mjs`; komande `npm run backfill` (dry-run, default) i `npm run backfill:apply`.
 - **VP rekonstrukcija (zamrznute cene):** `mp_at_sale = Cena` (po komadu iz CSV-a), `vp_at_sale = round(Cena − Zarada/Količina)` — `Zarada po proizvodu` je PO STAVCI (već ×kol), `Cena` PO KOMADU. Reprodukuje CSV zaradu 0 RSD greške na svih 1571 stavki. Prazna `Zarada` (145 stavki) → `vp_at_sale` null + `needs_vp`. NIKAD iz današnjeg kataloga.
 - **CSV brojevi su mešani** (`parseRsd` razlikuje): srpske hiljade „3.000"→3000 vs decimale „4990.00"→4990. `Cena`/`Zarada` nikad nemaju decimale; samo `Ukupna cena porudžbine` ih ponegde ima (koristi se samo za dijagnostiku; čuvamo `goods_total = Σ Cena×kol`).
 - **Mapiranje statusa** (lookup po imenu): `Completed`→Isporučeno · `Poslato`→Poslato · `Processing`→Kreirano · `Returned`/`Cancelled`→Otkazano/Vraćeno. **delivery_method:** `BEX`/`X Express`/prazno→`xexpress`; `Miša`/`Marko`/`Vozač`→`licno`.
@@ -326,7 +337,7 @@ supabase db push       # primeni migracije iz supabase/migrations
 - **Test:** `npm run woo:test` proširen proverama stanja (skidanje −2, bez duplog na retry, vraćanje na otkazivanju, `needs_review` ostaje skinuto); skripta na kraju vraća stanje test varijante na polaznu cifru.
 
 **Korak T1 — Tiketi: baza + Podešavanja (potvrđeno sa korisnikom):**
-- **Modul Tiketi** (kanban za tim) po `docs/Sportem-Plan-Tiketi.md`. **Pristup: samo Admin i Menadžer** — Logistika nema NIJEDNU RLS politiku ni na jednoj `ticket_*` tabeli (deny-by-default, kao finansije). **Menadžer je ravnopravan Adminu nad tiketima**, ali **podešavanja (kolone/prioriteti/tagovi) piše samo Admin** (`ticket_*_select` admin+manager / `ticket_*_admin_write` admin; tiket tabele imaju jednu `*_staff_all` politiku za admin+manager).
+- **Modul Tiketi** (kanban za tim) po `docs/arhiva/2026-08-25-Plan-Tiketi.md`. **Pristup: samo Admin i Menadžer** — Logistika nema NIJEDNU RLS politiku ni na jednoj `ticket_*` tabeli (deny-by-default, kao finansije). **Menadžer je ravnopravan Adminu nad tiketima**, ali **podešavanja (kolone/prioriteti/tagovi) piše samo Admin** (`ticket_*_select` admin+manager / `ticket_*_admin_write` admin; tiket tabele imaju jednu `*_staff_all` politiku za admin+manager).
 - **Migracija `20260825120000_tiketi.sql`** — ceo modul u jednoj migraciji: `ticket_columns`, `ticket_priorities`, `ticket_tags`, `tickets`, `ticket_assignees`, `ticket_tag_links`, `ticket_checklist_items`, `ticket_comments`, `ticket_events` + sekvenca `ticket_code_seq`. **Podrazumevani config je U MIGRACIJI** (fiksni UUID `…c001–c004` kolone, `…d001–d004` prioriteti, `…e001–e004` tagovi, `on conflict (id) do nothing`) — NE u `seed.sql`, jer se seed ne primenjuje na postojeću produkcionu bazu. **Pre produkcije: `supabase db push`.**
 - **`completed_at` postavlja TRIGGER `tickets_sync_completed_at`** (`before insert or update of column_id`, `security definer`, `search_path=''`): ulazak u kolonu sa `is_done=true` → `now()`, izlazak → `null`. Baza je izvor istine, app ne mora da pamti. (Naknadno prebacivanje zastavice `is_done` na koloni NE prepravlja retroaktivno postojeće tikete.)
 - **Odluke o šemi:** `position numeric not null` bez defaulta (fractional indexing, app računa; nikad float — §5); `code int` iz sekvence, prikaz `SPT-{code}`; parcijalni unique `tickets (order_id) where source='auto_risky_customer'` (anti-duplikat auto-tiketa); `ticket_tags` unique na `lower(name) where archived_at is null`; **parcijalni unique `ticket_priorities (is_default) where is_default`** → akcija PRVO skida stari default pa upisuje novi (inače 23505). `ticket_events.kind` je **bez CHECK-a** (lista vrsta raste kroz faze T4–T6; dokumentovana u komentaru).
@@ -407,7 +418,7 @@ supabase db push       # primeni migracije iz supabase/migrations
 - **Podsetnik:** push radi SAMO u produkcionom build-u (SW je isključen u dev-u) i traži `VAPID_*` + `NEXT_PUBLIC_VAPID_PUBLIC_KEY` u Vercel env-u. Bez migracije.
 
 **Korak T7 — Tiketi: QA, dozvole i dokumentacija (zatvara modul):**
-- **Bez migracije i bez nove zavisnosti.** Zaključane odluke modula su sada u §3, podsekcija „Tiketi (kanban) — zaključane odluke"; plan `docs/Sportem-Plan-Tiketi.md` je označen kao urađen (T1–T7).
+- **Bez migracije i bez nove zavisnosti.** Zaključane odluke modula su sada u §3, podsekcija „Tiketi (kanban) — zaključane odluke"; plan `docs/arhiva/2026-08-25-Plan-Tiketi.md` je označen kao urađen (T1–T7).
 - **RLS test je DOPUNA postojećeg `scripts/rls-test.mjs`** (ne nova skripta) — `npm run rls:test` sada pokriva i tikete. Četiri nove sekcije: **Logistika → 0 redova na svih 9 `ticket_*` tabela + odbijen insert u `tickets`**; **Menadžer → čita sve, PIŠE tiket (insert+delete), ali mu je odbijen insert u `ticket_columns`/`ticket_priorities`/`ticket_tags` i update kolone ne menja nijedan red**; **Admin → prolazi i config write**; **kapije ruta** (statička provera da `/tiketi` strana, detalj, presretnuti modal i **svih 15 server akcija** zovu `requireRole("admin","manager")`).
 - **Test PIŠE u bazu** (jedan tiket + jedna kolona sa prefiksom `__rls-test`, oba se odmah brišu) — jedini pošten dokaz da Menadžer sme da piše. **`ticket_code_seq` time odmakne za jedan** (rupa u SPT brojevima); ništa drugo se ne dira.
 - **Prazna provera se prijavljuje, ne prećutkuje:** pre Logistike se prebroje redovi kao Admin, pa kad je tabela prazna i za Admina, u izlazu stoji „provera je prazna" umesto lažnog ✓.

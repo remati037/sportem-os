@@ -105,11 +105,8 @@
       "Bash(awk '/create table.*profiles|CREATE TABLE.*profiles/,/;/' supabase/migrations/20260708164149_init_schema.sql)",
       "Bash(node /private/tmp/claude-501/-Users-marko-Desktop-Marko-sportem-os/2d26ef16-169a-4964-be33-c4cf67dcc09d/scratchpad/diag.mjs)",
       "Bash(node ./_diag.mjs)",
-      "Bash(node --env-file-if-exists=.env.local scripts/fix-goods-total.mjs 2818)",
       "Bash(node --env-file-if-exists=.env.local /private/tmp/claude-501/-Users-marko-Desktop-Marko-sportem-os/1427c34c-1220-4244-a995-a55f9703b894/scratchpad/inspect.mjs)",
       "Bash(node --env-file-if-exists=.env.local scripts/_tmp_inspect.mjs)",
-      "Bash(node --env-file-if-exists=.env.local scripts/fix-goods-total.mjs 2815)",
-      "Bash(node --env-file-if-exists=.env.local scripts/fix-goods-total.mjs 2815 --apply)",
       "Bash(grep -n \"useSearchParams\\\\|useRouter\\\\|/porudzbine/\\\\${\" /Users/marko/Desktop/Marko/sportem-os/app/\\\\\\(app\\\\\\)/porudzbine/orders-bulk-table.tsx)"
     ],
     "additionalDirectories": [

@@ -30,6 +30,10 @@ next-env.d.ts
 # Backfill izvor — pravi podaci kupaca (PII), NIKAD u repo
 /docs/backfill/*.csv
 
+# Ad-hoc izvoz izveštaja iz baze (cene, kupci, promet — PII), NIKAD u repo
+/*.csv
+/docs/izvestaji/
+
 # Logovi
 npm-debug.log*
 yarn-debug.log*

@@ -676,11 +676,11 @@ Detaljni izveštaji sa tačnim `fajl:linija` referencama, scenarijima i predlozi
 
 | Oblast | Fajl | Obim |
 |---|---|---|
-| Finansije | [docs/audit/audit-finansije.md](audit/audit-finansije.md) | 475 linija — 4 kritična, 9 ozbiljnih, 14 sitnih, 12 predloga |
-| Porudžbine + Woo | [docs/audit/audit-porudzbine.md](audit/audit-porudzbine.md) | 295 linija — 5 kritičnih, 12 ozbiljnih, 14 sitnih, 12 predloga |
-| Katalog / zalihe | [docs/audit/audit-katalog.md](audit/audit-katalog.md) | 283 linije — 5 kritičnih, 9 ozbiljnih, 14 sitnih, 12 predloga |
-| Sigurnost / RLS | [docs/audit/audit-sigurnost.md](audit/audit-sigurnost.md) | 202 linije — 0 kritičnih, 4 ozbiljna, 10 sitnih, 22 potvrđeno pokrivena |
-| UX / PWA / a11y | [docs/audit/audit-ux.md](audit/audit-ux.md) | 736 linija — 16 kritičnih + ocena po ekranu |
-| Arhitektura / tehnički dug | [docs/audit/audit-arhitektura.md](audit/audit-arhitektura.md) | 750 linija — 8 kritičnih, 8 ozbiljnih + pun plan testiranja i CI-ja |
+| Finansije | [audit-finansije.md](audit-finansije.md) | 475 linija — 4 kritična, 9 ozbiljnih, 14 sitnih, 12 predloga |
+| Porudžbine + Woo | [audit-porudzbine.md](audit-porudzbine.md) | 295 linija — 5 kritičnih, 12 ozbiljnih, 14 sitnih, 12 predloga |
+| Katalog / zalihe | [audit-katalog.md](audit-katalog.md) | 283 linije — 5 kritičnih, 9 ozbiljnih, 14 sitnih, 12 predloga |
+| Sigurnost / RLS | [audit-sigurnost.md](audit-sigurnost.md) | 202 linije — 0 kritičnih, 4 ozbiljna, 10 sitnih, 22 potvrđeno pokrivena |
+| UX / PWA / a11y | [audit-ux.md](audit-ux.md) | 736 linija — 16 kritičnih + ocena po ekranu |
+| Arhitektura / tehnički dug | [audit-arhitektura.md](audit-arhitektura.md) | 750 linija — 8 kritičnih, 8 ozbiljnih + pun plan testiranja i CI-ja |
 
 Svaki prilog ima tačne `fajl:linija` reference, konkretne scenarije pucanja i predloge popravki, uz oznaku **POTVRĐENO** / **SUMNJA**.
