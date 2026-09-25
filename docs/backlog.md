@@ -41,22 +41,12 @@ Sheets izvoz sa „Format → Number" (2 decimale) tiho poveća ceo katalog 100�
 **Popravka:** preuzeti `parseRsd` iz `scripts/woo-backfill.mjs` (tačka sa tačno 3 cifre iza = hiljade, inače decimala) + sanity upozorenje u dry-run-u kad je nova cena > 10× stara.
 **Umiruje:** zamrznute cene starih porudžbina su netaknute — ustav radi.
 
-### 5. `order_profit` view sumira preko NULL-ova → **faktura može biti umanjena** `[P]`
-`supabase/migrations/20260710120000_finansije.sql:38-42` — komentar tvrdi da je `profit` null kad porudžbina ima `needs_vp` stavku. **Nije tačno:** Postgres `sum()` preskače NULL i vraća NULL tek ako su *svi* NULL. Porudžbina sa stavkama `[8000, NULL]` daje `8000`.
-Porudžbina sa **delimično** nepoznatim VP-om tiho ulazi u fakturu umanjena. `getBlockedNeedsVpOrders` je po odluci samo upozorenje, ne blokada.
-**Ovo je tačno onaj bug koji je ubio Sheets tok** — cifra koja izgleda tačno a nije.
-```sql
-create or replace view public.order_profit with (security_invoker = true) as
-select order_id,
-       case when count(*) filter (where profit_at_sale is null) > 0
-            then null else sum(profit_at_sale) end as profit
-from public.order_items group by order_id;
-```
-\+ `issueInvoice` mora **tvrdo odbiti** porudžbinu sa `profit is null` (danas je `?? 0`).
+### 5. ~~`order_profit` view sumira preko NULL-ova~~ — **POPRAVLJENO (K4, 26.09.2026)**
+`supabase/migrations/20260926120000_order_profit_indeksi_norm_phone.sql` — view sad vraća **NULL kad IJEDNA stavka** ima `profit_at_sale is null` (`count(*) filter (…) > 0`), umesto `sum()` koji preskače NULL-ove. Porudžbina sa stavkama `[8000, NULL]` više ne daje `8000` nego „zarada nije poznata".
+`security_invoker = true` je ostao. Dokaz pre commita: `npm run provera:k4` mora da ispiše **0 porudžbina sa promenjenom cifrom** (plan je izmerio da bug još nije stigao da pogodi podatke).
 
-### 6. `issueInvoice` ne odbija porudžbinu sa `profit is null` `[P]`
-**Delimično popravljeno u K2 (26.09.2026):** `error` provera i parčad `.in()` po 200 su tu (`selectAllIn` iz `lib/supabase/paginate.ts`), pa `total_amount` više ne može tiho da ispadne 0 RSD — upit sad baca.
-**Ostaje:** `issueInvoice` i dalje broji `profit ?? 0` umesto da **tvrdo odbije** porudžbinu bez profita (v. #5). To ide uz popravku `order_profit` view-a — korak **K4** u `docs/Sportem-Plan-Optimizacija.md`.
+### 6. ~~`issueInvoice` ne odbija porudžbinu sa `profit is null`~~ — **POPRAVLJENO (K4, 26.09.2026)**
+`app/(app)/finansije/actions.ts` — `?? 0` je zamenjen tvrdim odbijanjem: porudžbine bez VP na svim stavkama se imenuju po Woo broju i faktura se ne izdaje. (K2 je pre toga zatvorio deo o `error` proveri i parčanju `.in()`.)
 
 ### 7. Popis: **prazno polje se tiho snima kao 0** i markira kao popisano `[P]`
 `app/(app)/katalog/stock-count-control.tsx:64-75` — `Number("")` je `0`, prođe kroz `Number.isInteger(parsed) && parsed >= 0`, pa `save(true, 0)`.

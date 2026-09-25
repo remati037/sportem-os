@@ -289,6 +289,9 @@ export type IssueInvoiceInput = z.input<typeof issueInvoiceSchema>;
  * (order_profit) svih porudžbina tih uplata, rekompjutovano server-side. Uplate
  * dobijaju invoice_id; njihove porudžbine dobijaju invoice_id (stavke se time
  * zaključavaju). Broj fakture je ručni — duplikat pada na 23505.
+ *
+ * K4: porudžbina čija zarada NIJE poznata (`order_profit.profit is null` — bar
+ * jedna stavka bez VP) TVRDO ODBIJA fakturu. Ranije je ulazila kao 0.
  */
 export async function issueInvoice(input: IssueInvoiceInput): Promise<FinanceActionState> {
   await requireRole("admin");
@@ -314,7 +317,7 @@ export async function issueInvoice(input: IssueInvoiceInput): Promise<FinanceAct
   }
 
   // Rekompjutuj total iz zamrznutih stavki (ne veruj klijentskoj cifri).
-  const profitRows = await selectAllIn<{ profit: number | null }, string>(
+  const profitRows = await selectAllIn<{ order_id: string; profit: number | null }, string>(
     "faktura: zarada porudžbina",
     orderIds,
     (chunk) =>
@@ -324,6 +327,37 @@ export async function issueInvoice(input: IssueInvoiceInput): Promise<FinanceAct
         .in("order_id", chunk)
         .order("order_id", { ascending: true }),
   );
+
+  /*
+   * TVRDO ODBIJANJE (K4): `profit` je NULL kad IJEDNA stavka nema zamrznut VP
+   * (nepoznat SKU → needs_vp). Do K4 je ovde stajalo `?? 0` — faktura bi se
+   * izdala UMANJENA i pritom zaključala stavke (`assertEditable`), pa se cifra
+   * više ne bi mogla ispraviti. Zarada koja nije poznata ne sme da uđe u fakturu.
+   */
+  const unknownIds = profitRows.filter((r) => r.profit === null).map((r) => r.order_id);
+  if (unknownIds.length > 0) {
+    const labels = await selectAllIn<{ id: string; woo_order_id: number | null }, string>(
+      "faktura: porudžbine bez VP",
+      unknownIds,
+      (chunk) =>
+        supabase
+          .from("orders")
+          .select("id, woo_order_id")
+          .in("id", chunk)
+          .order("id", { ascending: true }),
+    );
+    const numbers = labels.map((o) => (o.woo_order_id ? `#${o.woo_order_id}` : o.id.slice(0, 8)));
+    const shown = numbers.slice(0, 10).join(", ");
+    const rest = numbers.length > 10 ? ` i još ${numbers.length - 10}` : "";
+    const one = numbers.length === 1;
+    return {
+      error:
+        `${one ? "Porudžbina" : "Porudžbine"} ${shown}${rest} ${one ? "nema" : "nemaju"} ` +
+        "unetu VP cenu na svim stavkama, pa zarada nije poznata i ne sme da uđe u fakturu. " +
+        "Unesi VP na tim porudžbinama pa ponovi fakturisanje.",
+    };
+  }
+
   const total = profitRows.reduce((sum, r) => sum + (r.profit ?? 0), 0);
 
   const { data: invoice, error: insErr } = await supabase
