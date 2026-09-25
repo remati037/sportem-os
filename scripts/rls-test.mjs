@@ -7,6 +7,8 @@
 //   • ne pušta Logistiku ni do jedne od 9 `ticket_*` tabela         (T7)
 //   • pušta Menadžera da piše tikete, ali NE i podešavanja board-a  (T7)
 //   • pušta Admina i na podešavanja board-a                         (T7)
+//   • ne pušta Logistiku ni do jedne `offer_*` tabele (Ponude), i ne
+//     dozvoljava upis nijednoj roli — ponude piše samo service role
 //
 // Preduslovi:
 //   • RLS migracije primenjene (supabase db push, uklj. 20260825120000_tiketi.sql)
@@ -62,6 +64,10 @@ const TICKET_TABLES = [
   "ticket_comments",
   "ticket_events",
 ];
+
+/* Tri tabele modula Ponude. Vide ih Admin i Menadžer; Logistika nijednu, a
+   upis ide isključivo kroz service role (nema nijedne write politike). */
+const OFFER_TABLES = ["offer_rules", "offer_events", "offer_sync_state"];
 
 /* Prefiks privremenih redova koje test pravi pa briše. */
 const TEST_PREFIX = "__rls-test";
@@ -362,7 +368,7 @@ async function testTicketPoliciesInMigration() {
 /* Kapije ruta su higijena (RLS je izvor sigurnosti), ali `/tiketi` mora da
    redirektuje Logistiku — statički proveravamo da svaki ulaz zove requireRole. */
 async function testRouteGuards() {
-  console.log("\nKapije ruta — /tiketi propušta samo Admina i Menadžera:");
+  console.log("\nKapije ruta — /tiketi i /ponude propuštaju samo Admina i Menadžera:");
   const { readFile } = await import("node:fs/promises");
   const { fileURLToPath } = await import("node:url");
   const { dirname, join } = await import("node:path");
@@ -373,6 +379,9 @@ async function testRouteGuards() {
     "app/(app)/tiketi/[id]/page.tsx",
     "app/(app)/@modal/(.)tiketi/[id]/page.tsx",
     "app/(app)/tiketi/actions.ts",
+    "app/(app)/ponude/page.tsx",
+    "app/(app)/ponude/[id]/page.tsx",
+    "app/(app)/ponude/actions.ts",
   ];
 
   for (const file of files) {
@@ -398,6 +407,106 @@ async function testRouteGuards() {
   }
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * Ponude — Logistika ne sme do `offer_*`, a upis je rezervisan za service role.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+async function testOfferPoliciesInMigration() {
+  console.log("\nPolitike u migraciji — matrica dozvola za `offer_*`:");
+  const { readFile } = await import("node:fs/promises");
+  const { fileURLToPath } = await import("node:url");
+  const { dirname, join } = await import("node:path");
+  const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const file = "supabase/migrations/20260925120000_ponude.sql";
+
+  let sql = "";
+  try {
+    sql = await readFile(join(root, file), "utf8");
+  } catch {
+    check(`${file} → postoji`, false, "migracija nije pronađena");
+    return;
+  }
+
+  for (const table of OFFER_TABLES) {
+    check(
+      `${table} → RLS uključen`,
+      new RegExp(`alter table public\\.${table}\\s+enable row level security`).test(sql),
+    );
+    check(
+      `${table} → select politika za admin + manager`,
+      new RegExp(`create policy "${table}_select"[\\s\\S]*?in \\('admin', 'manager'\\)`).test(sql),
+    );
+  }
+
+  // Nijedna write politika ne sme da postoji — upis je samo service role.
+  const writePolicies = (sql.match(/create policy "offer_[\s\S]*?;/g) ?? []).filter(
+    (b) => !b.includes("for select"),
+  );
+  check("nema nijedne write politike na offer_*", writePolicies.length === 0);
+
+  // I nijedna politika ne sme da pomene Logistiku.
+  const leaks = (sql.match(/create policy "offer_[\s\S]*?;/g) ?? []).filter((b) =>
+    b.includes("logistics"),
+  );
+  check("nijedna offer politika ne pominje 'logistics'", leaks.length === 0, `${leaks.length}`);
+}
+
+async function offerRowCountsAsAdmin() {
+  const c = await signIn("admin");
+  const counts = {};
+  for (const table of OFFER_TABLES) counts[table] = await countRows(c, table);
+  await c.auth.signOut();
+  return counts;
+}
+
+async function testLogisticsOffers(adminCounts) {
+  console.log("\nLogistika — ponude MORAJU biti nedostupne (prihod je finansijski podatak):");
+  const c = await signIn("logistics");
+
+  for (const table of OFFER_TABLES) {
+    const n = await countRows(c, table);
+    const adminN = adminCounts[table];
+    const note =
+      adminN === -1
+        ? "Admin dobija grešku — je li migracija push-ovana?"
+        : adminN === 0
+          ? "napomena: tabela je prazna i za Admina (provera je prazna)"
+          : `Admin vidi ${adminN}`;
+    check(`${table} → 0 redova`, n === 0, note);
+  }
+
+  // Agregacija je security invoker → Logistici vraća 0 redova, ne cifre.
+  const stats = await c.rpc("offer_rule_stats", {
+    p_from: "2000-01-01T00:00:00Z",
+    p_to: "2100-01-01T00:00:00Z",
+  });
+  check(
+    "offer_rule_stats → bez podataka za Logistiku",
+    !stats.error ? (stats.data?.length ?? 0) === 0 : true,
+    stats.error ? `odbijeno: ${stats.error.message}` : "",
+  );
+
+  await c.auth.signOut();
+}
+
+async function testStaffOffersReadOnly() {
+  console.log("\nMenadžer — čita ponude, ali ih ne piše (sinhronizacija ide service role):");
+  const c = await signInOptional("manager");
+  if (!c) return;
+
+  check("offer_rules → čitljivo", (await countRows(c, "offer_rules")) >= 0);
+  check("offer_events → čitljivo", (await countRows(c, "offer_events")) >= 0);
+
+  await expectInsertDenied(
+    c,
+    "offer_events",
+    { id: -1, created_at: new Date().toISOString(), event: "add", rule_id: TEST_PREFIX, value: 0 },
+    "offer_events ← insert odbijen",
+  );
+
+  await c.auth.signOut();
+}
+
 async function main() {
   if (!URL || !ANON) {
     console.error("Nedostaje NEXT_PUBLIC_SUPABASE_URL ili NEXT_PUBLIC_SUPABASE_ANON_KEY.");
@@ -407,6 +516,7 @@ async function main() {
 
   // Statičke provere prve — daju rezultat i kad test nalozi nisu podešeni.
   await testTicketPoliciesInMigration();
+  await testOfferPoliciesInMigration();
   await testRouteGuards();
 
   await testLogistics();
@@ -416,6 +526,10 @@ async function main() {
   await testLogisticsTickets(adminTicketCounts);
   await testManagerTickets();
   await testAdminTickets();
+
+  const adminOfferCounts = await offerRowCountsAsAdmin();
+  await testLogisticsOffers(adminOfferCounts);
+  await testStaffOffersReadOnly();
 
   console.log(
     failures === 0

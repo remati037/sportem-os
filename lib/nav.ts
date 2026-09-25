@@ -1,6 +1,7 @@
 import {
   Bell,
   LayoutDashboard,
+  Megaphone,
   Package,
   Receipt,
   Settings,
@@ -44,6 +45,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/katalog", label: "Katalog", icon: Package, roles: ALL, primaryRoles: ["logistics"] },
   { href: "/finansije", label: "Finansije", icon: Wallet, roles: STAFF, primaryRoles: STAFF },
   { href: "/troskovi", label: "Troškovi", icon: Receipt, roles: STAFF, primaryRoles: [] },
+  { href: "/ponude", label: "Ponude", icon: Megaphone, roles: STAFF, primaryRoles: [] },
   { href: "/korisnici", label: "Korisnici", icon: Users, roles: ["admin"], primaryRoles: [] },
   { href: "/obavestenja", label: "Obaveštenja", icon: Bell, roles: ALL, primaryRoles: [] },
   { href: "/podesavanja", label: "Podešavanja", icon: Settings, roles: ALL, primaryRoles: [] },

@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/notifikacije",
       "schedule": "0 18 * * *"
+    },
+    {
+      "path": "/api/cron/offers-sync",
+      "schedule": "30 4 * * *"
     }
   ]
 }

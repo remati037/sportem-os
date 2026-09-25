@@ -55,6 +55,7 @@ supabase db push      # primeni migracije iz supabase/migrations na cloud
 | `npm run rls:test`     | Dokaz da RLS drži po rolama           |
 | `npm run woo:test`     | Test WooCommerce webhook rute         |
 | `npm run backfill`     | Backfill istorije — dry-run (odrađen) |
+| `npm run offers:check` | Ponude: poređenje baze sa `/stats`    |
 
 ## Struktura foldera
 
