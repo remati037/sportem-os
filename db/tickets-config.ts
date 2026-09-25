@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
+import { selectAll } from "@/lib/supabase/paginate";
 
 /*
  * Config upiti modula Tiketi (Korak T1): kolone, prioriteti, tagovi.
@@ -40,23 +41,27 @@ export type TicketTagRow = {
 /** Kolone board-a po redosledu prikaza. */
 export async function getTicketColumns(): Promise<TicketColumnRow[]> {
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("ticket_columns")
-    .select("id, name, color, sort_order, is_done, wip_limit")
-    .order("sort_order", { ascending: true })
-    .order("name", { ascending: true });
-  return (data as unknown as TicketColumnRow[]) ?? [];
+  return await selectAll<TicketColumnRow>("kolone tiketa", () =>
+    supabase
+      .from("ticket_columns")
+      .select("id, name, color, sort_order, is_done, wip_limit")
+      .order("sort_order", { ascending: true })
+      .order("name", { ascending: true })
+      .order("id", { ascending: true }),
+  );
 }
 
 /** Prioriteti po redosledu prikaza. */
 export async function getTicketPriorities(): Promise<TicketPriorityRow[]> {
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("ticket_priorities")
-    .select("id, name, color, level, is_default, sort_order")
-    .order("sort_order", { ascending: true })
-    .order("level", { ascending: true });
-  return (data as unknown as TicketPriorityRow[]) ?? [];
+  return await selectAll<TicketPriorityRow>("prioriteti tiketa", () =>
+    supabase
+      .from("ticket_priorities")
+      .select("id, name, color, level, is_default, sort_order")
+      .order("sort_order", { ascending: true })
+      .order("level", { ascending: true })
+      .order("id", { ascending: true }),
+  );
 }
 
 /**
@@ -72,11 +77,11 @@ export async function getTicketTags({
     .from("ticket_tags")
     .select("id, name, color, sort_order, archived_at")
     .order("sort_order", { ascending: true })
-    .order("name", { ascending: true });
+    .order("name", { ascending: true })
+    .order("id", { ascending: true });
   if (!includeArchived) query = query.is("archived_at", null);
 
-  const { data } = await query;
-  return (data as unknown as TicketTagRow[]) ?? [];
+  return await selectAll<TicketTagRow>("tagovi tiketa", () => query);
 }
 
 /** Podrazumevani prioritet (po zastavici) — `null` ako nijedan nije označen. */

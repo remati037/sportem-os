@@ -4,6 +4,7 @@ import { cache } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/server";
+import { chunked, must, mustOne, mustRows, selectAll, selectAllIn } from "@/lib/supabase/paginate";
 import { getTicketColumns, type TicketColumnRow } from "@/db/tickets-config";
 import { listStaffProfiles } from "@/db/profiles";
 import { todayBelgrade } from "@/lib/date-belgrade";
@@ -129,19 +130,25 @@ async function filterIdsByLinks(
 
   const assignee = filters.onlyMine ? filters.currentUserId : filters.assigneeId;
   if (assignee) {
-    const { data } = await supabase
-      .from("ticket_assignees")
-      .select("ticket_id")
-      .eq("user_id", assignee);
-    sets.push(((data as { ticket_id: string }[]) ?? []).map((r) => r.ticket_id));
+    const rows = await selectAll<{ ticket_id: string }>("filter tiketa: izvršilac", () =>
+      supabase
+        .from("ticket_assignees")
+        .select("ticket_id")
+        .eq("user_id", assignee)
+        .order("ticket_id", { ascending: true }),
+    );
+    sets.push(rows.map((r) => r.ticket_id));
   }
 
   if (filters.tagId) {
-    const { data } = await supabase
-      .from("ticket_tag_links")
-      .select("ticket_id")
-      .eq("tag_id", filters.tagId);
-    sets.push(((data as { ticket_id: string }[]) ?? []).map((r) => r.ticket_id));
+    const rows = await selectAll<{ ticket_id: string }>("filter tiketa: tag", () =>
+      supabase
+        .from("ticket_tag_links")
+        .select("ticket_id")
+        .eq("tag_id", filters.tagId!)
+        .order("ticket_id", { ascending: true }),
+    );
+    sets.push(rows.map((r) => r.ticket_id));
   }
 
   if (sets.length === 0) return null;
@@ -163,82 +170,90 @@ async function hydrateTickets(
   ];
 
   const [assigneeRows, tagRows, staff, orders, variants, customers, blockers] = await Promise.all([
-    ids.length
-      ? supabase.from("ticket_assignees").select("ticket_id, user_id").in("ticket_id", ids)
-      : Promise.resolve({ data: [] }),
-    ids.length
-      ? supabase
+    selectAllIn<{ ticket_id: string; user_id: string }, string>("tiketi: izvršioci", ids, (chunk) =>
+      supabase
+        .from("ticket_assignees")
+        .select("ticket_id, user_id")
+        .in("ticket_id", chunk)
+        .order("ticket_id", { ascending: true })
+        .order("user_id", { ascending: true }),
+    ),
+    selectAllIn<{ ticket_id: string; tag: (TicketTagRef & { sort_order: number }) | null }, string>(
+      "tiketi: tagovi",
+      ids,
+      (chunk) =>
+        supabase
           .from("ticket_tag_links")
           .select("ticket_id, tag:ticket_tags(id, name, color, sort_order)")
-          .in("ticket_id", ids)
-      : Promise.resolve({ data: [] }),
+          .in("ticket_id", chunk)
+          .order("ticket_id", { ascending: true })
+          .order("tag_id", { ascending: true }),
+    ),
     listStaffProfiles(),
-    orderIds.length
-      ? supabase.from("orders").select("id, woo_order_id, ship_name").in("id", orderIds)
-      : Promise.resolve({ data: [] }),
-    variantIds.length
-      ? supabase
-          .from("product_variants")
-          .select("id, sku, variant_name, product:products(name)")
-          .in("id", variantIds)
-      : Promise.resolve({ data: [] }),
-    customerIds.length
-      ? supabase.from("customers").select("id, name, phone").in("id", customerIds)
-      : Promise.resolve({ data: [] }),
-    blockerIds.length
-      ? supabase.from("tickets").select("id, code, title, completed_at").in("id", blockerIds)
-      : Promise.resolve({ data: [] }),
+    selectAllIn<TicketOrderRef, string>("tiketi: vezane porudžbine", orderIds, (chunk) =>
+      supabase
+        .from("orders")
+        .select("id, woo_order_id, ship_name")
+        .in("id", chunk)
+        .order("id", { ascending: true }),
+    ),
+    selectAllIn<
+      { id: string; sku: string; variant_name: string | null; product: { name: string } | null },
+      string
+    >("tiketi: vezane varijante", variantIds, (chunk) =>
+      supabase
+        .from("product_variants")
+        .select("id, sku, variant_name, product:products(name)")
+        .in("id", chunk)
+        .order("id", { ascending: true }),
+    ),
+    selectAllIn<TicketCustomerRef, string>("tiketi: vezani kupci", customerIds, (chunk) =>
+      supabase
+        .from("customers")
+        .select("id, name, phone")
+        .in("id", chunk)
+        .order("id", { ascending: true }),
+    ),
+    selectAllIn<{ id: string; code: number; title: string; completed_at: string | null }, string>(
+      "tiketi: blokirajući tiketi",
+      blockerIds,
+      (chunk) =>
+        supabase
+          .from("tickets")
+          .select("id, code, title, completed_at")
+          .in("id", chunk)
+          .order("id", { ascending: true }),
+    ),
   ]);
 
   const nameById = new Map(staff.map((p) => [p.id, p.full_name]));
 
   const assigneesByTicket = new Map<string, TicketAssignee[]>();
-  for (const row of (assigneeRows.data as { ticket_id: string; user_id: string }[]) ?? []) {
+  for (const row of assigneeRows) {
     const list = assigneesByTicket.get(row.ticket_id) ?? [];
     list.push({ user_id: row.user_id, full_name: nameById.get(row.user_id) ?? null });
     assigneesByTicket.set(row.ticket_id, list);
   }
 
   const tagsByTicket = new Map<string, (TicketTagRef & { sort_order: number })[]>();
-  for (const row of (tagRows.data as unknown as {
-    ticket_id: string;
-    tag: (TicketTagRef & { sort_order: number }) | null;
-  }[]) ?? []) {
+  for (const row of tagRows) {
     if (!row.tag) continue;
     const list = tagsByTicket.get(row.ticket_id) ?? [];
     list.push(row.tag);
     tagsByTicket.set(row.ticket_id, list);
   }
 
-  const orderById = new Map(
-    ((orders.data as TicketOrderRef[]) ?? []).map((o) => [o.id, o] as const),
-  );
+  const orderById = new Map(orders.map((o) => [o.id, o] as const));
   const variantById = new Map(
-    (
-      (variants.data as unknown as {
-        id: string;
-        sku: string;
-        variant_name: string | null;
-        product: { name: string } | null;
-      }[]) ?? []
-    ).map((v) => {
+    variants.map((v) => {
       const productName = v.product?.name ?? "";
       const label = v.variant_name ? `${productName} — ${v.variant_name}` : productName;
       return [v.id, { id: v.id, sku: v.sku, label: label || v.sku } satisfies TicketVariantRef];
     }),
   );
-  const customerById = new Map(
-    ((customers.data as TicketCustomerRef[]) ?? []).map((c) => [c.id, c] as const),
-  );
+  const customerById = new Map(customers.map((c) => [c.id, c] as const));
   const blockerById = new Map(
-    (
-      (blockers.data as {
-        id: string;
-        code: number;
-        title: string;
-        completed_at: string | null;
-      }[]) ?? []
-    ).map((b) => [
+    blockers.map((b) => [
       b.id,
       { id: b.id, code: b.code, title: b.title, done: b.completed_at != null } satisfies TicketRef,
     ]),
@@ -312,12 +327,10 @@ export async function listTickets(filters: TicketFilters = {}): Promise<TicketBo
     query = query.or(orParts.join(","));
   }
 
-  const { data } = await query
-    .order("position", { ascending: true })
-    .order("code", { ascending: true })
-    .range(0, SCAN_CAP - 1);
-
-  let raw = (data as unknown as TicketRaw[]) ?? [];
+  const ordered = query.order("position", { ascending: true }).order("code", { ascending: true });
+  // `code` je jedinstven → redosled je stabilan za paginaciju. `SCAN_CAP` je
+  // svesna granica board-a; ranije je PostgREST tiho rezao na 1000.
+  let raw = await selectAll<TicketRaw>("board tiketa", () => ordered, { maxRows: SCAN_CAP });
 
   // Auto-sakrivanje završenih starijih od 14 dana (ništa se ne briše).
   let archivedHidden = 0;
@@ -359,7 +372,7 @@ export const getTicketDetail = cache(async (param: string): Promise<TicketDetail
   let query = supabase.from("tickets").select(TICKET_COLS);
   query = code != null ? query.eq("code", code) : query.eq("id", param);
 
-  const { data } = await query.maybeSingle();
+  const data = must(await query.maybeSingle(), "detalj tiketa");
   if (!data) return null;
 
   const raw = data as unknown as TicketRaw;
@@ -381,14 +394,14 @@ export async function nextPositionInColumn(
   supabase: SupabaseClient,
   columnId: string,
 ): Promise<number> {
-  const { data } = await supabase
+  const res = await supabase
     .from("tickets")
     .select("position")
     .eq("column_id", columnId)
     .order("position", { ascending: false })
     .limit(1)
     .maybeSingle();
-  const max = (data as { position: number } | null)?.position ?? 0;
+  const max = mustOne<{ position: number }>(res, "dno kolone tiketa")?.position ?? 0;
   return Number(max) + TICKET_POSITION_STEP;
 }
 
@@ -410,12 +423,13 @@ export async function searchOrderOptions(term: string): Promise<TicketLinkOption
     query = query.or(orParts.join(","));
   }
 
-  const { data } = await query
+  const res = await query
     .order("ordered_at", { ascending: false, nullsFirst: false })
     .limit(LINK_LIMIT);
 
-  return (
-    (data as { id: string; woo_order_id: number | null; ship_name: string | null }[]) ?? []
+  return mustRows<{ id: string; woo_order_id: number | null; ship_name: string | null }>(
+    res,
+    "pretraga porudžbina za vezu",
   ).map((o) => ({
     id: o.id,
     label: o.woo_order_id != null ? `#${o.woo_order_id}` : "Bez Woo broja",
@@ -434,32 +448,33 @@ export async function searchVariantOptions(term: string): Promise<TicketLinkOpti
 
   if (q) query = query.ilike("sku", `%${q}%`);
 
-  const { data } = await query.order("sku", { ascending: true }).limit(LINK_LIMIT);
-  const rows =
-    (data as unknown as {
-      id: string;
-      sku: string;
-      variant_name: string | null;
-      product: { name: string } | null;
-    }[]) ?? [];
+  const res = await query.order("sku", { ascending: true }).limit(LINK_LIMIT);
+  const rows = mustRows<{
+    id: string;
+    sku: string;
+    variant_name: string | null;
+    product: { name: string } | null;
+  }>(res, "pretraga varijanti za vezu");
 
   // Pretraga po nazivu proizvoda ide zasebno (embed se ne filtrira kroz ilike).
   if (q && rows.length < LINK_LIMIT) {
-    const { data: products } = await supabase
+    const productsRes = await supabase
       .from("products")
       .select("id")
       .ilike("name", `%${q}%`)
       .limit(LINK_LIMIT);
-    const productIds = ((products as { id: string }[]) ?? []).map((p) => p.id);
+    const productIds = mustRows<{ id: string }>(productsRes, "pretraga proizvoda za vezu").map(
+      (p) => p.id,
+    );
     if (productIds.length > 0) {
-      const { data: more } = await supabase
+      const moreRes = await supabase
         .from("product_variants")
         .select("id, sku, variant_name, product:products(name)")
         .is("archived_at", null)
         .in("product_id", productIds)
         .order("sku", { ascending: true })
         .limit(LINK_LIMIT);
-      for (const v of (more as unknown as typeof rows) ?? []) {
+      for (const v of mustRows<(typeof rows)[number]>(moreRes, "pretraga varijanti po nazivu")) {
         if (!rows.some((r) => r.id === v.id)) rows.push(v);
       }
     }
@@ -485,8 +500,11 @@ export async function searchCustomerOptions(term: string): Promise<TicketLinkOpt
     query = query.or(orParts.join(","));
   }
 
-  const { data } = await query.order("name", { ascending: true }).limit(LINK_LIMIT);
-  return ((data as { id: string; name: string | null; phone: string | null }[]) ?? []).map((c) => ({
+  const res = await query.order("name", { ascending: true }).limit(LINK_LIMIT);
+  return mustRows<{ id: string; name: string | null; phone: string | null }>(
+    res,
+    "pretraga kupaca za vezu",
+  ).map((c) => ({
     id: c.id,
     label: c.name ?? "Bez imena",
     hint: c.phone ?? undefined,
@@ -510,12 +528,14 @@ export async function searchTicketOptions(
   }
   if (excludeId) query = query.neq("id", excludeId);
 
-  const { data } = await query.order("code", { ascending: false }).limit(LINK_LIMIT);
-  return ((data as { id: string; code: number; title: string }[]) ?? []).map((t) => ({
-    id: t.id,
-    label: `SPT-${t.code}`,
-    hint: t.title,
-  }));
+  const res = await query.order("code", { ascending: false }).limit(LINK_LIMIT);
+  return mustRows<{ id: string; code: number; title: string }>(res, "pretraga tiketa za vezu").map(
+    (t) => ({
+      id: t.id,
+      label: `SPT-${t.code}`,
+      hint: t.title,
+    }),
+  );
 }
 
 /* ── Ručni redosled: fractional indexing (Korak T3) ─────────────────────── */
@@ -532,15 +552,18 @@ type PositionRow = { id: string; position: number };
 
 /** Tiketi jedne kolone u redosledu prikaza (`position ASC`, pa `code ASC`). */
 async function columnOrder(supabase: SupabaseClient, columnId: string): Promise<PositionRow[]> {
-  const { data, error } = await supabase
-    .from("tickets")
-    .select("id, position")
-    .eq("column_id", columnId)
-    .order("position", { ascending: true })
-    .order("code", { ascending: true })
-    .range(0, SCAN_CAP - 1);
-  if (error) throw new Error(error.message);
-  return ((data as PositionRow[]) ?? []).map((r) => ({ id: r.id, position: Number(r.position) }));
+  const rows = await selectAll<PositionRow>(
+    "redosled kolone tiketa",
+    () =>
+      supabase
+        .from("tickets")
+        .select("id, position")
+        .eq("column_id", columnId)
+        .order("position", { ascending: true })
+        .order("code", { ascending: true }),
+    { maxRows: SCAN_CAP },
+  );
+  return rows.map((r) => ({ id: r.id, position: Number(r.position) }));
 }
 
 /**
@@ -648,27 +671,28 @@ export type TicketChecklistItem = {
 /** Nit komentara (najstariji prvo, kao istorija statusa porudžbine). */
 export async function getTicketComments(ticketId: string): Promise<TicketCommentRow[]> {
   const supabase = await createClient();
-  const [{ data }, staff] = await Promise.all([
-    supabase
-      .from("ticket_comments")
-      .select("id, body, created_at, updated_at, author_id")
-      .eq("ticket_id", ticketId)
-      .order("created_at", { ascending: true }),
+  const [rows, staff] = await Promise.all([
+    selectAll<{
+      id: string;
+      body: string;
+      created_at: string;
+      updated_at: string;
+      author_id: string | null;
+    }>("komentari tiketa", () =>
+      supabase
+        .from("ticket_comments")
+        .select("id, body, created_at, updated_at, author_id")
+        .eq("ticket_id", ticketId)
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true }),
+    ),
     listStaffProfiles(),
   ]);
 
   // Imena idu iz `listStaffProfiles()` (service-role): RLS na `profiles`
   // Menadžeru pokazuje samo njegov red, pa embed ne bi vratio tuđa imena.
   const nameById = new Map(staff.map((p) => [p.id, p.full_name]));
-  return (
-    (data as {
-      id: string;
-      body: string;
-      created_at: string;
-      updated_at: string;
-      author_id: string | null;
-    }[]) ?? []
-  ).map((c) => ({
+  return rows.map((c) => ({
     ...c,
     authorName: c.author_id ? (nameById.get(c.author_id) ?? null) : null,
   }));
@@ -677,27 +701,28 @@ export async function getTicketComments(ticketId: string): Promise<TicketComment
 /** Checklist tiketa u redosledu unosa (progres „2/3" računa prikaz). */
 export async function getTicketChecklist(ticketId: string): Promise<TicketChecklistItem[]> {
   const supabase = await createClient();
-  const [{ data }, staff] = await Promise.all([
-    supabase
-      .from("ticket_checklist_items")
-      .select("id, label, done, sort_order, done_at, done_by")
-      .eq("ticket_id", ticketId)
-      .order("sort_order", { ascending: true })
-      .order("created_at", { ascending: true }),
-    listStaffProfiles(),
-  ]);
-
-  const nameById = new Map(staff.map((p) => [p.id, p.full_name]));
-  return (
-    (data as {
+  const [rows, staff] = await Promise.all([
+    selectAll<{
       id: string;
       label: string;
       done: boolean;
       sort_order: number;
       done_at: string | null;
       done_by: string | null;
-    }[]) ?? []
-  ).map((i) => ({
+    }>("checklist tiketa", () =>
+      supabase
+        .from("ticket_checklist_items")
+        .select("id, label, done, sort_order, done_at, done_by")
+        .eq("ticket_id", ticketId)
+        .order("sort_order", { ascending: true })
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true }),
+    ),
+    listStaffProfiles(),
+  ]);
+
+  const nameById = new Map(staff.map((p) => [p.id, p.full_name]));
+  return rows.map((i) => ({
     id: i.id,
     label: i.label,
     done: i.done,
@@ -710,7 +735,7 @@ export async function getTicketChecklist(ticketId: string): Promise<TicketCheckl
 /** Hronologija promena (najnovije prvo). Piše je `lib/ticket-events.ts`. */
 export async function getTicketEvents(ticketId: string): Promise<TicketEventRow[]> {
   const supabase = await createClient();
-  const [{ data }, staff] = await Promise.all([
+  const [res, staff] = await Promise.all([
     supabase
       .from("ticket_events")
       .select("id, kind, from_text, to_text, meta, created_at, actor_id")
@@ -721,17 +746,15 @@ export async function getTicketEvents(ticketId: string): Promise<TicketEventRow[
   ]);
 
   const nameById = new Map(staff.map((p) => [p.id, p.full_name]));
-  return (
-    (data as {
-      id: string;
-      kind: string;
-      from_text: string | null;
-      to_text: string | null;
-      meta: Record<string, unknown> | null;
-      created_at: string;
-      actor_id: string | null;
-    }[]) ?? []
-  ).map((e) => ({
+  return mustRows<{
+    id: string;
+    kind: string;
+    from_text: string | null;
+    to_text: string | null;
+    meta: Record<string, unknown> | null;
+    created_at: string;
+    actor_id: string | null;
+  }>(res, "istorija tiketa").map((e) => ({
     id: e.id,
     kind: e.kind,
     from_text: e.from_text,
@@ -745,15 +768,25 @@ export async function getTicketEvents(ticketId: string): Promise<TicketEventRow[
 /** Tiketi koji ČEKAJU ovaj (obrnuta strana zavisnosti) — samo upozorenje. */
 export async function getDependentTickets(ticketId: string): Promise<TicketRef[]> {
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("tickets")
-    .select("id, code, title, completed_at")
-    .eq("blocked_by_ticket_id", ticketId)
-    .order("code", { ascending: true });
+  const rows = await selectAll<{
+    id: string;
+    code: number;
+    title: string;
+    completed_at: string | null;
+  }>("tiketi koji čekaju ovaj", () =>
+    supabase
+      .from("tickets")
+      .select("id, code, title, completed_at")
+      .eq("blocked_by_ticket_id", ticketId)
+      .order("code", { ascending: true }),
+  );
 
-  return (
-    (data as { id: string; code: number; title: string; completed_at: string | null }[]) ?? []
-  ).map((t) => ({ id: t.id, code: t.code, title: t.title, done: t.completed_at != null }));
+  return rows.map((t) => ({
+    id: t.id,
+    code: t.code,
+    title: t.title,
+    done: t.completed_at != null,
+  }));
 }
 
 /* ── Panel vezanih zapisa ────────────────────────────────────────────────── */
@@ -813,7 +846,7 @@ export async function getLinkedContext(ticket: {
           )
           .eq("id", ticket.order_id)
           .maybeSingle()
-      : Promise.resolve({ data: null }),
+      : Promise.resolve({ data: null, error: null }),
     ticket.variant_id
       ? supabase
           .from("product_variants")
@@ -822,15 +855,19 @@ export async function getLinkedContext(ticket: {
           )
           .eq("id", ticket.variant_id)
           .maybeSingle()
-      : Promise.resolve({ data: null }),
+      : Promise.resolve({ data: null, error: null }),
     ticket.customer_id
       ? supabase
           .from("customers")
           .select("id, name, phone, city")
           .eq("id", ticket.customer_id)
           .maybeSingle()
-      : Promise.resolve({ data: null }),
+      : Promise.resolve({ data: null, error: null }),
   ]);
+
+  must(order, "vezana porudžbina tiketa");
+  must(variant, "vezana varijanta tiketa");
+  must(customer, "vezani kupac tiketa");
 
   const orderRow = order.data as unknown as {
     id: string;
@@ -904,13 +941,15 @@ export async function wouldCreateCycle(
     if (seen.has(current)) return true;
     seen.add(current);
 
-    // Eksplicitna anotacija: bez nje TS vidi kružnu zavisnost `current` ↔ `data`.
-    const { data }: { data: { blocked_by_ticket_id: string | null } | null } = await supabase
-      .from("tickets")
-      .select("blocked_by_ticket_id")
-      .eq("id", current)
-      .maybeSingle();
-    current = data?.blocked_by_ticket_id ?? null;
+    // `mustOne` daje eksplicitan tip reda — bez njega TS vidi kružnu zavisnost
+    // `current` ↔ `data`.
+    const row: { blocked_by_ticket_id: string | null } | null = mustOne<{
+      blocked_by_ticket_id: string | null;
+    }>(
+      await supabase.from("tickets").select("blocked_by_ticket_id").eq("id", current).maybeSingle(),
+      "provera ciklusa zavisnosti",
+    );
+    current = row?.blocked_by_ticket_id ?? null;
   }
 
   return false;
@@ -926,7 +965,7 @@ export async function getTicketSnapshot(
   supabase: SupabaseClient,
   ticketId: string,
 ): Promise<TicketFieldSnapshot | null> {
-  const [{ data }, { data: assignees }, { data: tags }] = await Promise.all([
+  const [ticketRes, assignees, tags] = await Promise.all([
     supabase
       .from("tickets")
       .select(
@@ -935,17 +974,30 @@ export async function getTicketSnapshot(
       )
       .eq("id", ticketId)
       .maybeSingle(),
-    supabase.from("ticket_assignees").select("user_id").eq("ticket_id", ticketId),
-    supabase.from("ticket_tag_links").select("tag_id").eq("ticket_id", ticketId),
+    selectAll<{ user_id: string }>("snapshot tiketa: izvršioci", () =>
+      supabase
+        .from("ticket_assignees")
+        .select("user_id")
+        .eq("ticket_id", ticketId)
+        .order("user_id", { ascending: true }),
+    ),
+    selectAll<{ tag_id: string }>("snapshot tiketa: tagovi", () =>
+      supabase
+        .from("ticket_tag_links")
+        .select("tag_id")
+        .eq("ticket_id", ticketId)
+        .order("tag_id", { ascending: true }),
+    ),
   ]);
 
+  const data = must(ticketRes, "snapshot tiketa");
   if (!data) return null;
   const row = data as Omit<TicketFieldSnapshot, "assignee_ids" | "tag_ids">;
 
   return {
     ...row,
-    assignee_ids: ((assignees as { user_id: string }[]) ?? []).map((a) => a.user_id),
-    tag_ids: ((tags as { tag_id: string }[]) ?? []).map((t) => t.tag_id),
+    assignee_ids: assignees.map((a) => a.user_id),
+    tag_ids: tags.map((t) => t.tag_id),
   };
 }
 
@@ -977,14 +1029,14 @@ export function sortLinkedTickets(
  */
 export async function listTicketsForOrder(orderId: string): Promise<TicketListRow[]> {
   const supabase = await createClient();
-  const { data } = await supabase
+  const res = await supabase
     .from("tickets")
     .select(TICKET_COLS)
     .eq("order_id", orderId)
     .order("code", { ascending: false })
     .range(0, LINKED_TICKETS_LIMIT - 1);
 
-  const raw = (data as unknown as TicketRaw[]) ?? [];
+  const raw = mustRows<TicketRaw>(res, "tiketi porudžbine");
   if (raw.length === 0) return [];
 
   const { rows } = await hydrateTickets(supabase, raw);
@@ -997,22 +1049,31 @@ export async function listTicketsForOrder(orderId: string): Promise<TicketListRo
  */
 export async function listTicketsForProduct(productId: string): Promise<TicketListRow[]> {
   const supabase = await createClient();
-  const { data: variants } = await supabase
-    .from("product_variants")
-    .select("id")
-    .eq("product_id", productId);
+  const variants = await selectAll<{ id: string }>("varijante proizvoda (tiketi)", () =>
+    supabase
+      .from("product_variants")
+      .select("id")
+      .eq("product_id", productId)
+      .order("id", { ascending: true }),
+  );
 
-  const variantIds = ((variants as { id: string }[]) ?? []).map((v) => v.id);
+  const variantIds = variants.map((v) => v.id);
   if (variantIds.length === 0) return [];
 
-  const { data } = await supabase
-    .from("tickets")
-    .select(TICKET_COLS)
-    .in("variant_id", variantIds)
-    .order("code", { ascending: false })
-    .range(0, LINKED_TICKETS_LIMIT - 1);
-
-  const raw = (data as unknown as TicketRaw[]) ?? [];
+  // Varijanti jednog proizvoda je malo, ali `.in()` i dalje ide u parčadima;
+  // prikaz je ograničen na LINKED_TICKETS_LIMIT najnovijih.
+  const raw: TicketRaw[] = [];
+  for (const chunk of chunked(variantIds)) {
+    const res = await supabase
+      .from("tickets")
+      .select(TICKET_COLS)
+      .in("variant_id", chunk)
+      .order("code", { ascending: false })
+      .range(0, LINKED_TICKETS_LIMIT - 1);
+    raw.push(...mustRows<TicketRaw>(res, "tiketi proizvoda"));
+  }
+  raw.sort((a, b) => b.code - a.code);
+  raw.splice(LINKED_TICKETS_LIMIT);
   if (raw.length === 0) return [];
 
   const { rows } = await hydrateTickets(supabase, raw);
@@ -1042,26 +1103,33 @@ export async function getMyTicketsSummary(userId: string): Promise<MyTicketsSumm
   const empty: MyTicketsSummary = { open: 0, overdue: 0, today: 0 };
   const supabase = await createClient();
 
-  const [{ data: openRows }, columns] = await Promise.all([
-    supabase
-      .from("tickets")
-      .select("id, due_date, column_id")
-      .is("completed_at", null)
-      .range(0, SCAN_CAP - 1),
+  const [openRows, columns] = await Promise.all([
+    selectAll<{ id: string; due_date: string | null; column_id: string }>(
+      "moji tiketi: otvoreni",
+      () =>
+        supabase
+          .from("tickets")
+          .select("id, due_date, column_id")
+          .is("completed_at", null)
+          .order("id", { ascending: true }),
+      { maxRows: SCAN_CAP },
+    ),
     getTicketColumns(),
   ]);
 
   const doneColumnIds = new Set(columns.filter((c) => c.is_done).map((c) => c.id));
-  const rows = ((openRows as { id: string; due_date: string | null; column_id: string }[]) ?? [])
-    .filter((t) => !doneColumnIds.has(t.column_id));
+  const rows = openRows.filter((t) => !doneColumnIds.has(t.column_id));
   if (rows.length === 0) return empty;
 
-  const { data: mine } = await supabase
-    .from("ticket_assignees")
-    .select("ticket_id")
-    .eq("user_id", userId);
+  const mine = await selectAll<{ ticket_id: string }>("moji tiketi: dodele", () =>
+    supabase
+      .from("ticket_assignees")
+      .select("ticket_id")
+      .eq("user_id", userId)
+      .order("ticket_id", { ascending: true }),
+  );
 
-  const mineIds = new Set(((mine as { ticket_id: string }[]) ?? []).map((r) => r.ticket_id));
+  const mineIds = new Set(mine.map((r) => r.ticket_id));
   if (mineIds.size === 0) return empty;
 
   const today = todayBelgrade();

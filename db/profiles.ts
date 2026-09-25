@@ -2,6 +2,7 @@ import "server-only";
 
 import type { Role } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { selectAll } from "@/lib/supabase/paginate";
 
 /*
  * Lista internih korisnika (Korak T2) — izbor izvršilaca na tiketu i filter
@@ -23,10 +24,12 @@ export type StaffProfile = {
 /** Sportem tim (Admin + Menadžer) — jedini kojima se tiket sme dodeliti. */
 export async function listStaffProfiles(): Promise<StaffProfile[]> {
   const admin = createAdminClient();
-  const { data } = await admin
-    .from("profiles")
-    .select("id, full_name, role")
-    .in("role", ["admin", "manager"])
-    .order("full_name", { ascending: true, nullsFirst: false });
-  return (data as StaffProfile[]) ?? [];
+  return await selectAll<StaffProfile>("interni korisnici", () =>
+    admin
+      .from("profiles")
+      .select("id, full_name, role")
+      .in("role", ["admin", "manager"])
+      .order("full_name", { ascending: true, nullsFirst: false })
+      .order("id", { ascending: true }),
+  );
 }

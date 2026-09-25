@@ -7,6 +7,7 @@ import { firstZodError } from "@/lib/actions";
 import { requireRole } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { chunked, must, selectAll, selectAllIn } from "@/lib/supabase/paginate";
 import { previousWorkingDay } from "@/lib/date-belgrade";
 import { APP_STATUS } from "@/lib/woo";
 import { getSaldoPostarine } from "@/db/finance";
@@ -40,12 +41,12 @@ function revalidatePayouts(id?: string) {
 /** id statusa „Isporučeno" (lookup po imenu, nikad hardkodovan UUID). */
 async function deliveredStatusId(): Promise<string | null> {
   const supabase = await createClient();
-  const { data } = await supabase
+  const res = await supabase
     .from("order_statuses")
     .select("id")
     .eq("name", APP_STATUS.delivered)
     .maybeSingle();
-  return data?.id ?? null;
+  return must<{ id: string } | null>(res, "status Isporučeno")?.id ?? null;
 }
 
 /**
@@ -59,16 +60,22 @@ async function assertLinkable(orderIds: string[]): Promise<string | null> {
   if (!delivered) return "Status „Isporučeno“ nije pronađen.";
 
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("orders")
-    .select("id")
-    .in("id", orderIds)
-    .eq("delivery_method", "xexpress")
-    .eq("payment_status", "neuplaceno")
-    .eq("status_id", delivered)
-    .is("payout_id", null);
+  const rows = await selectAllIn<{ id: string }, string>(
+    "provera kandidata za uplatu",
+    orderIds,
+    (chunk) =>
+      supabase
+        .from("orders")
+        .select("id")
+        .in("id", chunk)
+        .eq("delivery_method", "xexpress")
+        .eq("payment_status", "neuplaceno")
+        .eq("status_id", delivered)
+        .is("payout_id", null)
+        .order("id", { ascending: true }),
+  );
 
-  if ((data?.length ?? 0) !== orderIds.length) {
+  if (rows.length !== orderIds.length) {
     return "Neke porudžbine više nisu dostupne za vezivanje (isporučene + neuplaćene). Osveži i pokušaj ponovo.";
   }
   return null;
@@ -102,18 +109,22 @@ export async function createPayout(input: CreatePayoutInput): Promise<FinanceAct
   if (insErr || !payout) return { error: "Čuvanje uplate nije uspelo." };
 
   if (order_ids.length > 0) {
-    const { error: updErr } = await supabase
-      .from("orders")
-      .update({
-        payout_id: payout.id,
-        payment_status: "uplaceno",
-        paid_at: new Date().toISOString(),
-      })
-      .in("id", order_ids);
-    if (updErr) {
-      // Rollback uplate da ne ostane „prazan" red bez porudžbina.
-      await supabase.from("payouts").delete().eq("id", payout.id);
-      return { error: "Vezivanje porudžbina nije uspelo." };
+    const paidAt = new Date().toISOString();
+    // Parčad po IN_CHUNK — dugačak `.in()` URL obori zahtev.
+    for (const chunk of chunked(order_ids)) {
+      const { error: updErr } = await supabase
+        .from("orders")
+        .update({ payout_id: payout.id, payment_status: "uplaceno", paid_at: paidAt })
+        .in("id", chunk);
+      if (updErr) {
+        // Rollback: odveži sve već vezane pa obriši „prazan" red uplate.
+        await supabase
+          .from("orders")
+          .update({ payout_id: null, payment_status: "neuplaceno", paid_at: null })
+          .eq("payout_id", payout.id);
+        await supabase.from("payouts").delete().eq("id", payout.id);
+        return { error: "Vezivanje porudžbina nije uspelo." };
+      }
     }
   }
 
@@ -144,20 +155,23 @@ export async function updatePayout(input: UpdatePayoutInput): Promise<FinanceAct
   const supabase = await createClient();
 
   // Trenutno vezane porudžbine.
-  const { data: current } = await supabase
-    .from("orders")
-    .select("id, invoice_id")
-    .eq("payout_id", id);
-  const currentIds = new Set((current ?? []).map((o) => o.id));
+  const current = await selectAll<{ id: string; invoice_id: string | null }>(
+    "vezane porudžbine uplate",
+    () =>
+      supabase
+        .from("orders")
+        .select("id, invoice_id")
+        .eq("payout_id", id)
+        .order("id", { ascending: true }),
+  );
+  const currentIds = new Set(current.map((o) => o.id));
   const nextIds = new Set(order_ids);
 
   const toUnlink = [...currentIds].filter((oid) => !nextIds.has(oid));
   const toLink = order_ids.filter((oid) => !currentIds.has(oid));
 
   // Fakturisane porudžbine se ne diraju.
-  const invoicedUnlink = (current ?? []).filter(
-    (o) => toUnlink.includes(o.id) && o.invoice_id !== null,
-  );
+  const invoicedUnlink = current.filter((o) => toUnlink.includes(o.id) && o.invoice_id !== null);
   if (invoicedUnlink.length > 0) {
     return { error: "Vezana porudžbina je fakturisana — ne može se ukloniti sa uplate." };
   }
@@ -176,17 +190,18 @@ export async function updatePayout(input: UpdatePayoutInput): Promise<FinanceAct
     .eq("id", id);
   if (payErr) return { error: "Izmena uplate nije uspela." };
 
-  if (toUnlink.length > 0) {
+  for (const chunk of chunked(toUnlink)) {
     await supabase
       .from("orders")
       .update({ payout_id: null, payment_status: "neuplaceno", paid_at: null })
-      .in("id", toUnlink);
+      .in("id", chunk);
   }
-  if (toLink.length > 0) {
+  const paidAt = new Date().toISOString();
+  for (const chunk of chunked(toLink)) {
     await supabase
       .from("orders")
-      .update({ payout_id: id, payment_status: "uplaceno", paid_at: new Date().toISOString() })
-      .in("id", toLink);
+      .update({ payout_id: id, payment_status: "uplaceno", paid_at: paidAt })
+      .in("id", chunk);
   }
 
   revalidatePayouts(id);
@@ -204,16 +219,21 @@ export async function deletePayout(id: string): Promise<FinanceActionState> {
 
   const supabase = await createClient();
 
-  const { data: linked } = await supabase
-    .from("orders")
-    .select("id, invoice_id")
-    .eq("payout_id", id);
+  const linked = await selectAll<{ id: string; invoice_id: string | null }>(
+    "vezane porudžbine uplate (brisanje)",
+    () =>
+      supabase
+        .from("orders")
+        .select("id, invoice_id")
+        .eq("payout_id", id)
+        .order("id", { ascending: true }),
+  );
 
-  if ((linked ?? []).some((o) => o.invoice_id !== null)) {
+  if (linked.some((o) => o.invoice_id !== null)) {
     return { error: "Uplata ima fakturisanu porudžbinu — ne može se obrisati." };
   }
 
-  if ((linked ?? []).length > 0) {
+  if (linked.length > 0) {
     await supabase
       .from("orders")
       .update({ payout_id: null, payment_status: "neuplaceno", paid_at: null })
@@ -244,13 +264,19 @@ async function assertInvoiceable(payoutIds: string[]): Promise<string | null> {
   if (payoutIds.length === 0) return "Izaberite bar jednu uplatu.";
 
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("payouts")
-    .select("id")
-    .in("id", payoutIds)
-    .is("invoice_id", null);
+  const rows = await selectAllIn<{ id: string }, string>(
+    "provera nefakturisanih uplata",
+    payoutIds,
+    (chunk) =>
+      supabase
+        .from("payouts")
+        .select("id")
+        .in("id", chunk)
+        .is("invoice_id", null)
+        .order("id", { ascending: true }),
+  );
 
-  if ((data?.length ?? 0) !== payoutIds.length) {
+  if (rows.length !== payoutIds.length) {
     return "Neke uplate više nisu dostupne za fakturu (već fakturisane). Osveži i pokušaj ponovo.";
   }
   return null;
@@ -276,25 +302,29 @@ export async function issueInvoice(input: IssueInvoiceInput): Promise<FinanceAct
 
   const supabase = await createClient();
 
-  // Sve porudžbine izabranih uplata.
-  const { data: orderRows } = await supabase
-    .from("orders")
-    .select("id")
-    .in("payout_id", payout_ids);
-  const orderIds = ((orderRows as { id: string }[]) ?? []).map((o) => o.id);
+  // Sve porudžbine izabranih uplata (parčad + paginacija; greška se PRIJAVLJUJE —
+  // tiho prazno bi izdalo fakturu na 0 RSD i zaključalo stavke).
+  const orderIds = (
+    await selectAllIn<{ id: string }, string>("faktura: porudžbine uplata", payout_ids, (chunk) =>
+      supabase.from("orders").select("id").in("payout_id", chunk).order("id", { ascending: true }),
+    )
+  ).map((o) => o.id);
   if (orderIds.length === 0) {
     return { error: "Izabrane uplate nemaju vezane porudžbine." };
   }
 
   // Rekompjutuj total iz zamrznutih stavki (ne veruj klijentskoj cifri).
-  const { data: profitRows } = await supabase
-    .from("order_profit")
-    .select("profit")
-    .in("order_id", orderIds);
-  const total = ((profitRows as { profit: number | null }[]) ?? []).reduce(
-    (sum, r) => sum + (r.profit ?? 0),
-    0,
+  const profitRows = await selectAllIn<{ profit: number | null }, string>(
+    "faktura: zarada porudžbina",
+    orderIds,
+    (chunk) =>
+      supabase
+        .from("order_profit")
+        .select("order_id, profit")
+        .in("order_id", chunk)
+        .order("order_id", { ascending: true }),
   );
+  const total = profitRows.reduce((sum, r) => sum + (r.profit ?? 0), 0);
 
   const { data: invoice, error: insErr } = await supabase
     .from("invoices")
@@ -314,26 +344,35 @@ export async function issueInvoice(input: IssueInvoiceInput): Promise<FinanceAct
     return { error: "Izdavanje fakture nije uspelo." };
   }
 
-  // Veži uplate za fakturu.
-  const { error: payErr } = await supabase
-    .from("payouts")
-    .update({ invoice_id: invoice.id })
-    .in("id", payout_ids);
-  if (payErr) {
+  /** Rollback: odveži sve (uplate i porudžbine) pa obriši fakturu. */
+  const rollbackInvoice = async () => {
+    await supabase.from("orders").update({ invoice_id: null }).eq("invoice_id", invoice.id);
+    await supabase.from("payouts").update({ invoice_id: null }).eq("invoice_id", invoice.id);
     await supabase.from("invoices").delete().eq("id", invoice.id);
-    return { error: "Vezivanje uplata za fakturu nije uspelo." };
+  };
+
+  // Veži uplate za fakturu (parčad po IN_CHUNK).
+  for (const chunk of chunked(payout_ids)) {
+    const { error: payErr } = await supabase
+      .from("payouts")
+      .update({ invoice_id: invoice.id })
+      .in("id", chunk);
+    if (payErr) {
+      await rollbackInvoice();
+      return { error: "Vezivanje uplata za fakturu nije uspelo." };
+    }
   }
 
   // Kaskadno veži porudžbine tih uplata (zaključava stavke; hrani detalj fakture).
-  const { error: updErr } = await supabase
-    .from("orders")
-    .update({ invoice_id: invoice.id })
-    .in("id", orderIds);
-  if (updErr) {
-    // Rollback: odveži uplate pa obriši fakturu.
-    await supabase.from("payouts").update({ invoice_id: null }).eq("invoice_id", invoice.id);
-    await supabase.from("invoices").delete().eq("id", invoice.id);
-    return { error: "Vezivanje porudžbina za fakturu nije uspelo." };
+  for (const chunk of chunked(orderIds)) {
+    const { error: updErr } = await supabase
+      .from("orders")
+      .update({ invoice_id: invoice.id })
+      .in("id", chunk);
+    if (updErr) {
+      await rollbackInvoice();
+      return { error: "Vezivanje porudžbina za fakturu nije uspelo." };
+    }
   }
 
   revalidateInvoices(invoice.id);
@@ -378,11 +417,10 @@ export async function deleteInvoice(id: string): Promise<FinanceActionState> {
 
   const supabase = await createClient();
 
-  const { data: inv } = await supabase
-    .from("invoices")
-    .select("id, status, invoice_number")
-    .eq("id", id)
-    .maybeSingle();
+  const inv = must<{ id: string; status: string; invoice_number: string | null } | null>(
+    await supabase.from("invoices").select("id, status, invoice_number").eq("id", id).maybeSingle(),
+    "faktura",
+  );
   if (!inv) return { error: "Faktura nije pronađena." };
   if (inv.status === "placeno") {
     return { error: "Plaćena faktura se ne može obrisati." };
@@ -456,16 +494,16 @@ async function assertXexpressLinkable(
 ): Promise<string | null> {
   if (orderIds.length === 0) return "Izaberite bar jednu porudžbinu.";
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("orders")
-    .select("id, delivery_method, xexpress_invoice_id")
-    .in("id", orderIds);
-  const rows =
-    (data as {
-      id: string;
-      delivery_method: string | null;
-      xexpress_invoice_id: string | null;
-    }[]) ?? [];
+  const rows = await selectAllIn<
+    { id: string; delivery_method: string | null; xexpress_invoice_id: string | null },
+    string
+  >("provera XExpress kandidata", orderIds, (chunk) =>
+    supabase
+      .from("orders")
+      .select("id, delivery_method, xexpress_invoice_id")
+      .in("id", chunk)
+      .order("id", { ascending: true }),
+  );
   if (rows.length !== orderIds.length) return "Neke porudžbine nisu pronađene.";
   for (const r of rows) {
     if (r.delivery_method !== "xexpress")
@@ -551,18 +589,19 @@ export async function updateXexpressInvoice(
 
   const admin = createAdminClient();
   const keepIds = orders.map((o) => o.order_id);
-  const { data: currentRows } = await admin
-    .from("orders")
-    .select("id")
-    .eq("xexpress_invoice_id", id);
-  const removed = ((currentRows as { id: string }[]) ?? [])
-    .map((r) => r.id)
-    .filter((oid) => !keepIds.includes(oid));
-  if (removed.length > 0) {
+  const currentRows = await selectAll<{ id: string }>("XExpress faktura: vezane porudžbine", () =>
+    admin
+      .from("orders")
+      .select("id")
+      .eq("xexpress_invoice_id", id)
+      .order("id", { ascending: true }),
+  );
+  const removed = currentRows.map((r) => r.id).filter((oid) => !keepIds.includes(oid));
+  for (const chunk of chunked(removed)) {
     const { error } = await admin
       .from("orders")
       .update({ shipping_actual: null, xexpress_invoice_id: null })
-      .in("id", removed);
+      .in("id", chunk);
     if (error) return { error: "Odvezivanje porudžbina nije uspelo." };
   }
   for (const o of orders) {

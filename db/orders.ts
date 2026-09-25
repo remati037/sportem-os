@@ -3,6 +3,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/server";
+import { chunked, must, mustRows, selectAll } from "@/lib/supabase/paginate";
 import { buildCancellationIndex, matchCancellations } from "@/db/customer-risk";
 import { CANCELLED_STATUS_NAMES } from "@/lib/woo";
 
@@ -142,8 +143,10 @@ async function buildSearchOrParts(
   if (wantEmail && term) custOr.push(`email.ilike.%${term}%`);
 
   if (custOr.length > 0) {
-    const { data: custs } = await supabase.from("customers").select("id").or(custOr.join(","));
-    const ids = (custs ?? []).map((c) => c.id);
+    const custs = await selectAll<{ id: string }>("pretraga porudžbina: customers", () =>
+      supabase.from("customers").select("id").or(custOr.join(",")).order("id"),
+    );
+    const ids = custs.map((c) => c.id);
     if (ids.length > 0) orParts.push(`customer_id.in.(${ids.join(",")})`);
   }
 
@@ -152,11 +155,8 @@ async function buildSearchOrParts(
 
 /** Id-jevi statusa „Otkazano"/„Vraćeno" (lookup po IMENU, nikad hardkodovan UUID). */
 async function cancelledStatusIds(supabase: SupabaseClient): Promise<string[]> {
-  const { data } = await supabase
-    .from("order_statuses")
-    .select("id")
-    .in("name", CANCELLED_STATUS_NAMES);
-  return ((data as { id: string }[]) ?? []).map((s) => s.id);
+  const res = await supabase.from("order_statuses").select("id").in("name", CANCELLED_STATUS_NAMES);
+  return mustRows<{ id: string }>(res, "statusi Otkazano/Vraćeno").map((s) => s.id);
 }
 
 export async function getOrders(filters: OrderFilters = {}): Promise<OrdersResult> {
@@ -192,7 +192,11 @@ export async function getOrders(filters: OrderFilters = {}): Promise<OrdersResul
     query = query.or(orParts.join(","));
   }
 
-  const orderedQuery = query.order("ordered_at", { ascending: false, nullsFirst: false });
+  // Tiebreaker `id` je uslov za tačnu `.range()` paginaciju (isti `ordered_at`
+  // bez njega ume da se ponovi ili preskoči između dva bloka).
+  const orderedQuery = query
+    .order("ordered_at", { ascending: false, nullsFirst: false })
+    .order("id", { ascending: true });
 
   // „Rizičan kupac" flag po redu (istorija otkazivanja/vraćanja po tel/e-mailu).
   const riskIndex = await buildCancellationIndex(supabase);
@@ -210,20 +214,20 @@ export async function getOrders(filters: OrderFilters = {}): Promise<OrdersResul
   const fromIdx = (page - 1) * perPage;
 
   if (filters.onlyRisky) {
-    // Rizik nije SQL kolona — povuci sve redove koji prolaze ostale filtere (širok
-    // cap), izračunaj rizik, zadrži rizične, pa paginiraj u JS-u. Dovoljno za obim
-    // internog kataloga porudžbina; cap sprečava da PostgREST default limit tiho odseče.
-    const RISK_SCAN_CAP = 5000;
-    const { data } = await orderedQuery.range(0, RISK_SCAN_CAP - 1);
-    const risky = annotateRisk((data as unknown as OrderListRow[]) ?? []).filter(
-      (r) => r.risky_cancel_count > 0,
+    // Rizik nije SQL kolona — povuci SVE redove koji prolaze ostale filtere,
+    // izračunaj rizik, zadrži rizične, pa paginiraj u JS-u. `selectAll` vrti
+    // `.range()` petlju (nekadašnji „cap 5000" je PostgREST tiho rezao na 1000).
+    const scanned = await selectAll<OrderListRow>(
+      "lista porudžbina (rizičan kupac)",
+      () => orderedQuery,
     );
+    const risky = annotateRisk(scanned).filter((r) => r.risky_cancel_count > 0);
     return { rows: risky.slice(fromIdx, fromIdx + perPage), total: risky.length };
   }
 
-  const { data, count } = await orderedQuery.range(fromIdx, fromIdx + perPage - 1);
-  const rows = annotateRisk((data as unknown as OrderListRow[]) ?? []);
-  return { rows, total: count ?? 0 };
+  const res = await orderedQuery.range(fromIdx, fromIdx + perPage - 1);
+  const rows = annotateRisk(mustRows<OrderListRow>(res, "lista porudžbina"));
+  return { rows, total: res.count ?? 0 };
 }
 
 export type OrdersSummary = {
@@ -233,24 +237,31 @@ export type OrdersSummary = {
   broj: number; // broj porudžbina koje ulaze u zbir
 };
 
-/** Zbir order_items (zarada + promet) po chunk-ovima order_id-jeva (URL limit). */
+type SumItemRow = { quantity: number; mp_at_sale: number; profit_at_sale: number | null };
+
+/**
+ * Zbir order_items (zarada + promet) po parčadima order_id-jeva.
+ *
+ * Parče je `IN_CHUNK` (200) iz `lib/supabase/paginate` — ranijih 500 UUID-jeva
+ * je lomilo URL (`fetch failed`), a greška se nije proveravala, pa je zbir tiho
+ * bio 0 RSD. Svako parče je i paginirano (200 porudžbina ume da ima >1000
+ * stavki). Cifre su ZAMRZNUTE vrednosti iz stavki — nikad iz kataloga.
+ */
 async function sumOrderItems(
   supabase: SupabaseClient,
   ids: string[],
 ): Promise<{ zarada: number; promet: number }> {
   let zarada = 0;
   let promet = 0;
-  const CHUNK = 500;
-  for (let i = 0; i < ids.length; i += CHUNK) {
-    const { data } = await supabase
-      .from("order_items")
-      .select("quantity, mp_at_sale, profit_at_sale")
-      .in("order_id", ids.slice(i, i + CHUNK));
-    for (const it of (data as {
-      quantity: number;
-      mp_at_sale: number;
-      profit_at_sale: number | null;
-    }[]) ?? []) {
+  for (const chunk of chunked(ids)) {
+    const items = await selectAll<SumItemRow>("zbir porudžbina: order_items", () =>
+      supabase
+        .from("order_items")
+        .select("quantity, mp_at_sale, profit_at_sale")
+        .in("order_id", chunk)
+        .order("id", { ascending: true }),
+    );
+    for (const it of items) {
       zarada += it.profit_at_sale ?? 0;
       promet += it.mp_at_sale * it.quantity;
     }
@@ -264,6 +275,13 @@ async function sumOrderItems(
  * Otkazano/Vraćeno (isto kao Dashboard/Finansije — „zarada" = prihod, ne prodaja
  * koja je stornirana). `needs_vp` porudžbine ulaze sa profitom 0.
  */
+type SummaryOrderRow = {
+  id: string;
+  status_id: string;
+  ship_phone: string | null;
+  customer: { phone: string | null; email: string | null } | null;
+};
+
 export async function getOrdersSummary(filters: OrderFilters = {}): Promise<OrdersSummary> {
   const supabase = await createClient();
   const { statusId, deliveryMethod, paymentStatus, needsVp, needsReview, from, to, search } =
@@ -289,15 +307,11 @@ export async function getOrdersSummary(filters: OrderFilters = {}): Promise<Orde
     query = query.or(orParts.join(","));
   }
 
-  const SUMMARY_SCAN_CAP = 20000;
-  const { data } = await query.range(0, SUMMARY_SCAN_CAP - 1);
-  let rows =
-    (data as unknown as {
-      id: string;
-      status_id: string;
-      ship_phone: string | null;
-      customer: { phone: string | null; email: string | null } | null;
-    }[]) ?? [];
+  // Nekadašnji `SUMMARY_SCAN_CAP = 20000` je bio iluzija — PostgREST je tiho
+  // vraćao prvih 1000 redova, pa je zbir video samo deo porudžbina.
+  let rows = await selectAll<SummaryOrderRow>("zbir porudžbina: orders", () =>
+    query.order("id", { ascending: true }),
+  );
 
   // Izbaci Otkazano/Vraćeno iz zarade (nisu prihod) — po imenu.
   const excluded = new Set(await cancelledStatusIds(supabase));
@@ -332,11 +346,11 @@ export type OrderStatusRow = {
 /** Svi statusi (za filter, promenu statusa, podešavanja) — po sort_order. */
 export async function getOrderStatuses(): Promise<OrderStatusRow[]> {
   const supabase = await createClient();
-  const { data } = await supabase
+  const res = await supabase
     .from("order_statuses")
     .select("id, name, sort_order, color")
     .order("sort_order", { ascending: true });
-  return (data as unknown as OrderStatusRow[]) ?? [];
+  return mustRows<OrderStatusRow>(res, "statusi porudžbina");
 }
 
 export type OrderStatusHistoryRow = {
@@ -350,23 +364,24 @@ export type OrderStatusHistoryRow = {
 /** Istorija promena statusa jedne porudžbine (ko i kada), hronološki. */
 export async function getOrderStatusHistory(orderId: string): Promise<OrderStatusHistoryRow[]> {
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("order_status_history")
-    .select(
-      "id, note, created_at, to_status:order_statuses!to_status_id(name, color), changed_by:profiles(full_name)",
-    )
-    .eq("order_id", orderId)
-    .order("created_at", { ascending: true });
+  const rows = await selectAll<{
+    id: string;
+    note: string | null;
+    created_at: string;
+    to_status: { name: string; color: string | null } | null;
+    changed_by: { full_name: string | null } | null;
+  }>("istorija statusa porudžbine", () =>
+    supabase
+      .from("order_status_history")
+      .select(
+        "id, note, created_at, to_status:order_statuses!to_status_id(name, color), changed_by:profiles(full_name)",
+      )
+      .eq("order_id", orderId)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true }),
+  );
 
-  return (
-    (data as unknown as {
-      id: string;
-      note: string | null;
-      created_at: string;
-      to_status: { name: string; color: string | null } | null;
-      changed_by: { full_name: string | null } | null;
-    }[]) ?? []
-  ).map((r) => ({
+  return rows.map((r) => ({
     id: r.id,
     note: r.note,
     created_at: r.created_at,
@@ -382,10 +397,8 @@ export async function getOrderStatusHistory(orderId: string): Promise<OrderStatu
  */
 export async function getOrderDetail(param: string): Promise<OrderDetail | null> {
   const supabase = await createClient();
-  const query = supabase
-    .from("orders")
-    .select(
-      `id, woo_order_id, customer_id, delivery_method, payment_status, invoice_id, needs_vp, needs_review,
+  const query = supabase.from("orders").select(
+    `id, woo_order_id, customer_id, delivery_method, payment_status, invoice_id, needs_vp, needs_review,
        review_reason, woo_status, ship_name, ship_phone, ship_address, ship_city,
        ship_postal_code, ship_note, goods_total, shipping_charged, shipping_actual,
        weight_grams, package_count, cod_amount,
@@ -393,11 +406,11 @@ export async function getOrderDetail(param: string): Promise<OrderDetail | null>
        status:order_statuses(name, color),
        customer:customers(name, phone, email),
        items:order_items(id, variant_id, sku, product_name, quantity, mp_at_sale, vp_at_sale, profit_at_sale)`,
-    );
-  const { data } = await (/^\d+$/.test(param)
-    ? query.eq("woo_order_id", Number(param))
-    : query.eq("id", param)
+  );
+  const res = await (
+    /^\d+$/.test(param) ? query.eq("woo_order_id", Number(param)) : query.eq("id", param)
   ).maybeSingle();
+  const data = must(res, "detalj porudžbine");
   if (!data) return null;
   const detail = data as unknown as OrderDetail;
   detail.items.sort((a, b) => a.sku.localeCompare(b.sku));
@@ -437,20 +450,31 @@ export type ShippingOrder = {
 export async function getOrdersForShipping(ids: string[]): Promise<ShippingOrder[]> {
   if (ids.length === 0) return [];
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("orders")
-    .select(
-      `id, woo_order_id, ship_name, ship_phone, ship_address, ship_city, ship_postal_code,
+  const rows: ShippingOrder[] = [];
+  for (const chunk of chunked(ids)) {
+    rows.push(
+      ...(await selectAll<ShippingOrder>("lista za slanje: orders", () =>
+        supabase
+          .from("orders")
+          .select(
+            `id, woo_order_id, ship_name, ship_phone, ship_address, ship_city, ship_postal_code,
        ship_note, cod_amount, goods_total, shipping_charged, delivery_method, payment_status,
        package_count, weight_grams, items:order_items(sku, product_name, quantity)`,
-    )
-    .in("id", ids)
-    .order("woo_order_id", { ascending: true, nullsFirst: false });
+          )
+          .in("id", chunk)
+          .order("woo_order_id", { ascending: true, nullsFirst: false })
+          .order("id", { ascending: true }),
+      )),
+    );
+  }
 
-  return ((data as unknown as ShippingOrder[]) ?? []).map((o) => ({
-    ...o,
-    items: [...o.items].sort((a, b) => a.sku.localeCompare(b.sku)),
-  }));
+  // Redosled po broju porudžbine (parčad se spajaju, pa se sortira na kraju).
+  return rows
+    .sort((a, b) => (a.woo_order_id ?? 0) - (b.woo_order_id ?? 0))
+    .map((o) => ({
+      ...o,
+      items: [...o.items].sort((a, b) => a.sku.localeCompare(b.sku)),
+    }));
 }
 
 export type VariantOption = {
@@ -465,14 +489,15 @@ export type VariantOption = {
 /** Aktivne varijante za „Dodaj stavku" (snapshot se pravi u server akciji). */
 export async function getActiveVariantOptions(): Promise<VariantOption[]> {
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("product_variants")
-    .select("id, sku, variant_name, mp_price, vp_price, product:products(name)")
-    .is("archived_at", null)
-    .order("sku", { ascending: true });
-  return (
-    (data as unknown as (Omit<VariantOption, "product_name"> & {
-      product: { name: string } | null;
-    })[]) ?? []
-  ).map(({ product, ...v }) => ({ ...v, product_name: product?.name ?? "" }));
+  const rows = await selectAll<
+    Omit<VariantOption, "product_name"> & { product: { name: string } | null }
+  >("varijante za dodavanje stavke", () =>
+    supabase
+      .from("product_variants")
+      .select("id, sku, variant_name, mp_price, vp_price, product:products(name)")
+      .is("archived_at", null)
+      .order("sku", { ascending: true })
+      .order("id", { ascending: true }),
+  );
+  return rows.map(({ product, ...v }) => ({ ...v, product_name: product?.name ?? "" }));
 }

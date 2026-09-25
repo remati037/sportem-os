@@ -123,8 +123,8 @@ u route handleru).
 **Cilj:** infrastruktura na kojoj sve ostale faze stoje + popravka postojećeg novčanog buga.
 
 **Fajlovi**
-- `lib/supabase/paginate.ts` **(novo)** — `selectAll(query)` (`.range()` petlja dok stiže pun blok, **obavezan `error` check → throw**) i `chunked(ids, 200)`
-- `db/orders.ts` — `sumOrderItems` i `getOrdersSummary` prelaze na helper *(popravlja `docs/backlog.md` #0)*
+- ✅ `lib/supabase/paginate.ts` **(URAĐENO 26.09.2026 u koraku K2** plana optimizacije) — `selectAll` / `selectAllIn` / `chunked(ids, IN_CHUNK=200)` / `must` / `mustRows` / `mustOne`. **Ne raditi ponovo.**
+- ✅ `db/orders.ts` — `sumOrderItems` i `getOrdersSummary` su na helperu *(zatvorilo `docs/backlog.md` #0 i #8)*. **Ne raditi ponovo.**
 - `lib/csv.ts` **(novo)** — `toCsv(columns, rows)`: `;` separator, **BOM** (`﻿`), CRLF, navodnici samo kad treba, RSD bez decimala, datumi `DD.MM.YYYY.`, procenti sa jednom decimalom
 - `lib/reports.ts` **(novo)** — tipovi + prazan registar + `reportsForRole(role)` + `findReport(key, role)`
 - `app/(app)/izvestaji/page.tsx` **(novo)** — filter perioda (`lib/period.ts`), izbor grupe i izveštaja, prazno stanje
@@ -140,16 +140,20 @@ u route handleru).
 
 **Rezultat**
 `/izvestaji` postoji i kaže „Izaberi izveštaj"; nav stavka se vidi; `npm run build` prolazi.
-Traka „Za ovaj filter" iznad liste porudžbina **više ne pokazuje 0 RSD** i tačna je preko 1000 porudžbina.
+~~Traka „Za ovaj filter" iznad liste porudžbina više ne pokazuje 0 RSD~~ — **već urađeno u K2**
+(26.09.2026): zbir bez filtera je 501.265 → 1.442.169 RSD i poklapa se sa Dashboardom.
+
+> **Šta je od R0 ostalo:** `lib/csv.ts`, `lib/reports.ts`, `app/(app)/izvestaji/**`,
+> `app/api/izvestaji/[kljuc]/csv/route.ts` i nav stavka. Paginacija je gotova — u novim upitima
+> izveštaja koristiti `selectAll` / `selectAllIn` iz `lib/supabase/paginate.ts` i **ne prepisivati
+> `IN_CHUNK` lokalno.**
 
 > **PROMPT ZA SESIJU (R0)**
 > ```
 > Pročitaj CLAUDE.md i docs/Sportem-Plan-Izvestaji.md (sekcije 0, 1 i korak R0).
 > Uradi SAMO R0 — temelj modula Izveštaji, BEZ ijednog konkretnog izveštaja i BEZ migracije:
-> 1) lib/supabase/paginate.ts — selectAll(query) sa .range() petljom i OBAVEZNOM error proverom
->    (throw, nikad tiho prazno) + chunked(ids, 200). PostgREST ima tvrd cap 1000 redova.
-> 2) Prebaci db/orders.ts (sumOrderItems, getOrdersSummary) na taj helper — to popravlja
->    backlog #0 („Za ovaj filter" pokazuje 0 RSD jer CHUNK=500 lomi URL i greška se ne proverava).
+> 1) i 2) — PRESKOČI, urađeno u koraku K2 (lib/supabase/paginate.ts postoji, db/orders.ts je na
+>    helperu). Koristi selectAll/selectAllIn/must iz njega i ne prepisuj IN_CHUNK lokalno.
 > 3) lib/csv.ts — toCsv(columns, rows): separator ';', BOM, CRLF, srpski brojevi i datumi.
 > 4) lib/reports.ts — tipovi ReportDef/ReportColumn, prazan registar, reportsForRole, findReport.
 > 5) app/(app)/izvestaji/page.tsx + report-table.tsx — filter perioda iz lib/period.ts, izbor

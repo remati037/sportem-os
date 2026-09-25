@@ -467,12 +467,52 @@ Pokreni npm run perf i provera-k2, pokaži mi obe tabele. Onda npm run build.
 
 **Rezultat / kako proveravaš:**
 - `npm run perf`: Porudžbine **< 2.000 ms**, nijedan `fetch failed`, nijedna sonda ne vrati tačno
-  1000 redova.
+  1000 redova *jednim potezom* (pun blok od 1000 unutar `selectAll` petlje je normalan — sonda ga
+  zato više i ne prijavljuje).
 - **Ti očima:** otvori `/porudzbine` bez filtera → traka „Za ovaj filter" pokazuje **stvaran zbir**.
   Uporedi taj zbir sa Dashboardom za isti period → **mora da se poklopi.**
 - `npm run build` prolazi.
 
 **Kako se vraća unazad:** `git revert <commit>`. Nema migracije, nema promene šeme.
+
+#### ✅ URAĐENO 26.09.2026 — izmereno
+
+| Stranica | Pre K2 | Posle K2 | Round-tripova |
+|---|---|---|---|
+| **Porudžbine — lista** | **8.321 ms** + `fetch failed` | **1.050 ms** | 7 → 12 |
+| Dashboard | 346 ms | 414 ms | 15 → 15 |
+| Katalog | 229 ms | 392 ms | 4 → 5 |
+| Uplate | 317 ms | 261 ms | 4 → 5 |
+| Poštarina | 174 ms | 153 ms | 5 → 5 |
+| Detalj porudžbine | 299 ms | 274 ms | 6 → 6 |
+| Tiketi | 331 ms | 249 ms | 11 → 11 |
+| **UKUPNO** | **10.017 ms**, 2 ⚠ | **2.793 ms**, **0 ⚠** | 52 → 59 |
+
+Izlazi: `docs/perf/2026-09-26-perf-posle-k2.txt`, `docs/perf/2026-09-26-provera-k2.txt`.
+
+> **Round-tripova je NAMERNO nešto više** (52 → 59): tamo gde je PostgREST ranije tiho vraćao prvih
+> 1000 redova i time „štedeo" upit, sada se dohvata i druga strana. Sedam dodatnih round-tripova
+> kupuje tačne cifre; K5/K6 ih svode na 1–3 po stranici SQL agregacijama.
+
+**Cifra koja se promenila (jedina, kao što je plan predvideo):** zbir „Za ovaj filter" bez filtera
+**501.265 → 1.442.169 RSD**, promet **1.854.852 → 5.629.536 RSD**, broj porudžbina **878 → 1.184**.
+Kontrola prošla: nova cifra se **poklapa sa Dashboardom** za isti period (`provera-k2` to proverava
+sama i ispisuje „poklapa se ✓"). Tekući i prošli mesec: **0 RSD razlike** — tamo baga nije ni bilo
+(manje od 1000 porudžbina u periodu).
+
+**Odstupanje od plana (obim):** popravljeno je **više od 9 nabrojanih mesta.** Pravilo koje je
+primenjeno: *svaki neograničen `select` u `db/` sloju (bez `.limit()`, bez `maybeSingle()`) ide kroz
+`selectAll`, svaki `.in()` kroz parčad po `IN_CHUNK`, svaki upit dobija proveru greške.* Devet mesta
+iz plana su bila ona koja **već danas** lažu; ostala (`getUnpaidDeliveredXexpress`, `getPayoutSpisak`,
+`listPayouts`, `listInvoices`, `getEligibleXexpressOrders`, `getOrdersForShipping`,
+`getActiveVariantOptions`, `getLowStockVariants`, katalog, ceo `db/tickets.ts`, `db/expenses.ts`,
+`db/profiles.ts`, `db/tickets-config.ts`) su isti obrazac koji bi slagao **sutra**. Poslovna pravila
+nisu dirana ni na jednom mestu.
+
+**Jedna tehnička dopuna:** paginiranim upitima je dodat **`order("id")` kao tiebreaker**. Bez
+jedinstvenog redosleda `.range()` petlja može da ponovi ili preskoči red između dva bloka. Na
+zbirovima to ništa ne menja (sabiranje je nezavisno od redosleda); na jedinom prikazu gde je
+redosled vidljiv (lista „rizičan kupac") razrešava samo tačan izjednačen `ordered_at`.
 
 ---
 

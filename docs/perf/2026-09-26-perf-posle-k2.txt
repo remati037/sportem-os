@@ -1,0 +1,155 @@
+
+> sportem-app@0.1.0 perf
+> node --env-file-if-exists=.env.local --env-file-if-exists=.env.test.local scripts/perf-bench.mjs
+
+.env.test.local not found. Continuing without it.
+Sportem OS — merenje brzine dohvata (Korak K1)
+Vreme: 2026-09-25T22:32:14.457Z  ·  Beograd: 2026-09-26
+Baza:  https://ivrmalybwreiipiwikeo.supabase.co
+Pokretanja po režimu: 3 (u tabelama je MEDIJANA)
+Skripta SAMO ČITA — nijedan upis u bazu.
+
+⚠ Nema RLS_TEST_ADMIN_EMAIL / RLS_TEST_ADMIN_PASSWORD (.env.test.local) — merenje ide SAMO kroz service-role, kolona „RLS overhead" se preskače. To je merenje BEZ RLS-a, dakle optimističnije od onoga što app stvarno plaća.
+
+
+════════════════════════════════════════════════════════════════════════════════
+(b) SERVICE-ROLE ključ — RLS ZAOBIĐEN
+════════════════════════════════════════════════════════════════════════════════
+
+  … pokretanje 1/3
+
+  … pokretanje 2/3
+
+  … pokretanje 3/3
+
+Dashboard  (app/(app)/page.tsx)
+────────────────────────────────────────────────────────────────────────────────────────────────
+  #   upit                                                             trajanje   redova
+  1   metrike: order_statuses (Otkazano/Vraćeno)                          65 ms        2
+  2   moji tiketi: tickets otvoreni                                       89 ms        3
+  3   fali količina: product_variants                                     93 ms        0
+  4   čeka: order_statuses (Kreirano)                                     95 ms        1
+  5   moji tiketi: ticket_columns                                        101 ms        4
+  6   metrike: orders u periodu                                           83 ms      173
+  7   čeka: orders count Kreirano                                         70 ms       19
+  8   čeka: orders count needs_vp                                         71 ms        0
+  9   nisko stanje: product_variants + products                          166 ms      401
+  10  moji tiketi: ticket_assignees (bez sesije — prazan user_id)         65 ms        0
+  11  čeka: order_statuses (Isporučeno)                                   87 ms        1
+  12  čeka: orders count needs_review                                     93 ms        0
+  13  metrike: order_items .in(150) [1/1]                                 76 ms      190
+  14  čeka: orders isporučeno+neuplaćeno                                  64 ms       29
+  15  metrike: expenses u periodu                                         76 ms        5
+────────────────────────────────────────────────────────────────────────────────────────────────
+  UKUPNO: 308 ms (zbir upita 1296 ms) · 15 round-tripova
+  po pokretanju: 308 / 306 / 311 ms → medijana 308 ms (tabela iznad je to pokretanje)
+
+Porudžbine — lista  (app/(app)/porudzbine/page.tsx)
+────────────────────────────────────────────────────────────────────────────────────────────────
+  #   upit                                                             trajanje   redova
+  1   lista: order_statuses                                               68 ms        5
+  2   lista: orders otkazane (indeks rizika)                              69 ms      142
+  3   lista: orders strana 1 (25 po strani, count exact)                 153 ms     1326
+  4   zbir: orders scan                                                  228 ms     1000
+  5   zbir: orders scan (strana 2)                                        87 ms      326
+  6   zbir: order_statuses (Otkazano/Vraćeno)                             65 ms        2
+  7   zbir: order_items .in(200) [1/6]                                   102 ms      305
+  8   zbir: order_items .in(200) [2/6]                                    85 ms      324
+  9   zbir: order_items .in(200) [3/6]                                   172 ms      313
+  10  zbir: order_items .in(200) [4/6]                                    79 ms      321
+  11  zbir: order_items .in(200) [5/6]                                    79 ms      331
+  12  zbir: order_items .in(184) [6/6]                                   111 ms      280
+────────────────────────────────────────────────────────────────────────────────────────────────
+  UKUPNO: 1009 ms (zbir upita 1298 ms) · 12 round-tripova
+  po pokretanju: 905 / 1009 / 1252 ms → medijana 1009 ms (tabela iznad je to pokretanje)
+
+Detalj porudžbine  (app/(app)/porudzbine/[id]/page.tsx)
+────────────────────────────────────────────────────────────────────────────────────────────────
+  #   upit                                                             trajanje   redova
+  1   detalj: orders + stavke (#3387)                                     78 ms        1
+  2   detalj: order_statuses                                              67 ms        5
+  3   detalj: order_status_history                                        71 ms        0
+  4   detalj: tickets vezani za porudžbinu                                77 ms        0
+  5   detalj: orders otkazane (indeks rizika)                            175 ms      142
+  6   detalj: product_variants (izbor za „Dodaj stavku“)                 188 ms      401
+────────────────────────────────────────────────────────────────────────────────────────────────
+  UKUPNO: 266 ms (zbir upita 656 ms) · 6 round-tripova
+  po pokretanju: 272 / 266 / 199 ms → medijana 266 ms (tabela iznad je to pokretanje)
+
+Katalog  (app/(app)/katalog/page.tsx, rola Admin)
+────────────────────────────────────────────────────────────────────────────────────────────────
+  #   upit                                                             trajanje   redova
+  1   katalog: categories (iz getCatalog)                                 69 ms        0
+  2   katalog: categories (iz strane)                                     69 ms        0
+  3   katalog: products                                                   79 ms      231
+  4   katalog: product_variants .in(200) [1/2]                           151 ms      336
+  5   katalog: product_variants .in(31) [2/2]                             74 ms       56
+────────────────────────────────────────────────────────────────────────────────────────────────
+  UKUPNO: 305 ms (zbir upita 442 ms) · 5 round-tripova
+  po pokretanju: 286 / 305 / 325 ms → medijana 305 ms (tabela iznad je to pokretanje)
+
+Finansije → Uplate  (app/(app)/finansije/uplate/page.tsx)
+────────────────────────────────────────────────────────────────────────────────────────────────
+  #   upit                                                             trajanje   redova
+  1   uplate: order_statuses (Isporučeno)                                 65 ms        1
+  2   uplate: payouts + vezane porudžbine                                 85 ms       50
+  3   uplate: orders isporučeno+neuplaćeno                               141 ms       29
+  4   uplate: order_profit .in(200) [1/2]                                123 ms      200
+  5   uplate: order_profit .in(104) [2/2]                                 79 ms      104
+────────────────────────────────────────────────────────────────────────────────────────────────
+  UKUPNO: 287 ms (zbir upita 492 ms) · 5 round-tripova
+  po pokretanju: 317 / 287 / 269 ms → medijana 287 ms (tabela iznad je to pokretanje)
+
+Finansije → Poštarina  (app/(app)/finansije/postarina/page.tsx)
+────────────────────────────────────────────────────────────────────────────────────────────────
+  #   upit                                                             trajanje   redova
+  1   xexpress: fakture                                                   71 ms        9
+  2   saldo: orders sa unetom poštarinom                                  72 ms      315
+  3   poravnanja: postage_settlements                                     73 ms        2
+  4   saldo: postage_settlements (zbir)                                   67 ms        2
+  5   xexpress: orders — P&L (PDV 20%) .in(9) [1/1]                       77 ms      315
+────────────────────────────────────────────────────────────────────────────────────────────────
+  UKUPNO: 148 ms (zbir upita 360 ms) · 5 round-tripova
+  po pokretanju: 157 / 148 / 136 ms → medijana 148 ms (tabela iznad je to pokretanje)
+
+Tiketi — board  (app/(app)/tiketi/page.tsx)
+────────────────────────────────────────────────────────────────────────────────────────────────
+  #   upit                                                             trajanje   redova
+  1   board: ticket_columns                                              122 ms        4
+  2   board: ticket_tags                                                 123 ms        4
+  3   board: profiles (service-role)                                     123 ms        2
+  4   board: ticket_priorities                                           123 ms        4
+  5   board: tickets                                                      86 ms       16
+  6   board: blokirajući tiketi .in(1) [1/1]                              70 ms        1
+  7   board: profiles (service-role)                                      71 ms        2
+  8   board: vezane porudžbine .in(6) [1/1]                               71 ms        6
+  9   board: ticket_assignees .in(16) [1/1]                               75 ms       12
+  10  board: vezani kupci .in(5) [1/1]                                    80 ms        5
+  11  board: ticket_tag_links .in(16) [1/1]                               84 ms        7
+────────────────────────────────────────────────────────────────────────────────────────────────
+  UKUPNO: 293 ms (zbir upita 1029 ms) · 11 round-tripova
+  po pokretanju: 284 / 305 / 293 ms → medijana 293 ms (tabela iznad je to pokretanje)
+
+
+════════════════════════════════════════════════════════════════════════════════
+ZBIRNO (medijana od 3 pokretanja)
+════════════════════════════════════════════════════════════════════════════════
+  stranica                       RLS (a)  service (b)  RLS overhead  round-trip   ⚠
+  ──────────────────────────────────────────────────────────────────────────────────────────────
+  dashboard                            —       308 ms             —          15   0
+  porudzbine                           —      1009 ms             —          12   0
+  porudzbina                           —       266 ms             —           6   0
+  katalog                              —       305 ms             —           5   0
+  uplate                               —       287 ms             —           5   0
+  postarina                            —       148 ms             —           5   0
+  tiketi                               —       293 ms             —          11   0
+  ──────────────────────────────────────────────────────────────────────────────────────────────
+  UKUPNO                               —      2615 ms             —          59   0
+
+⚠ Kolona „RLS overhead" je prazna — nema Admin kredencijala. Kad se dodaju u
+  .env.test.local (RLS_TEST_ADMIN_EMAIL / _PASSWORD), isto merenje daje i pravu cenu RLS-a.
+
+UPOZORENJA
+  ──────────────────────────────────────────────────────────────────────────────────────────────
+  nijedno
+

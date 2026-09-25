@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
+import { selectAll } from "@/lib/supabase/paginate";
 
 /*
  * Upiti troškova (Korak 1.7). Čitaju kroz RLS klijent: Admin/Menadžer vide,
@@ -38,20 +39,25 @@ export async function listExpenses(monthStr: string): Promise<ExpenseRow[]> {
   const { firstDay, lastDay } = monthDateBounds(monthStr);
   const supabase = await createClient();
 
-  const { data } = await supabase
-    .from("expenses")
-    .select("id, amount, date, category_id, description, attachment_path, expense_categories(name)")
-    .gte("date", firstDay)
-    .lte("date", lastDay)
-    .order("date", { ascending: false })
-    .order("created_at", { ascending: false });
-
   type Raw = Omit<ExpenseRow, "category_name"> & {
     // PostgREST tipizuje embed kao niz iako je veza to-one → normalizuj oba.
     expense_categories: { name: string } | { name: string }[] | null;
   };
 
-  return ((data as unknown as Raw[]) ?? []).map((r) => {
+  const rows = await selectAll<Raw>("troškovi meseca", () =>
+    supabase
+      .from("expenses")
+      .select(
+        "id, amount, date, category_id, description, attachment_path, expense_categories(name)",
+      )
+      .gte("date", firstDay)
+      .lte("date", lastDay)
+      .order("date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true }),
+  );
+
+  return rows.map((r) => {
     const cat = Array.isArray(r.expense_categories)
       ? r.expense_categories[0]
       : r.expense_categories;
@@ -76,10 +82,12 @@ export async function getExpensesTotal(monthStr: string): Promise<number> {
 /** Sve kategorije troškova (sort_order, pa naziv). */
 export async function listExpenseCategories(): Promise<ExpenseCategory[]> {
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("expense_categories")
-    .select("id, name, sort_order")
-    .order("sort_order", { ascending: true })
-    .order("name", { ascending: true });
-  return (data as ExpenseCategory[]) ?? [];
+  return await selectAll<ExpenseCategory>("kategorije troškova", () =>
+    supabase
+      .from("expense_categories")
+      .select("id, name, sort_order")
+      .order("sort_order", { ascending: true })
+      .order("name", { ascending: true })
+      .order("id", { ascending: true }),
+  );
 }

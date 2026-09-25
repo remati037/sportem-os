@@ -3,6 +3,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/server";
+import { selectAll } from "@/lib/supabase/paginate";
 import { normalizePhone } from "@/lib/woo";
 
 /*
@@ -52,21 +53,25 @@ function pushTo(map: Map<string, CancelEntry[]>, key: string | null, entry: Canc
 }
 
 /**
- * Indeks svih otkazanih/vraćenih porudžbina po telefonu i e-mailu (jedan upit).
+ * Indeks svih otkazanih/vraćenih porudžbina po telefonu i e-mailu.
  * Prima Supabase klijent: RLS klijent za UI, admin klijent za webhook.
+ *
+ * Paginirano (`selectAll`): PostgREST tvrdo seče na 1000 redova, pa je „rizičan
+ * kupac" preko te granice tiho prestajao da radi.
  */
-export async function buildCancellationIndex(
-  supabase: SupabaseClient,
-): Promise<CancellationIndex> {
+export async function buildCancellationIndex(supabase: SupabaseClient): Promise<CancellationIndex> {
   const byPhone = new Map<string, CancelEntry[]>();
   const byEmail = new Map<string, CancelEntry[]>();
 
-  const { data } = await supabase
-    .from("orders")
-    .select("id, woo_order_id, ordered_at, ship_phone, customer:customers(phone, email)")
-    .not("cancelled_at", "is", null);
+  const rows = await selectAll<IndexRow>("indeks otkazivanja", () =>
+    supabase
+      .from("orders")
+      .select("id, woo_order_id, ordered_at, ship_phone, customer:customers(phone, email)")
+      .not("cancelled_at", "is", null)
+      .order("id", { ascending: true }),
+  );
 
-  for (const row of (data as unknown as IndexRow[]) ?? []) {
+  for (const row of rows) {
     const entry: CancelEntry = {
       id: row.id,
       woo_order_id: row.woo_order_id,
@@ -98,9 +103,7 @@ export function matchCancellations(
 
   if (excludeId) byId.delete(excludeId);
 
-  return [...byId.values()].sort((a, b) =>
-    (b.ordered_at ?? "").localeCompare(a.ordered_at ?? ""),
-  );
+  return [...byId.values()].sort((a, b) => (b.ordered_at ?? "").localeCompare(a.ordered_at ?? ""));
 }
 
 /** Istorija otkazivanja za jednu porudžbinu (detalj) — otvara RLS klijent. */

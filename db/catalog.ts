@@ -2,6 +2,7 @@ import "server-only";
 
 import type { Role } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { chunked, must, selectAll } from "@/lib/supabase/paginate";
 import type { CategoryRow, ProductRow, ProductWithVariants, VariantRow } from "@/db/catalog-types";
 
 /*
@@ -31,24 +32,39 @@ function canSeeFinance(role: Role): boolean {
 
 export async function getCategories(): Promise<CategoryRow[]> {
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("categories")
-    .select("id, name, sort_order")
-    .order("sort_order", { ascending: true })
-    .order("name", { ascending: true });
-  return (data as CategoryRow[]) ?? [];
+  return await selectAll<CategoryRow>("kategorije", () =>
+    supabase
+      .from("categories")
+      .select("id, name, sort_order")
+      .order("sort_order", { ascending: true })
+      .order("name", { ascending: true })
+      .order("id", { ascending: true }),
+  );
 }
 
+/**
+ * Varijante po roli. Bez `productIds` vraća sve; sa listom se ide u parčadima po
+ * `IN_CHUNK` (dugačak `.in()` URL obori zahtev), a svako parče je paginirano —
+ * inače katalog preko 1000 varijanti tiho prikaže proizvode bez cena.
+ */
 async function fetchVariants(role: Role, productIds?: string[]): Promise<VariantRow[]> {
   const supabase = await createClient();
   const source = canSeeFinance(role) ? "product_variants" : "product_variants_public";
   const cols = canSeeFinance(role) ? VARIANT_STAFF_COLS : VARIANT_PUBLIC_COLS;
 
-  let query = supabase.from(source).select(cols);
-  if (productIds) query = query.in("product_id", productIds);
+  const build = (ids?: string[]) => {
+    let query = supabase.from(source).select(cols);
+    if (ids) query = query.in("product_id", ids);
+    return query.order("sku", { ascending: true }).order("id", { ascending: true });
+  };
 
-  const { data } = await query.order("sku", { ascending: true });
-  return (data as unknown as VariantRow[]) ?? [];
+  if (!productIds) return await selectAll<VariantRow>("varijante kataloga", () => build());
+
+  const rows: VariantRow[] = [];
+  for (const chunk of chunked(productIds)) {
+    rows.push(...(await selectAll<VariantRow>("varijante kataloga", () => build(chunk))));
+  }
+  return rows;
 }
 
 /** Katalog: proizvodi + varijante + kategorija, spojeni po roli. */
@@ -64,12 +80,13 @@ export async function getCatalog({
   let productQuery = supabase.from("products").select(PRODUCT_COLS);
   if (!includeArchived) productQuery = productQuery.is("archived_at", null);
 
-  const [{ data: products }, categories] = await Promise.all([
-    productQuery.order("name", { ascending: true }),
+  const [productRows, categories] = await Promise.all([
+    selectAll<ProductRow>("katalog: products", () =>
+      productQuery.order("name", { ascending: true }).order("id", { ascending: true }),
+    ),
     getCategories(),
   ]);
 
-  const productRows = (products as ProductRow[]) ?? [];
   if (productRows.length === 0) return [];
 
   const variants = await fetchVariants(
@@ -112,24 +129,24 @@ export type LowStockVariant = {
  */
 export async function getLowStockVariants(): Promise<LowStockVariant[]> {
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("product_variants")
-    .select(
-      "id, product_id, sku, variant_name, stock_quantity, low_stock_threshold, archived_at, products(name, archived_at)",
-    )
-    .is("archived_at", null)
-    .not("stock_counted_at", "is", null);
-
-  const rows =
-    (data as unknown as {
-      id: string;
-      product_id: string;
-      sku: string;
-      variant_name: string | null;
-      stock_quantity: number;
-      low_stock_threshold: number;
-      products: { name: string; archived_at: string | null } | null;
-    }[]) ?? [];
+  const rows = await selectAll<{
+    id: string;
+    product_id: string;
+    sku: string;
+    variant_name: string | null;
+    stock_quantity: number;
+    low_stock_threshold: number;
+    products: { name: string; archived_at: string | null } | null;
+  }>("nisko stanje: varijante", () =>
+    supabase
+      .from("product_variants")
+      .select(
+        "id, product_id, sku, variant_name, stock_quantity, low_stock_threshold, archived_at, products(name, archived_at)",
+      )
+      .is("archived_at", null)
+      .not("stock_counted_at", "is", null)
+      .order("id", { ascending: true }),
+  );
 
   return rows
     .filter(
@@ -156,13 +173,16 @@ export async function getLowStockVariants(): Promise<LowStockVariant[]> {
  */
 export async function getUncountedVariantCount(): Promise<number> {
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("product_variants")
-    .select("id, products(archived_at)")
-    .is("archived_at", null)
-    .is("stock_counted_at", null);
-
-  const rows = (data as unknown as { products: { archived_at: string | null } | null }[]) ?? [];
+  const rows = await selectAll<{ products: { archived_at: string | null } | null }>(
+    "varijante bez unete količine",
+    () =>
+      supabase
+        .from("product_variants")
+        .select("id, products(archived_at)")
+        .is("archived_at", null)
+        .is("stock_counted_at", null)
+        .order("id", { ascending: true }),
+  );
   return rows.filter((r) => r.products != null && r.products.archived_at == null).length;
 }
 
@@ -173,11 +193,12 @@ export async function getProductWithVariants(
 ): Promise<ProductWithVariants | null> {
   const supabase = await createClient();
 
-  const { data: product } = await supabase
+  const productRes = await supabase
     .from("products")
     .select(PRODUCT_COLS)
     .eq("id", id)
     .maybeSingle();
+  const product = must(productRes, "detalj proizvoda");
 
   if (!product) return null;
 

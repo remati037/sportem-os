@@ -1,6 +1,6 @@
 # Backlog — šta je još otvoreno
 
-> **Stanje na dan:** 22.09.2026. · **Provereno nad:** `main` @ `832598f`
+> **Stanje na dan:** 26.09.2026. · **Provereno nad:** `main` @ `832598f` (nalazi), uz zatvaranja iz koraka K2 (26.09.2026)
 > **Poreklo:** audit od 31.07.2026 (`docs/arhiva/2026-07-31-audit/`, snimljen na `9c3c4c9`), **prepročitan nalaz po nalaz nad današnjim kodom.**
 > Od audita je prošlo 13 commita (ceo modul Tiketi + automatsko skidanje zaliha), pa deo nalaza više ne stoji — v. „Popravljeno od audita".
 >
@@ -10,16 +10,6 @@
 ---
 
 ## P0 — novac ili gubitak podataka, radi se prvo
-
-### 0. Zbir iznad liste porudžbina pokazuje **0 RSD** `[P]`
-`db/orders.ts:243` — `sumOrderItems` ima `CHUNK = 500`. Audit je to **izmerio nad pravom bazom**: 200 UUID prolazi, 350 prolazi, **400 puca**, 500 puca (predugačak URL → `fetch failed`). Greška se ne proverava (`const { data } = …`) → `data = null` → zbir 0, bez poruke i bez Sentry zapisa.
-Traka „Za ovaj filter" bez filtera danas prikazuje **0 RSD** umesto stvarnog zbira.
-
-**Uz to — `SUMMARY_SCAN_CAP = 20000` je iluzija** (`db/orders.ts:293`). Audit je izmerio da projekat ima **tvrd PostgREST cap od 1000 redova**: ni `.range(0, 19999)` ni `.limit(5000)` ga ne zaobilaze. Sa **1191 porudžbinom danas** zbir ionako vidi samo prvih 1000. Isto važi za `RISK_SCAN_CAP` i filter „rizičan kupac".
-
-> **Ovo je korak R0 u `docs/Sportem-Plan-Izvestaji.md`** — helper je preduslov za izveštaje, pa se ovaj bug usput zatvara. Ako se radi modul Izveštaji, ne popravljati zasebno.
-
-**Popravka (rešava i #8):** jedan helper `lib/supabase/paginate.ts` — `selectAll(query)` (`.range()` petlja dok stiže pun blok + **obavezan `error` check**) i `chunked(ids, 200)`. Obrazac već postoji u `db/metrics.ts`, samo nije izvučen.
 
 ### 1. `next@16.2.10` — 1 **kritična** + 6 „high" ranjivosti `[P]`
 `npm audit --omit=dev` danas: **8 ranjivosti (1 critical, 6 high, 1 moderate)**. Kritična je u samom `next`-u; `postcss` i `sharp` se vuku kroz njega.
@@ -64,9 +54,9 @@ from public.order_items group by order_id;
 ```
 \+ `issueInvoice` mora **tvrdo odbiti** porudžbinu sa `profit is null` (danas je `?? 0`).
 
-### 6. `issueInvoice` računa total bez provere greške → **faktura na 0 RSD** `[P]`
-`app/(app)/finansije/actions.ts:288-296` — ni `error` provera ni chunk-ovanje `.in()`. Ako upit padne ili ga PostgREST odseče, `total_amount` postane 0, faktura se izda, a porudžbine se **zaključaju** (`invoice_id`).
-**Popravka:** proveriti `error` i baciti; chunk-ovati `.in()` po 200; odbiti `profit is null` (v. #5).
+### 6. `issueInvoice` ne odbija porudžbinu sa `profit is null` `[P]`
+**Delimično popravljeno u K2 (26.09.2026):** `error` provera i parčad `.in()` po 200 su tu (`selectAllIn` iz `lib/supabase/paginate.ts`), pa `total_amount` više ne može tiho da ispadne 0 RSD — upit sad baca.
+**Ostaje:** `issueInvoice` i dalje broji `profit ?? 0` umesto da **tvrdo odbije** porudžbinu bez profita (v. #5). To ide uz popravku `order_profit` view-a — korak **K4** u `docs/Sportem-Plan-Optimizacija.md`.
 
 ### 7. Popis: **prazno polje se tiho snima kao 0** i markira kao popisano `[P]`
 `app/(app)/katalog/stock-count-control.tsx:64-75` — `Number("")` je `0`, prođe kroz `Number.isInteger(parsed) && parsed >= 0`, pa `save(true, 0)`.
@@ -77,20 +67,9 @@ Logistika obriše cifru da otkuca novu, tapne drugde → varijanta sa 12 komada 
 
 ## P1 — pogrešna cifra ili blokada u radu
 
-### 8. Finansijski upiti bez paginacije i bez provere greške `[P]`
-Isti obrazac na četiri mesta — tihi PostgREST cap od 1000 redova i progutana greška:
-
-| Mesto | Šta pukne |
-|---|---|
-| `db/orders.ts:237-259` `sumOrderItems` (`CHUNK = 500`) | **v. #0 — puca već danas** |
-| `db/finance.ts:272-284` `profitByOrder` | zarada uplate tiho 0 |
-| `db/customer-risk.ts` `buildCancellationIndex` | „Rizičan kupac" tiho prestaje da radi preko 1000 otkazanih |
-| `db/catalog.ts` `fetchVariants` | katalog prikaže proizvode **bez varijanti i cena** (danas 235 proizvoda — na granici) |
-| `db/finance.ts:485-507` `getSaldoPostarine` | saldo poštarine se „zamrzne" preko 1000 porudžbina |
-| `db/finance.ts:650-656` `listXexpressInvoices` | pogrešan P&L po XExpress fakturi |
-| `app/(app)/finansije/actions.ts:288-296` | v. #6 |
-
-**Popravka:** jedan zajednički helper (chunk po 200 + `.range()` petlja + `throw` na `error`) — obrazac već postoji u `db/metrics.ts`, samo nije izvučen. **Koraci R0 i R2 plana `docs/Sportem-Plan-Izvestaji.md` zatvaraju `sumOrderItems` i `buildCancellationIndex`; ostala tri mesta ostaju.**
+### 8. ~~Finansijski upiti bez paginacije i bez provere greške~~ — **POPRAVLJENO (K2, 26.09.2026)**
+Svih sedam mesta iz ovog nalaza prešlo je na `lib/supabase/paginate.ts` (`selectAll` / `selectAllIn` / `must`): `sumOrderItems`, `getOrdersSummary`, `RISK_SCAN_CAP`, `profitByOrder`, `buildCancellationIndex`, `fetchVariants`, `getSaldoPostarine`, `listXexpressInvoices`, `issueInvoice`.
+Uz to je **svaki** `const { data } = await supabase…` u `db/` sloju dobio proveru greške — v. `CLAUDE.md`, „Korak K2".
 
 ### 9. Bulk „Označi poslato" → Vercel timeout `[P]`
 `app/(app)/porudzbine/actions.ts:563-594` — po porudžbini: UPDATE + INSERT istorije + **`pushWooStatus` (spoljni HTTP, 10s timeout)**, sve sekvencijalno u `for` petlji. 50 porudžbina ume da probije limit funkcije, a nema nikakvog indikatora da app radi.
@@ -139,7 +118,6 @@ Postoji samo `app/global-error.tsx` i `app/(app)/loading.tsx`. Svaka bačena gre
   funkcije su `security invoker` pa RLS važi po konstrukciji, i nijedna ne stoji na ruti koju
   Logistika otvara, ali provera u `rls:test` čeka nalog iz reda iznad.
 
-- **Neprovereni PostgREST `error` kroz ceo `db/` sloj** `[P]` — obrazac `const { data } = await …` bez `error` je pravilo, ne izuzetak. Svaki takav upit na grešku vrati prazno, što u finansijama znači **0 RSD umesto poruke**. Ovo je koren nalaza #6 i #8.
 - **Nula automatizovanih testova + nema CI-ja** `[P]` — nema `.github/`, nema test runner-a. `rls:test` i `woo:test` su namenske provere, ne test suite. Prvi kandidati za test: snapshot cena, `order_profit` sa NULL-om, `syncOrderStock` idempotentnost, Belgrade granice meseca.
 - **35× `as unknown as`** `[P]` — nema generisanih Supabase tipova (`supabase gen types typescript`). Svaka promena šeme prolazi kroz TS neprimećeno.
 - **`stock_applied` može ostati `true` bez stvarnog skidanja** `[P]` — `lib/stock.ts:88-95` vraća prekidač nazad ako RPC padne, ali ako proces umre **između** `claimFlag` i `applyDeltas`, porudžbina je „rezervisana" a roba nije skinuta. Nema self-healing-a ni ledgera da se to primeti.
@@ -163,6 +141,9 @@ Postoji samo `app/global-error.tsx` i `app/(app)/loading.tsx`. Svaka bačena gre
 | Popis: potvrda nepromenjenog broja ne radi ništa | **Rešeno dizajnom** — uveden čekboks „Popisano" baš za potvrdu nepromenjene cifre (npr. nule). |
 | `scripts/fix-goods-total.mjs` je jednokratna skripta u repou | **Obrisana** (22.09.2026). |
 | README je zastareo | **Sređen** (22.09.2026) — uklonjen `supabase start`, dopunjene skripte i struktura. |
+| Zbir „Za ovaj filter" pokazuje 0 RSD (bivši #0) | **Popravljeno** (26.09.2026, korak K2) — `lib/supabase/paginate.ts`; dokazano skriptom `npm run provera:k2` (`docs/perf/2026-09-26-provera-k2.txt`): bez filtera 501.265 → **1.442.169 RSD**, poklapa se sa Dashboardom. |
+| Tihi PostgREST cap od 1000 redova u `db/` sloju (bivši #8) | **Popravljeno** (26.09.2026, korak K2) — svi neograničeni `select` upiti u `db/` idu kroz `selectAll`, svi `.in()` kroz parčad po `IN_CHUNK = 200`. |
+| Neprovereni PostgREST `error` kroz ceo `db/` sloj | **Popravljeno** (26.09.2026, korak K2) — nijedan `const { data } = await supabase…` bez provere nije ostao u `db/`; greška baca čitljivu poruku (`must`). |
 
 ---
 

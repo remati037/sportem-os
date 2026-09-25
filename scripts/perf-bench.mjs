@@ -52,10 +52,8 @@ const APP_STATUS = {
 }; // lib/woo.ts
 const CANCELLED_STATUS_NAMES = [APP_STATUS.cancelled, APP_STATUS.returned];
 
-const METRICS_PAGE = 1000; // db/metrics.ts PAGE
-const METRICS_IN_CHUNK = 200; // db/metrics.ts IN_CHUNK
-const SUMMARY_ITEMS_CHUNK = 500; // db/orders.ts sumOrderItems CHUNK
-const SUMMARY_SCAN_CAP = 20000; // db/orders.ts
+const PAGE_SIZE = 1000; // lib/supabase/paginate.ts PAGE_SIZE
+const IN_CHUNK = 200; // lib/supabase/paginate.ts IN_CHUNK (jedina konstanta te veličine)
 const ORDERS_PER_PAGE = 25; // db/orders.ts DEFAULT_PER_PAGE
 const TICKET_SCAN_CAP = 2000; // db/tickets.ts SCAN_CAP
 const LINKED_TICKETS_LIMIT = 20; // db/tickets.ts
@@ -127,7 +125,12 @@ function makeRecorder() {
   const queries = [];
   return {
     queries,
-    async run(label, build) {
+    /**
+     * `paged: true` = strana iz `paginated()` petlje. Tada pun blok od 1000
+     * redova NIJE nalaz (petlja nastavlja na sledeću stranu); upozorenje ostaje
+     * samo za upite koji čitaju „jednim potezom" i tiho bi bili odsečeni.
+     */
+    async run(label, build, { paged = false } = {}) {
       const t0 = performance.now();
       let res;
       try {
@@ -142,13 +145,56 @@ function makeRecorder() {
 
       const warnings = [];
       if (res?.error) warnings.push(`GREŠKA: ${res.error.message}`);
-      if (Array.isArray(data) && data.length === 1000) {
+      if (!paged && Array.isArray(data) && data.length === 1000) {
         warnings.push("TAČNO 1000 REDOVA — tihi PostgREST cap?");
       }
       queries.push({ label, ms, rows, warnings });
       return res;
     },
   };
+}
+
+/* ── Mirror lib/supabase/paginate.ts (sonda mora da radi isto što i app) ─── */
+
+/** `chunked(ids, IN_CHUNK)` iz lib/supabase/paginate.ts. */
+function chunks(ids, size = IN_CHUNK) {
+  const out = [];
+  for (let i = 0; i < ids.length; i += size) out.push(ids.slice(i, i + size));
+  return out;
+}
+
+/**
+ * `selectAll()` iz lib/supabase/paginate.ts: `.range()` petlja dok stiže pun
+ * blok. Svaka strana se meri zasebno (round-tripovi su ono što merimo).
+ */
+async function paginated(rec, label, build, { maxRows } = {}) {
+  const limit = maxRows ?? Number.POSITIVE_INFINITY;
+  const rows = [];
+  for (let offset = 0; offset < limit; offset += PAGE_SIZE) {
+    const size = Math.min(PAGE_SIZE, limit - offset);
+    const suffix = offset === 0 ? "" : ` (strana ${offset / PAGE_SIZE + 1})`;
+    const res = await rec.run(`${label}${suffix}`, () => build().range(offset, offset + size - 1), {
+      paged: true,
+    });
+    const page = res.data ?? [];
+    rows.push(...page);
+    if (page.length < size) break;
+  }
+  return rows;
+}
+
+/** `selectAllIn()`: parčad po IN_CHUNK, svako paginirano. */
+async function paginatedIn(rec, label, ids, build) {
+  const rows = [];
+  const parts = chunks(ids);
+  for (let i = 0; i < parts.length; i += 1) {
+    rows.push(
+      ...(await paginated(rec, `${label} .in(${parts[i].length}) [${i + 1}/${parts.length}]`, () =>
+        build(parts[i]),
+      )),
+    );
+  }
+  return rows;
 }
 
 /* ── Sonde: tačan niz upita po stranici ──────────────────────────────────── */
@@ -165,24 +211,16 @@ async function computePeriodMetrics(ctx, { from, to }, prefix) {
   const excluded = new Set((cancel.data ?? []).map((s) => s.id));
 
   const { gteUtc, ltUtc } = rangeToUtcPrefilter(from, to);
-  const orderRows = [];
-  for (let offset = 0; ; offset += METRICS_PAGE) {
-    const res = await rec.run(
-      `${prefix} orders u periodu (strana ${offset / METRICS_PAGE + 1})`,
-      () =>
-        c
-          .from("orders")
-          .select("id, ordered_at, status_id")
-          .not("ordered_at", "is", null)
-          .gte("ordered_at", gteUtc)
-          .lt("ordered_at", ltUtc)
-          .order("ordered_at", { ascending: true })
-          .range(offset, offset + METRICS_PAGE - 1),
-    );
-    const rows = res.data ?? [];
-    orderRows.push(...rows);
-    if (rows.length < METRICS_PAGE) break;
-  }
+  const orderRows = await paginated(rec, `${prefix} orders u periodu`, () =>
+    c
+      .from("orders")
+      .select("id, ordered_at, status_id")
+      .not("ordered_at", "is", null)
+      .gte("ordered_at", gteUtc)
+      .lt("ordered_at", ltUtc)
+      .order("ordered_at", { ascending: true })
+      .order("id", { ascending: true }),
+  );
 
   const inRange = orderRows.filter((o) => {
     const d = belgradeDate(o.ordered_at);
@@ -190,21 +228,25 @@ async function computePeriodMetrics(ctx, { from, to }, prefix) {
   });
   const realized = inRange.filter((o) => !excluded.has(o.status_id));
 
-  const ids = realized.map((o) => o.id);
-  for (let i = 0; i < ids.length; i += METRICS_IN_CHUNK) {
-    const chunk = ids.slice(i, i + METRICS_IN_CHUNK);
-    await rec.run(
-      `${prefix} order_items .in(${chunk.length} id) [${i / METRICS_IN_CHUNK + 1}]`,
-      () =>
-        c
-          .from("order_items")
-          .select("order_id, quantity, mp_at_sale, profit_at_sale")
-          .in("order_id", chunk),
-    );
-  }
+  await paginatedIn(
+    rec,
+    `${prefix} order_items`,
+    realized.map((o) => o.id),
+    (chunk) =>
+      c
+        .from("order_items")
+        .select("quantity, mp_at_sale, profit_at_sale")
+        .in("order_id", chunk)
+        .order("id", { ascending: true }),
+  );
 
-  await rec.run(`${prefix} expenses u periodu`, () =>
-    c.from("expenses").select("amount").gte("date", from).lte("date", to),
+  await paginated(rec, `${prefix} expenses u periodu`, () =>
+    c
+      .from("expenses")
+      .select("amount")
+      .gte("date", from)
+      .lte("date", to)
+      .order("id", { ascending: true }),
   );
 }
 
@@ -216,7 +258,7 @@ async function getUnpaidDeliveredXexpress(ctx, prefix) {
   );
   const id = delivered.data?.id;
   if (!id) return [];
-  const res = await rec.run(`${prefix} orders isporučeno+neuplaćeno`, () =>
+  return await paginated(rec, `${prefix} orders isporučeno+neuplaćeno`, () =>
     c
       .from("orders")
       .select("id, woo_order_id, ship_name, goods_total, shipping_charged, delivered_at")
@@ -224,19 +266,20 @@ async function getUnpaidDeliveredXexpress(ctx, prefix) {
       .eq("payment_status", "neuplaceno")
       .eq("status_id", id)
       .is("payout_id", null)
-      .order("delivered_at", { ascending: true, nullsFirst: false }),
+      .order("delivered_at", { ascending: true, nullsFirst: false })
+      .order("id", { ascending: true }),
   );
-  return res.data ?? [];
 }
 
 /** db/customer-risk.ts → buildCancellationIndex (sve otkazane/vraćene). */
 async function buildCancellationIndex(ctx, prefix) {
   const { rec, c } = ctx;
-  return rec.run(`${prefix} orders otkazane (indeks rizika)`, () =>
+  return await paginated(rec, `${prefix} orders otkazane (indeks rizika)`, () =>
     c
       .from("orders")
       .select("id, woo_order_id, ordered_at, ship_phone, customer:customers(phone, email)")
-      .not("cancelled_at", "is", null),
+      .not("cancelled_at", "is", null)
+      .order("id", { ascending: true }),
   );
 }
 
@@ -244,12 +287,13 @@ async function buildCancellationIndex(ctx, prefix) {
 async function listStaffProfiles(ctx, prefix) {
   const { rec, admin, c } = ctx;
   const client = admin ?? c;
-  return rec.run(`${prefix} profiles (service-role)`, () =>
+  return await paginated(rec, `${prefix} profiles (service-role)`, () =>
     client
       .from("profiles")
       .select("id, full_name, role")
       .in("role", ["admin", "manager"])
-      .order("full_name", { ascending: true, nullsFirst: false }),
+      .order("full_name", { ascending: true, nullsFirst: false })
+      .order("id", { ascending: true }),
   );
 }
 
@@ -264,39 +308,51 @@ async function hydrateTickets(ctx, raw, prefix) {
   const blockerIds = [...new Set(raw.map((t) => t.blocked_by_ticket_id).filter(Boolean))];
 
   await Promise.all([
-    rec.run(`${prefix} ticket_assignees`, () =>
-      c.from("ticket_assignees").select("ticket_id, user_id").in("ticket_id", ids),
+    paginatedIn(rec, `${prefix} ticket_assignees`, ids, (chunk) =>
+      c
+        .from("ticket_assignees")
+        .select("ticket_id, user_id")
+        .in("ticket_id", chunk)
+        .order("ticket_id", { ascending: true })
+        .order("user_id", { ascending: true }),
     ),
-    rec.run(`${prefix} ticket_tag_links`, () =>
+    paginatedIn(rec, `${prefix} ticket_tag_links`, ids, (chunk) =>
       c
         .from("ticket_tag_links")
         .select("ticket_id, tag:ticket_tags(id, name, color, sort_order)")
-        .in("ticket_id", ids),
+        .in("ticket_id", chunk)
+        .order("ticket_id", { ascending: true })
+        .order("tag_id", { ascending: true }),
     ),
     listStaffProfiles(ctx, prefix),
-    orderIds.length
-      ? rec.run(`${prefix} vezane porudžbine`, () =>
-          c.from("orders").select("id, woo_order_id, ship_name").in("id", orderIds),
-        )
-      : Promise.resolve(),
-    variantIds.length
-      ? rec.run(`${prefix} vezane varijante`, () =>
-          c
-            .from("product_variants")
-            .select("id, sku, variant_name, product:products(name)")
-            .in("id", variantIds),
-        )
-      : Promise.resolve(),
-    customerIds.length
-      ? rec.run(`${prefix} vezani kupci`, () =>
-          c.from("customers").select("id, name, phone").in("id", customerIds),
-        )
-      : Promise.resolve(),
-    blockerIds.length
-      ? rec.run(`${prefix} blokirajući tiketi`, () =>
-          c.from("tickets").select("id, code, title, completed_at").in("id", blockerIds),
-        )
-      : Promise.resolve(),
+    paginatedIn(rec, `${prefix} vezane porudžbine`, orderIds, (chunk) =>
+      c
+        .from("orders")
+        .select("id, woo_order_id, ship_name")
+        .in("id", chunk)
+        .order("id", { ascending: true }),
+    ),
+    paginatedIn(rec, `${prefix} vezane varijante`, variantIds, (chunk) =>
+      c
+        .from("product_variants")
+        .select("id, sku, variant_name, product:products(name)")
+        .in("id", chunk)
+        .order("id", { ascending: true }),
+    ),
+    paginatedIn(rec, `${prefix} vezani kupci`, customerIds, (chunk) =>
+      c
+        .from("customers")
+        .select("id, name, phone")
+        .in("id", chunk)
+        .order("id", { ascending: true }),
+    ),
+    paginatedIn(rec, `${prefix} blokirajući tiketi`, blockerIds, (chunk) =>
+      c
+        .from("tickets")
+        .select("id, code, title, completed_at")
+        .in("id", chunk)
+        .order("id", { ascending: true }),
+    ),
   ]);
 }
 
@@ -347,52 +403,60 @@ const PROBES = [
           ]);
         })(),
         // getLowStockVariants
-        rec.run("nisko stanje: product_variants + products", () =>
+        paginated(rec, "nisko stanje: product_variants + products", () =>
           c
             .from("product_variants")
             .select(
               "id, product_id, sku, variant_name, stock_quantity, low_stock_threshold, archived_at, products(name, archived_at)",
             )
             .is("archived_at", null)
-            .not("stock_counted_at", "is", null),
+            .not("stock_counted_at", "is", null)
+            .order("id", { ascending: true }),
         ),
         // getUncountedVariantCount
-        rec.run("fali količina: product_variants", () =>
+        paginated(rec, "fali količina: product_variants", () =>
           c
             .from("product_variants")
             .select("id, products(archived_at)")
             .is("archived_at", null)
-            .is("stock_counted_at", null),
+            .is("stock_counted_at", null)
+            .order("id", { ascending: true }),
         ),
         // getMyTicketsSummary
         (async () => {
           const [open] = await Promise.all([
-            rec.run("moji tiketi: tickets otvoreni", () =>
-              c
-                .from("tickets")
-                .select("id, due_date, column_id")
-                .is("completed_at", null)
-                .range(0, TICKET_SCAN_CAP - 1),
+            paginated(
+              rec,
+              "moji tiketi: tickets otvoreni",
+              () =>
+                c
+                  .from("tickets")
+                  .select("id, due_date, column_id")
+                  .is("completed_at", null)
+                  .order("id", { ascending: true }),
+              { maxRows: TICKET_SCAN_CAP },
             ),
-            rec.run("moji tiketi: ticket_columns", () =>
+            paginated(rec, "moji tiketi: ticket_columns", () =>
               c
                 .from("ticket_columns")
                 .select("id, name, color, sort_order, is_done, wip_limit")
                 .order("sort_order", { ascending: true })
-                .order("name", { ascending: true }),
+                .order("name", { ascending: true })
+                .order("id", { ascending: true }),
             ),
           ]);
-          if ((open.data ?? []).length > 0) {
+          if (open.length > 0) {
             // Bez sesije (service-role režim) nema „mog" korisnika — upit se ipak
             // izvrši da round-tripovi ostanu isti, ali label to kaže naglas.
             const label = ctx.userId
               ? "moji tiketi: ticket_assignees"
               : "moji tiketi: ticket_assignees (bez sesije — prazan user_id)";
-            await rec.run(label, () =>
+            await paginated(rec, label, () =>
               c
                 .from("ticket_assignees")
                 .select("ticket_id")
-                .eq("user_id", ctx.userId ?? ZERO_UUID),
+                .eq("user_id", ctx.userId ?? ZERO_UUID)
+                .order("ticket_id", { ascending: true }),
             );
           }
         })(),
@@ -416,6 +480,7 @@ const PROBES = [
               .from("orders")
               .select(ORDER_LIST_COLS, { count: "exact" })
               .order("ordered_at", { ascending: false, nullsFirst: false })
+              .order("id", { ascending: true })
               .range(0, ORDERS_PER_PAGE - 1),
           );
         })(),
@@ -426,30 +491,26 @@ const PROBES = [
             .select("id, name, sort_order, color")
             .order("sort_order", { ascending: true }),
         ),
-        // getOrdersSummary — „Za ovaj filter"
+        // getOrdersSummary — „Za ovaj filter" (paginirano + parčad po IN_CHUNK)
         (async () => {
-          const res = await rec.run(`zbir: orders scan (cap ${SUMMARY_SCAN_CAP})`, () =>
+          const scanned = await paginated(rec, "zbir: orders scan", () =>
             c
               .from("orders")
               .select("id, status_id, ship_phone, customer:customers(phone, email)")
-              .range(0, SUMMARY_SCAN_CAP - 1),
+              .order("id", { ascending: true }),
           );
           const cancel = await rec.run("zbir: order_statuses (Otkazano/Vraćeno)", () =>
             c.from("order_statuses").select("id").in("name", CANCELLED_STATUS_NAMES),
           );
           const excluded = new Set((cancel.data ?? []).map((s) => s.id));
-          const ids = (res.data ?? []).filter((r) => !excluded.has(r.status_id)).map((r) => r.id);
-          for (let i = 0; i < ids.length; i += SUMMARY_ITEMS_CHUNK) {
-            const chunk = ids.slice(i, i + SUMMARY_ITEMS_CHUNK);
-            await rec.run(
-              `zbir: order_items .in(${chunk.length} UUID) [${i / SUMMARY_ITEMS_CHUNK + 1}]`,
-              () =>
-                c
-                  .from("order_items")
-                  .select("quantity, mp_at_sale, profit_at_sale")
-                  .in("order_id", chunk),
-            );
-          }
+          const ids = scanned.filter((r) => !excluded.has(r.status_id)).map((r) => r.id);
+          await paginatedIn(rec, "zbir: order_items", ids, (chunk) =>
+            c
+              .from("order_items")
+              .select("quantity, mp_at_sale, profit_at_sale")
+              .in("order_id", chunk)
+              .order("id", { ascending: true }),
+          );
         })(),
       ]);
     },
@@ -489,24 +550,26 @@ const PROBES = [
             .select("id, name, sort_order, color")
             .order("sort_order", { ascending: true }),
         ),
-        rec.run("detalj: order_status_history", () =>
+        paginated(rec, "detalj: order_status_history", () =>
           c
             .from("order_status_history")
             .select(
               "id, note, created_at, to_status:order_statuses!to_status_id(name, color), changed_by:profiles(full_name)",
             )
             .eq("order_id", order.id)
-            .order("created_at", { ascending: true }),
+            .order("created_at", { ascending: true })
+            .order("id", { ascending: true }),
         ),
         // getActiveVariantOptions — samo Admin i samo dok porudžbina nije fakturisana
         order.invoice_id
           ? Promise.resolve()
-          : rec.run("detalj: product_variants (izbor za „Dodaj stavku“)", () =>
+          : paginated(rec, "detalj: product_variants (izbor za „Dodaj stavku“)", () =>
               c
                 .from("product_variants")
                 .select("id, sku, variant_name, mp_price, vp_price, product:products(name)")
                 .is("archived_at", null)
-                .order("sku", { ascending: true }),
+                .order("sku", { ascending: true })
+                .order("id", { ascending: true }),
             ),
         // getOrderCancellationHistory
         buildCancellationIndex(ctx, "detalj:"),
@@ -538,33 +601,36 @@ const PROBES = [
           .from("categories")
           .select("id, name, sort_order")
           .order("sort_order", { ascending: true })
-          .order("name", { ascending: true });
+          .order("name", { ascending: true })
+          .order("id", { ascending: true });
 
       await Promise.all([
         // getCatalog
         (async () => {
           const [products] = await Promise.all([
-            rec.run("katalog: products", () =>
+            paginated(rec, "katalog: products", () =>
               c
                 .from("products")
                 .select(PRODUCT_COLS)
                 .is("archived_at", null)
-                .order("name", { ascending: true }),
+                .order("name", { ascending: true })
+                .order("id", { ascending: true }),
             ),
-            rec.run("katalog: categories (iz getCatalog)", categoriesQuery),
+            paginated(rec, "katalog: categories (iz getCatalog)", categoriesQuery),
           ]);
-          const ids = (products.data ?? []).map((p) => p.id);
+          const ids = products.map((p) => p.id);
           if (ids.length === 0) return;
-          await rec.run(`katalog: product_variants .in(${ids.length} id) — ceo inventar`, () =>
+          await paginatedIn(rec, "katalog: product_variants", ids, (chunk) =>
             c
               .from("product_variants")
               .select(VARIANT_STAFF_COLS)
-              .in("product_id", ids)
-              .order("sku", { ascending: true }),
+              .in("product_id", chunk)
+              .order("sku", { ascending: true })
+              .order("id", { ascending: true }),
           );
         })(),
         // getCategories (drugi put — strana ga zove zasebno)
-        rec.run("katalog: categories (iz strane)", categoriesQuery),
+        paginated(rec, "katalog: categories (iz strane)", categoriesQuery),
       ]);
     },
   },
@@ -579,19 +645,23 @@ const PROBES = [
       await Promise.all([
         // listPayouts
         (async () => {
-          const res = await rec.run("uplate: payouts + vezane porudžbine", () =>
+          const rows = await paginated(rec, "uplate: payouts + vezane porudžbine", () =>
             c
               .from("payouts")
               .select(
                 "id, amount, payout_date, delivery_date, notes, invoice_id, orders(id, goods_total, shipping_charged)",
               )
               .order("payout_date", { ascending: false })
-              .order("created_at", { ascending: false }),
+              .order("created_at", { ascending: false })
+              .order("id", { ascending: true }),
           );
-          const orderIds = (res.data ?? []).flatMap((p) => (p.orders ?? []).map((o) => o.id));
-          if (orderIds.length === 0) return;
-          await rec.run(`uplate: order_profit .in(${orderIds.length} UUID)`, () =>
-            c.from("order_profit").select("order_id, profit").in("order_id", orderIds),
+          const orderIds = rows.flatMap((p) => (p.orders ?? []).map((o) => o.id));
+          await paginatedIn(rec, "uplate: order_profit", orderIds, (chunk) =>
+            c
+              .from("order_profit")
+              .select("order_id, profit")
+              .in("order_id", chunk)
+              .order("order_id", { ascending: true }),
           );
         })(),
         // getUnpaidDeliveredXexpress (samo Admin)
@@ -610,44 +680,48 @@ const PROBES = [
       await Promise.all([
         // getSaldoPostarine
         (async () => {
-          await rec.run("saldo: orders sa unetom poštarinom", () =>
+          await paginated(rec, "saldo: orders sa unetom poštarinom", () =>
             c
               .from("orders")
               .select("shipping_charged, shipping_actual")
               .not("shipping_charged", "is", null)
               .not("shipping_actual", "is", null)
-              .not("xexpress_invoice_id", "is", null),
+              .not("xexpress_invoice_id", "is", null)
+              .order("id", { ascending: true }),
           );
-          await rec.run("saldo: postage_settlements (zbir)", () =>
-            c.from("postage_settlements").select("amount"),
+          await paginated(rec, "saldo: postage_settlements (zbir)", () =>
+            c.from("postage_settlements").select("amount").order("id", { ascending: true }),
           );
         })(),
         // listPostageSettlements
-        rec.run("poravnanja: postage_settlements", () =>
+        paginated(rec, "poravnanja: postage_settlements", () =>
           c
             .from("postage_settlements")
             .select("id, amount, settled_at, balance_before, notes")
             .order("settled_at", { ascending: false })
-            .order("created_at", { ascending: false }),
+            .order("created_at", { ascending: false })
+            .order("id", { ascending: true }),
         ),
         // listXexpressInvoices
         (async () => {
-          const res = await rec.run("xexpress: fakture", () =>
+          const list = await paginated(rec, "xexpress: fakture", () =>
             c
               .from("xexpress_invoices")
               .select("id, invoice_number, invoice_date, period_from, period_to, vat_rate")
               .order("invoice_date", { ascending: false })
-              .order("created_at", { ascending: false }),
+              .order("created_at", { ascending: false })
+              .order("id", { ascending: true }),
           );
-          const ids = (res.data ?? []).map((i) => i.id);
-          if (ids.length === 0) return;
-          await rec.run(
-            `xexpress: orders .in(${ids.length} faktura) — P&L (PDV ${PDV_RATE}%)`,
-            () =>
+          await paginatedIn(
+            rec,
+            `xexpress: orders — P&L (PDV ${PDV_RATE}%)`,
+            list.map((i) => i.id),
+            (chunk) =>
               c
                 .from("orders")
                 .select("xexpress_invoice_id, shipping_charged, shipping_actual")
-                .in("xexpress_invoice_id", ids),
+                .in("xexpress_invoice_id", chunk)
+                .order("id", { ascending: true }),
           );
         })(),
       ]);
@@ -664,36 +738,42 @@ const PROBES = [
       await Promise.all([
         // listTickets (bez filtera)
         (async () => {
-          await rec.run("board: ticket_columns", () =>
+          await paginated(rec, "board: ticket_columns", () =>
             c
               .from("ticket_columns")
               .select("id, name, color, sort_order, is_done, wip_limit")
               .order("sort_order", { ascending: true })
-              .order("name", { ascending: true }),
+              .order("name", { ascending: true })
+              .order("id", { ascending: true }),
           );
-          const res = await rec.run("board: tickets", () =>
-            c
-              .from("tickets")
-              .select(TICKET_COLS)
-              .order("position", { ascending: true })
-              .order("code", { ascending: true })
-              .range(0, TICKET_SCAN_CAP - 1),
+          const raw = await paginated(
+            rec,
+            "board: tickets",
+            () =>
+              c
+                .from("tickets")
+                .select(TICKET_COLS)
+                .order("position", { ascending: true })
+                .order("code", { ascending: true }),
+            { maxRows: TICKET_SCAN_CAP },
           );
-          await hydrateTickets(ctx, res.data ?? [], "board:");
+          await hydrateTickets(ctx, raw, "board:");
         })(),
-        rec.run("board: ticket_priorities", () =>
+        paginated(rec, "board: ticket_priorities", () =>
           c
             .from("ticket_priorities")
             .select("id, name, color, level, is_default, sort_order")
             .order("sort_order", { ascending: true })
-            .order("level", { ascending: true }),
+            .order("level", { ascending: true })
+            .order("id", { ascending: true }),
         ),
-        rec.run("board: ticket_tags", () =>
+        paginated(rec, "board: ticket_tags", () =>
           c
             .from("ticket_tags")
             .select("id, name, color, sort_order, archived_at")
             .order("sort_order", { ascending: true })
             .order("name", { ascending: true })
+            .order("id", { ascending: true })
             .is("archived_at", null),
         ),
         listStaffProfiles(ctx, "board:"),

@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
+import { chunked, must, mustRows, selectAll } from "@/lib/supabase/paginate";
 import { APP_STATUS } from "@/lib/woo";
 import { computePeriodMetrics } from "@/db/metrics";
 
@@ -13,12 +14,12 @@ import { computePeriodMetrics } from "@/db/metrics";
 /** id statusa „Isporučeno" (lookup po imenu — seed UUID se ne hardkoduje). */
 async function deliveredStatusId(): Promise<string | null> {
   const supabase = await createClient();
-  const { data } = await supabase
+  const res = await supabase
     .from("order_statuses")
     .select("id")
     .eq("name", APP_STATUS.delivered)
     .maybeSingle();
-  return data?.id ?? null;
+  return must<{ id: string } | null>(res, "status Isporučeno")?.id ?? null;
 }
 
 /* ── Uplate (payouts) — 1.6a ─────────────────────────────────────────────── */
@@ -57,25 +58,26 @@ export async function getUnpaidDeliveredXexpress(): Promise<PayoutCandidate[]> {
   const delivered = await deliveredStatusId();
   if (!delivered) return [];
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("orders")
-    .select("id, woo_order_id, ship_name, goods_total, shipping_charged, delivered_at")
-    .eq("delivery_method", "xexpress")
-    .eq("payment_status", "neuplaceno")
-    .eq("status_id", delivered)
-    .is("payout_id", null)
-    .order("delivered_at", { ascending: true, nullsFirst: false });
+  const rows = await selectAll<{
+    id: string;
+    woo_order_id: number | null;
+    ship_name: string | null;
+    goods_total: number | null;
+    shipping_charged: number | null;
+    delivered_at: string | null;
+  }>("kandidati za uplatu", () =>
+    supabase
+      .from("orders")
+      .select("id, woo_order_id, ship_name, goods_total, shipping_charged, delivered_at")
+      .eq("delivery_method", "xexpress")
+      .eq("payment_status", "neuplaceno")
+      .eq("status_id", delivered)
+      .is("payout_id", null)
+      .order("delivered_at", { ascending: true, nullsFirst: false })
+      .order("id", { ascending: true }),
+  );
 
-  return (
-    (data as unknown as {
-      id: string;
-      woo_order_id: number | null;
-      ship_name: string | null;
-      goods_total: number | null;
-      shipping_charged: number | null;
-      delivered_at: string | null;
-    }[]) ?? []
-  ).map(({ goods_total, shipping_charged, ...o }) => ({
+  return rows.map(({ goods_total, shipping_charged, ...o }) => ({
     ...o,
     otkup: otkupOf(goods_total, shipping_charged),
   }));
@@ -96,18 +98,20 @@ export type PayoutRow = {
 /** Lista uplata (sa brojem vezanih porudžbina, Σ otkupnine i Σ zarade). */
 export async function listPayouts(): Promise<PayoutRow[]> {
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("payouts")
-    .select(
-      "id, amount, payout_date, delivery_date, notes, invoice_id, orders(id, goods_total, shipping_charged)",
-    )
-    .order("payout_date", { ascending: false })
-    .order("created_at", { ascending: false });
-
-  const rows =
-    (data as unknown as (Omit<PayoutRow, "linkedCount" | "linkedOtkup" | "profit"> & {
+  const rows = await selectAll<
+    Omit<PayoutRow, "linkedCount" | "linkedOtkup" | "profit"> & {
       orders: { id: string; goods_total: number | null; shipping_charged: number | null }[];
-    })[]) ?? [];
+    }
+  >("lista uplata", () =>
+    supabase
+      .from("payouts")
+      .select(
+        "id, amount, payout_date, delivery_date, notes, invoice_id, orders(id, goods_total, shipping_charged)",
+      )
+      .order("payout_date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true }),
+  );
 
   // Zarada iz order_profit view-a (zamrznuti profit_at_sale) — jedan upit za sve.
   const profitMap = await profitByOrder(rows.flatMap((p) => p.orders.map((o) => o.id)));
@@ -131,7 +135,7 @@ export type PayoutDetail = {
 /** Detalj uplate: vezane porudžbine + Σ otkupnina + razlika prema unetom iznosu. */
 export async function getPayoutDetail(id: string): Promise<PayoutDetail | null> {
   const supabase = await createClient();
-  const { data } = await supabase
+  const res = await supabase
     .from("payouts")
     .select(
       `id, amount, payout_date, delivery_date, notes, invoice_id,
@@ -139,6 +143,7 @@ export async function getPayoutDetail(id: string): Promise<PayoutDetail | null> 
     )
     .eq("id", id)
     .maybeSingle();
+  const data = must(res, "detalj uplate");
   if (!data) return null;
 
   const row = data as unknown as Omit<PayoutRow, "linkedCount" | "linkedOtkup"> & {
@@ -207,22 +212,22 @@ export type PayoutSpisak = {
  */
 export async function getPayoutSpisak(payoutId: string): Promise<PayoutSpisak> {
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("orders")
-    .select(
-      "id, woo_order_id, ship_name, shipping_charged, order_items(sku, product_name, quantity, mp_at_sale, vp_at_sale)",
-    )
-    .eq("payout_id", payoutId)
-    .order("woo_order_id", { ascending: true, nullsFirst: false });
-
-  const rows =
-    (data as unknown as {
-      id: string;
-      woo_order_id: number | null;
-      ship_name: string | null;
-      shipping_charged: number | null;
-      order_items: (SpisakArticleRow & { mp_at_sale: number; vp_at_sale: number | null })[];
-    }[]) ?? [];
+  const rows = await selectAll<{
+    id: string;
+    woo_order_id: number | null;
+    ship_name: string | null;
+    shipping_charged: number | null;
+    order_items: (SpisakArticleRow & { mp_at_sale: number; vp_at_sale: number | null })[];
+  }>("spisak uplate", () =>
+    supabase
+      .from("orders")
+      .select(
+        "id, woo_order_id, ship_name, shipping_charged, order_items(sku, product_name, quantity, mp_at_sale, vp_at_sale)",
+      )
+      .eq("payout_id", payoutId)
+      .order("woo_order_id", { ascending: true, nullsFirst: false })
+      .order("id", { ascending: true }),
+  );
 
   const byOrder: SpisakOrderRow[] = rows.map((o) => ({
     woo_order_id: o.woo_order_id,
@@ -273,12 +278,19 @@ async function profitByOrder(orderIds: string[]): Promise<Map<string, number>> {
   const map = new Map<string, number>();
   if (orderIds.length === 0) return map;
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("order_profit")
-    .select("order_id, profit")
-    .in("order_id", orderIds);
-  for (const r of (data as { order_id: string; profit: number | null }[]) ?? []) {
-    map.set(r.order_id, r.profit ?? 0);
+  // Parčad po IN_CHUNK + paginacija: dugačak `.in()` URL obori zahtev, a tihi
+  // cap od 1000 redova bi zaradu uplate umanjio bez ijedne poruke.
+  for (const chunk of chunked(orderIds)) {
+    const rows = await selectAll<{ order_id: string; profit: number | null }>(
+      "zarada po porudžbini (order_profit)",
+      () =>
+        supabase
+          .from("order_profit")
+          .select("order_id, profit")
+          .in("order_id", chunk)
+          .order("order_id", { ascending: true }),
+    );
+    for (const r of rows) map.set(r.order_id, r.profit ?? 0);
   }
   return map;
 }
@@ -300,19 +312,19 @@ export type InvoiceCandidates = { payouts: PayoutInvoiceCandidate[]; total: numb
 /** Nefakturisane uplate (payout.invoice_id null) sa Σ zarade i otkupnine. */
 export async function getInvoiceablePayouts(): Promise<PayoutInvoiceCandidate[]> {
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("payouts")
-    .select("id, payout_date, orders(id, goods_total, shipping_charged)")
-    .is("invoice_id", null)
-    .order("payout_date", { ascending: false })
-    .order("created_at", { ascending: false });
-
-  const rows =
-    (data as unknown as {
-      id: string;
-      payout_date: string;
-      orders: { id: string; goods_total: number | null; shipping_charged: number | null }[];
-    }[]) ?? [];
+  const rows = await selectAll<{
+    id: string;
+    payout_date: string;
+    orders: { id: string; goods_total: number | null; shipping_charged: number | null }[];
+  }>("nefakturisane uplate", () =>
+    supabase
+      .from("payouts")
+      .select("id, payout_date, orders(id, goods_total, shipping_charged)")
+      .is("invoice_id", null)
+      .order("payout_date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true }),
+  );
 
   const profitMap = await profitByOrder(rows.flatMap((p) => p.orders.map((o) => o.id)));
 
@@ -349,16 +361,19 @@ export type BlockedOrder = {
  */
 export async function getBlockedNeedsVpOrders(): Promise<BlockedOrder[]> {
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("orders")
-    .select("id, woo_order_id, ship_name, delivered_at, payouts!inner(invoice_id)")
-    .eq("needs_vp", true)
-    .is("payouts.invoice_id", null)
-    .order("delivered_at", { ascending: true, nullsFirst: false });
+  const rows = await selectAll<BlockedOrder & { payouts: { invoice_id: string | null } }>(
+    "porudžbine bez VP u nefakturisanoj uplati",
+    () =>
+      supabase
+        .from("orders")
+        .select("id, woo_order_id, ship_name, delivered_at, payouts!inner(invoice_id)")
+        .eq("needs_vp", true)
+        .is("payouts.invoice_id", null)
+        .order("delivered_at", { ascending: true, nullsFirst: false })
+        .order("id", { ascending: true }),
+  );
 
-  return (
-    (data as unknown as (BlockedOrder & { payouts: { invoice_id: string | null } })[]) ?? []
-  ).map((o) => ({
+  return rows.map((o) => ({
     id: o.id,
     woo_order_id: o.woo_order_id,
     ship_name: o.ship_name,
@@ -386,18 +401,19 @@ export type InvoiceRow = {
 /** Lista izdatih faktura (sa brojem vezanih porudžbina). */
 export async function listInvoices(): Promise<InvoiceRow[]> {
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("invoices")
-    .select(
-      "id, invoice_number, period_from, period_to, total_amount, status, created_at, orders(count)",
-    )
-    .order("created_at", { ascending: false });
+  const rows = await selectAll<Omit<InvoiceRow, "orderCount"> & { orders: { count: number }[] }>(
+    "lista faktura",
+    () =>
+      supabase
+        .from("invoices")
+        .select(
+          "id, invoice_number, period_from, period_to, total_amount, status, created_at, orders(count)",
+        )
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true }),
+  );
 
-  return (
-    (data as unknown as (Omit<InvoiceRow, "orderCount"> & {
-      orders: { count: number }[];
-    })[]) ?? []
-  ).map(({ orders, ...inv }) => ({
+  return rows.map(({ orders, ...inv }) => ({
     ...inv,
     orderCount: orders[0]?.count ?? 0,
   }));
@@ -421,7 +437,7 @@ export type InvoiceDetail = {
 /** Detalj fakture: vezane porudžbine + zarada po porudžbini + živi zbir. */
 export async function getInvoiceDetail(id: string): Promise<InvoiceDetail | null> {
   const supabase = await createClient();
-  const { data } = await supabase
+  const res = await supabase
     .from("invoices")
     .select(
       `id, invoice_number, period_from, period_to, total_amount, status, created_at,
@@ -429,6 +445,7 @@ export async function getInvoiceDetail(id: string): Promise<InvoiceDetail | null
     )
     .eq("id", id)
     .maybeSingle();
+  const data = must(res, "detalj fakture");
   if (!data) return null;
 
   const row = data as unknown as Omit<InvoiceRow, "orderCount"> & {
@@ -440,9 +457,7 @@ export async function getInvoiceDetail(id: string): Promise<InvoiceDetail | null
     }[];
   };
 
-  const sorted = [...row.orders].sort(
-    (a, b) => (a.woo_order_id ?? 0) - (b.woo_order_id ?? 0),
-  );
+  const sorted = [...row.orders].sort((a, b) => (a.woo_order_id ?? 0) - (b.woo_order_id ?? 0));
   const profits = await profitByOrder(sorted.map((o) => o.id));
   const orders: InvoiceDetailOrder[] = sorted.map((o) => ({
     ...o,
@@ -485,23 +500,27 @@ export type PostageBalance = {
 export async function getSaldoPostarine(): Promise<PostageBalance> {
   const supabase = await createClient();
 
-  const { data: shipRows } = await supabase
-    .from("orders")
-    .select("shipping_charged, shipping_actual")
-    .not("shipping_charged", "is", null)
-    .not("shipping_actual", "is", null)
-    .not("xexpress_invoice_id", "is", null);
-  const gross = (
-    (shipRows as { shipping_charged: number; shipping_actual: number }[]) ?? []
-  ).reduce((sum, o) => sum + (o.shipping_charged - withPdv(o.shipping_actual)), 0);
-
-  const { data: settleRows } = await supabase
-    .from("postage_settlements")
-    .select("amount");
-  const settled = ((settleRows as { amount: number }[]) ?? []).reduce(
-    (sum, r) => sum + r.amount,
+  const shipRows = await selectAll<{ shipping_charged: number; shipping_actual: number }>(
+    "saldo poštarine: orders",
+    () =>
+      supabase
+        .from("orders")
+        .select("shipping_charged, shipping_actual")
+        .not("shipping_charged", "is", null)
+        .not("shipping_actual", "is", null)
+        .not("xexpress_invoice_id", "is", null)
+        .order("id", { ascending: true }),
+  );
+  const gross = shipRows.reduce(
+    (sum, o) => sum + (o.shipping_charged - withPdv(o.shipping_actual)),
     0,
   );
+
+  const settleRows = await selectAll<{ amount: number }>(
+    "saldo poštarine: postage_settlements",
+    () => supabase.from("postage_settlements").select("amount").order("id", { ascending: true }),
+  );
+  const settled = settleRows.reduce((sum, r) => sum + r.amount, 0);
 
   return { gross, settled, balance: gross - settled };
 }
@@ -517,12 +536,14 @@ export type PostageSettlementRow = {
 /** Istorija poravnanja poštarine (append-only ledger), najnovije prvo. */
 export async function listPostageSettlements(): Promise<PostageSettlementRow[]> {
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("postage_settlements")
-    .select("id, amount, settled_at, balance_before, notes")
-    .order("settled_at", { ascending: false })
-    .order("created_at", { ascending: false });
-  return (data as PostageSettlementRow[]) ?? [];
+  return await selectAll<PostageSettlementRow>("istorija poravnanja poštarine", () =>
+    supabase
+      .from("postage_settlements")
+      .select("id, amount, settled_at, balance_before, notes")
+      .order("settled_at", { ascending: false })
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true }),
+  );
 }
 
 /* ── XExpress fakture poštarine ──────────────────────────────────────────── */
@@ -572,7 +593,7 @@ export type XexpressCandidate = {
  */
 async function xexpressHistoryBoundary(): Promise<string | null> {
   const supabase = await createClient();
-  const { data } = await supabase
+  const res = await supabase
     .from("orders")
     .select("ordered_at")
     .not("xexpress_invoice_id", "is", null)
@@ -580,7 +601,9 @@ async function xexpressHistoryBoundary(): Promise<string | null> {
     .order("ordered_at", { ascending: true })
     .limit(1)
     .maybeSingle();
-  return (data as { ordered_at: string | null } | null)?.ordered_at ?? null;
+  return (
+    must<{ ordered_at: string | null } | null>(res, "granica XExpress istorije")?.ordered_at ?? null
+  );
 }
 
 /**
@@ -590,11 +613,11 @@ async function xexpressHistoryBoundary(): Promise<string | null> {
  */
 async function eligibleXexpressStatusIds(): Promise<string[]> {
   const supabase = await createClient();
-  const { data } = await supabase
+  const res = await supabase
     .from("order_statuses")
     .select("id")
     .in("name", [APP_STATUS.delivered, APP_STATUS.returned]);
-  return ((data as { id: string }[]) ?? []).map((r) => r.id);
+  return mustRows<{ id: string }>(res, "statusi Isporučeno/Vraćeno").map((r) => r.id);
 }
 
 /**
@@ -615,8 +638,8 @@ export async function getEligibleXexpressOrders(): Promise<XexpressCandidate[]> 
     .in("status_id", statusIds)
     .is("xexpress_invoice_id", null);
   if (boundary) query = query.gte("ordered_at", boundary);
-  const { data } = await query.order("ordered_at", { ascending: false });
-  return (data as XexpressCandidate[]) ?? [];
+  const ordered = query.order("ordered_at", { ascending: false }).order("id", { ascending: true });
+  return await selectAll<XexpressCandidate>("kandidati za XExpress fakturu", () => ordered);
 }
 
 export type XexpressInvoiceRow = XexpressPnl & {
@@ -631,34 +654,40 @@ export type XexpressInvoiceRow = XexpressPnl & {
 /** Sve XExpress fakture + agregati (P&L po fakturi), najnovije prvo. */
 export async function listXexpressInvoices(): Promise<XexpressInvoiceRow[]> {
   const supabase = await createClient();
-  const { data: invoices } = await supabase
-    .from("xexpress_invoices")
-    .select("id, invoice_number, invoice_date, period_from, period_to, vat_rate")
-    .order("invoice_date", { ascending: false })
-    .order("created_at", { ascending: false });
-  const list =
-    (invoices as {
-      id: string;
-      invoice_number: string | null;
-      invoice_date: string;
-      period_from: string | null;
-      period_to: string | null;
-      vat_rate: number;
-    }[]) ?? [];
+  const list = await selectAll<{
+    id: string;
+    invoice_number: string | null;
+    invoice_date: string;
+    period_from: string | null;
+    period_to: string | null;
+    vat_rate: number;
+  }>("lista XExpress faktura", () =>
+    supabase
+      .from("xexpress_invoices")
+      .select("id, invoice_number, invoice_date, period_from, period_to, vat_rate")
+      .order("invoice_date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true }),
+  );
   if (list.length === 0) return [];
 
-  const { data: orderRows } = await supabase
-    .from("orders")
-    .select("xexpress_invoice_id, shipping_charged, shipping_actual")
-    .in(
-      "xexpress_invoice_id",
-      list.map((i) => i.id),
-    );
+  // Parčad po IN_CHUNK + paginacija — inače P&L po fakturi vidi samo deo redova.
   const byInvoice = new Map<string, ShipRow[]>();
-  for (const r of (orderRows as (ShipRow & { xexpress_invoice_id: string })[]) ?? []) {
-    const arr = byInvoice.get(r.xexpress_invoice_id) ?? [];
-    arr.push(r);
-    byInvoice.set(r.xexpress_invoice_id, arr);
+  for (const chunk of chunked(list.map((i) => i.id))) {
+    const orderRows = await selectAll<ShipRow & { xexpress_invoice_id: string }>(
+      "XExpress fakture: orders",
+      () =>
+        supabase
+          .from("orders")
+          .select("xexpress_invoice_id, shipping_charged, shipping_actual")
+          .in("xexpress_invoice_id", chunk)
+          .order("id", { ascending: true }),
+    );
+    for (const r of orderRows) {
+      const arr = byInvoice.get(r.xexpress_invoice_id) ?? [];
+      arr.push(r);
+      byInvoice.set(r.xexpress_invoice_id, arr);
+    }
   }
 
   return list.map((inv) => {
@@ -702,32 +731,32 @@ export type XexpressInvoiceDetail = XexpressPnl & {
 };
 
 /** Detalj XExpress fakture: header, vezane porudžbine sa P&L, + kandidati za edit. */
-export async function getXexpressInvoiceDetail(
-  id: string,
-): Promise<XexpressInvoiceDetail | null> {
+export async function getXexpressInvoiceDetail(id: string): Promise<XexpressInvoiceDetail | null> {
   const supabase = await createClient();
-  const { data: inv } = await supabase
+  const invRes = await supabase
     .from("xexpress_invoices")
     .select("id, invoice_number, invoice_date, period_from, period_to, vat_rate, notes")
     .eq("id", id)
     .maybeSingle();
+  const inv = must(invRes, "detalj XExpress fakture");
   if (!inv) return null;
   const invoice = inv as XexpressInvoiceDetail["invoice"];
 
-  const { data: orderRows } = await supabase
-    .from("orders")
-    .select("id, woo_order_id, ordered_at, ship_name, shipping_charged, shipping_actual")
-    .eq("xexpress_invoice_id", id)
-    .order("ordered_at", { ascending: true });
-  const rows =
-    (orderRows as {
-      id: string;
-      woo_order_id: number | null;
-      ordered_at: string | null;
-      ship_name: string | null;
-      shipping_charged: number | null;
-      shipping_actual: number | null;
-    }[]) ?? [];
+  const rows = await selectAll<{
+    id: string;
+    woo_order_id: number | null;
+    ordered_at: string | null;
+    ship_name: string | null;
+    shipping_charged: number | null;
+    shipping_actual: number | null;
+  }>("XExpress faktura: vezane porudžbine", () =>
+    supabase
+      .from("orders")
+      .select("id, woo_order_id, ordered_at, ship_name, shipping_charged, shipping_actual")
+      .eq("xexpress_invoice_id", id)
+      .order("ordered_at", { ascending: true })
+      .order("id", { ascending: true }),
+  );
 
   const orders: XexpressOrderLine[] = rows.map((r) => {
     const base = r.shipping_actual ?? 0;

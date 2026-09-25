@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
+import { chunked, mustRows, selectAll } from "@/lib/supabase/paginate";
 import { belgradeDate } from "@/lib/date-belgrade";
 import { rangeToUtcPrefilter } from "@/lib/period";
 import { CANCELLED_STATUS_NAMES } from "@/lib/woo";
@@ -22,10 +23,11 @@ export type PeriodMetrics = {
   marza: number; // Σprofit / Σ(mp_at_sale×kol), 0..1 (0 kad nema prihoda)
 };
 
-/** Veličina strane pri paginaciji Supabase upita (default cap je 1000). */
-const PAGE = 1000;
-/** Bezbedna veličina parčeta za `.in(order_id, …)` (kratak URL). */
-const IN_CHUNK = 200;
+/*
+ * Paginacija i parčad `.in(...)` idu kroz `lib/supabase/paginate` (Korak K2) —
+ * `PAGE_SIZE` i `IN_CHUNK` postoje na JEDNOM mestu u projektu i ne prepisuju se
+ * lokalno.
+ */
 
 export async function computePeriodMetrics({
   from,
@@ -37,30 +39,29 @@ export async function computePeriodMetrics({
   const supabase = await createClient();
 
   // Isključeni statusi (Otkazano/Vraćeno) — po imenu (za zaradu/maržu, NE za broj).
-  const { data: cancelStatuses } = await supabase
+  const cancelStatuses = await supabase
     .from("order_statuses")
     .select("id")
     .in("name", CANCELLED_STATUS_NAMES);
-  const excludedIds = new Set(((cancelStatuses as { id: string }[]) ?? []).map((s) => s.id));
+  const excludedIds = new Set(
+    mustRows<{ id: string }>(cancelStatuses, "metrike: statusi Otkazano/Vraćeno").map((s) => s.id),
+  );
 
   const { gteUtc, ltUtc } = rangeToUtcPrefilter(from, to);
 
   // Sve porudžbine u opsegu (paginirano — inače cap na 1000 tiho podbaci na širokom periodu).
-  const orderRows: { id: string; ordered_at: string; status_id: string }[] = [];
-  for (let offset = 0; ; offset += PAGE) {
-    const { data, error } = await supabase
-      .from("orders")
-      .select("id, ordered_at, status_id")
-      .not("ordered_at", "is", null)
-      .gte("ordered_at", gteUtc)
-      .lt("ordered_at", ltUtc)
-      .order("ordered_at", { ascending: true })
-      .range(offset, offset + PAGE - 1);
-    if (error) throw new Error(`computePeriodMetrics orders: ${error.message}`);
-    const rows = (data as { id: string; ordered_at: string; status_id: string }[]) ?? [];
-    orderRows.push(...rows);
-    if (rows.length < PAGE) break;
-  }
+  const orderRows = await selectAll<{ id: string; ordered_at: string; status_id: string }>(
+    "metrike: orders",
+    () =>
+      supabase
+        .from("orders")
+        .select("id, ordered_at, status_id")
+        .not("ordered_at", "is", null)
+        .gte("ordered_at", gteUtc)
+        .lt("ordered_at", ltUtc)
+        .order("ordered_at", { ascending: true })
+        .order("id", { ascending: true }),
+  );
 
   // Tačno suženje po Belgrade kalendarskom danu (pred-filter je širok).
   const inRange = orderRows.filter((o) => {
@@ -76,32 +77,35 @@ export async function computePeriodMetrics({
   let revenue = 0;
   if (realized.length > 0) {
     const ids = realized.map((o) => o.id);
-    // Batchuj `.in(order_id, …)` — 1000+ UUID-jeva u jednom URL-u tiho padne.
-    for (let i = 0; i < ids.length; i += IN_CHUNK) {
-      const chunk = ids.slice(i, i + IN_CHUNK);
-      const { data: items, error } = await supabase
-        .from("order_items")
-        .select("order_id, quantity, mp_at_sale, profit_at_sale")
-        .in("order_id", chunk);
-      if (error) throw new Error(`computePeriodMetrics order_items: ${error.message}`);
-      for (const it of (items as {
-        order_id: string;
+    // Parčad `.in(order_id, …)` po IN_CHUNK — 1000+ UUID-jeva u jednom URL-u padne.
+    for (const chunk of chunked(ids)) {
+      const items = await selectAll<{
         quantity: number;
         mp_at_sale: number;
         profit_at_sale: number | null;
-      }[]) ?? []) {
+      }>("metrike: order_items", () =>
+        supabase
+          .from("order_items")
+          .select("quantity, mp_at_sale, profit_at_sale")
+          .in("order_id", chunk)
+          .order("id", { ascending: true }),
+      );
+      for (const it of items) {
         zarada += it.profit_at_sale ?? 0;
         revenue += it.mp_at_sale * it.quantity;
       }
     }
   }
 
-  const { data: expRows } = await supabase
-    .from("expenses")
-    .select("amount")
-    .gte("date", from)
-    .lte("date", to);
-  const troskovi = ((expRows as { amount: number }[]) ?? []).reduce((s, e) => s + e.amount, 0);
+  const expRows = await selectAll<{ amount: number }>("metrike: expenses", () =>
+    supabase
+      .from("expenses")
+      .select("amount")
+      .gte("date", from)
+      .lte("date", to)
+      .order("id", { ascending: true }),
+  );
+  const troskovi = expRows.reduce((s, e) => s + e.amount, 0);
 
   return {
     zarada,

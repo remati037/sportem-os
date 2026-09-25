@@ -1,0 +1,79 @@
+
+> sportem-app@0.1.0 provera:k2
+> node --env-file-if-exists=.env.local --env-file-if-exists=.env.test.local scripts/provera-k2.mjs
+
+.env.test.local not found. Continuing without it.
+========================================================================================
+PROVERA K2 — „Za ovaj filter“ iznad liste porudžbina: staro vs novo
+========================================================================================
+  režim: service-role (RLS zaobiđen)
+  danas (Belgrade): 2026-09-26
+  STARO = kod pre K2 (range 0..19999 + .in po 500, greška progutana)
+  NOVO  = lib/supabase/paginate.ts (paginacija po 1000 + .in po 200, greška baca)
+  Poslovna pravila su ISTA u obe kolone (isti filter, isti statusi po imenu,
+  iste zamrznute cifre iz order_items).
+
+Tekući mesec (2026-09)
+────────────────────────────────────────────────────────────────────────────────────────
+  cifra                        STARO (danas)     NOVO (posle K2)             razlika
+  Zarada                         268.756 RSD         268.756 RSD                   —
+  Promet                       1.008.276 RSD       1.008.276 RSD                   —
+  Broj porudžbina                        150                 150                   —
+  Marža                               26,7 %              26,7 %                   —
+  kontrola: Dashboard            268.756 RSD        poklapa se ✓                   —
+
+Prošli mesec (2026-08)
+────────────────────────────────────────────────────────────────────────────────────────
+  cifra                        STARO (danas)     NOVO (posle K2)             razlika
+  Zarada                         144.510 RSD         144.510 RSD                   —
+  Promet                         548.270 RSD         548.270 RSD                   —
+  Broj porudžbina                        104                 104                   —
+  Marža                               26,4 %              26,4 %                   —
+  kontrola: Dashboard            144.510 RSD        poklapa se ✓                   —
+
+Tekuća godina (2026)
+────────────────────────────────────────────────────────────────────────────────────────
+  cifra                        STARO (danas)     NOVO (posle K2)             razlika
+  Zarada                         501.265 RSD       1.442.169 RSD            +940.904
+  Promet                       1.854.852 RSD       5.629.536 RSD          +3.774.684
+  Broj porudžbina                        878               1.184                +306
+  Marža                               27,0 %              25,6 %                  −0
+  kontrola: Dashboard          1.442.169 RSD        poklapa se ✓                   —
+  ⚠ STARO → orders scan: TAČNO 1000 redova — tihi cap
+  ⚠ STARO → order_items .in(500): GREŠKA (progutana) — TypeError: fetch failed
+
+2026 cela
+────────────────────────────────────────────────────────────────────────────────────────
+  cifra                        STARO (danas)     NOVO (posle K2)             razlika
+  Zarada                         501.265 RSD       1.442.169 RSD            +940.904
+  Promet                       1.854.852 RSD       5.629.536 RSD          +3.774.684
+  Broj porudžbina                        878               1.184                +306
+  Marža                               27,0 %              25,6 %                  −0
+  kontrola: Dashboard          1.442.169 RSD        poklapa se ✓                   —
+  ⚠ STARO → orders scan: TAČNO 1000 redova — tihi cap
+  ⚠ STARO → order_items .in(500): GREŠKA (progutana) — TypeError: fetch failed
+
+Sve (bez filtera)
+────────────────────────────────────────────────────────────────────────────────────────
+  cifra                        STARO (danas)     NOVO (posle K2)             razlika
+  Zarada                         501.265 RSD       1.442.169 RSD            +940.904
+  Promet                       1.854.852 RSD       5.629.536 RSD          +3.774.684
+  Broj porudžbina                        878               1.184                +306
+  Marža                               27,0 %              25,6 %                  −0
+  ⚠ STARO → orders scan: TAČNO 1000 redova — tihi cap
+  ⚠ STARO → order_items .in(500): GREŠKA (progutana) — TypeError: fetch failed
+
+========================================================================================
+ZBIRNO — zarada po periodu
+========================================================================================
+  period                                     STARO              NOVO           razlika
+  Tekući mesec (2026-09)               268.756 RSD       268.756 RSD                 —
+  Prošli mesec (2026-08)               144.510 RSD       144.510 RSD                 —
+  Tekuća godina (2026)                 501.265 RSD     1.442.169 RSD          +940.904
+  2026 cela                            501.265 RSD     1.442.169 RSD          +940.904
+  Sve (bez filtera)                    501.265 RSD     1.442.169 RSD          +940.904
+
+Napomena: „Tekuća godina“ i „2026 cela“ se poklapaju dok je tekuća godina 2026.
+Napomena: kontrolna cifra Dashboarda sme da odstupa na granici perioda — lista
+porudžbina reže po UTC-u (`T23:59:59.999Z`), Dashboard po Belgrade danu
+(docs/backlog.md #10). To pravilo K2 NE menja.
