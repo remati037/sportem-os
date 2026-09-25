@@ -1,0 +1,48 @@
+Komanda: npm run rls:static   (scripts/rls-test.mjs --static)
+Baseline PRE Koraka K2 — kapija za politike bez test naloga (odluka O5)
+
+.env.test.local not found. Continuing without it.
+RLS statičke provere — Sportem OS (bez prijave, bez upita na bazu)
+
+Politike u migraciji — matrica dozvola za `ticket_*`:
+  ✓ ticket_columns → RLS uključen
+  ✓ ticket_priorities → RLS uključen
+  ✓ ticket_tags → RLS uključen
+  ✓ tickets → RLS uključen
+  ✓ ticket_assignees → RLS uključen
+  ✓ ticket_tag_links → RLS uključen
+  ✓ ticket_checklist_items → RLS uključen
+  ✓ ticket_comments → RLS uključen
+  ✓ ticket_events → RLS uključen
+  ✓ ticket_columns → write politika je admin-only
+  ✓ ticket_priorities → write politika je admin-only
+  ✓ ticket_tags → write politika je admin-only
+  ✓ tickets → politika za admin + manager
+  ✓ ticket_assignees → politika za admin + manager
+  ✓ ticket_tag_links → politika za admin + manager
+  ✓ ticket_checklist_items → politika za admin + manager
+  ✓ ticket_comments → politika za admin + manager
+  ✓ ticket_events → politika za admin + manager
+  ✓ nijedna ticket politika ne pominje 'logistics' — 0
+
+Politike u migraciji — matrica dozvola za `offer_*`:
+  ✓ offer_rules → RLS uključen
+  ✓ offer_rules → select politika za admin + manager
+  ✓ offer_events → RLS uključen
+  ✓ offer_events → select politika za admin + manager
+  ✓ offer_sync_state → RLS uključen
+  ✓ offer_sync_state → select politika za admin + manager
+  ✓ nema nijedne write politike na offer_*
+  ✓ nijedna offer politika ne pominje 'logistics' — 0
+
+Kapije ruta — /tiketi i /ponude propuštaju samo Admina i Menadžera:
+  ✓ app/(app)/tiketi/page.tsx → requireRole("admin", "manager")
+  ✓ app/(app)/tiketi/[id]/page.tsx → requireRole("admin", "manager")
+  ✓ app/(app)/@modal/(.)tiketi/[id]/page.tsx → requireRole("admin", "manager")
+  ✓ app/(app)/tiketi/actions.ts → svaka akcija ima requireRole — 15 kapija / 15 akcija
+  ✓ app/(app)/ponude/page.tsx → requireRole("admin", "manager")
+  ✓ app/(app)/ponude/[id]/page.tsx → requireRole("admin", "manager")
+  ✓ app/(app)/ponude/actions.ts → svaka akcija ima requireRole — 1 kapija / 1 akcija
+
+✅ PASS — matrica politika u migracijama i kapije ruta su na mestu.
+

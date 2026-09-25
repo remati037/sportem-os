@@ -138,6 +138,8 @@ npm run build          # produkcioni build — MORA --webpack (Serwist), v. Kora
 supabase db push       # primeni migracije iz supabase/migrations na CLOUD
 
 npm run rls:test       # dokaz da RLS drži po rolama (traži .env.test.local)
+npm run rls:static     # SAMO statičke provere politika/kapija — bez naloga i bez baze
+npm run perf           # merenje brzine dohvata po stranici (medijana 3 pokretanja)
 npm run woo:test       # test webhook rute (traži pokrenut `npm run dev`)
 npm run icons          # regeneriši PWA ikonice
 ```
@@ -427,6 +429,14 @@ npm run icons          # regeneriši PWA ikonice
 - **Mobilni prikaz (360px):** jedini nalaz — dugačak neprekinut string (URL iz `Linkify`, dug naslov) je izlazio iz okvira. Dodato `break-words` na **naslov kartice**, **`<h1>` detalja**, **opis** i **telo komentara**. Sve ostalo je već `flex-wrap`/`min-w-0`/`overflow-x-auto` (board je `hidden md:flex`, filteri su `Sheet`), pa nema horizontalnog skrola strane.
 - **Prazna stanja proverena i kompletna:** board bez kolona (link na Podešavanja), board bez tiketa (razlikuje „nema tiketa" od „nema za ove filtere"), prazna kolona na mobilnom i na desktopu, „Još nema komentara/promena", „Nema stavki", „Nema tiketa vezanih za ovu porudžbinu/proizvod", „Nemaš otvorenih tiketa" na Dashboardu, „Još nema kolona/prioriteta/tagova" u Podešavanjima. Sve na srpskom sa punim dijakriticima.
 - **Preduslov za živi deo testa:** postoje samo Admin nalozi — **Menadžer i Logistika se prvo dodaju kroz `/korisnici`**, pa se kredencijali upišu u `.env.test.local`. Migracija tiketa je već primenjena na cloud (config: 4 kolone / 4 prioriteta / 4 taga).
+
+**Korak K1 — merenje brzine (`npm run perf`) + `npm run rls:static` (plan optimizacije):**
+- **`scripts/perf-bench.mjs` + `npm run perf`** — po jedna sonda za Dashboard, Porudžbine (lista), Detalj porudžbine, Katalog, Finansije/Uplate, Finansije/Poštarina, Tiketi board. Svaka sonda ponavlja **tačan niz upita** te stranice iz `db/` sloja (isti filteri, redosled i `Promise.all` paralelizacija). **Skripta SAMO ČITA** — nijedan insert/update/delete/rpc.
+- **Konstante su PREPISANE iz app koda** (`.mjs` ne može TS import): `APP_STATUS`, `CANCELLED_STATUS_NAMES`, veličine chunk-ova (`METRICS_IN_CHUNK=200`, `SUMMARY_ITEMS_CHUNK=500`), cap-ovi i kolone upita. **Kad se te vrednosti promene u `lib/`/`db/`, mora i u sondi** — inače sonda meri nešto što app više ne radi.
+- **Dva režima:** (a) Admin kroz anon ključ = RLS aktivan, (b) service-role = RLS zaobiđen; razlika je „RLS overhead" (dokaz za K3). **Bez `RLS_TEST_ADMIN_*` u `.env.test.local` radi samo (b)** uz upozorenje i praznu kolonu overhead-a — nalozi Menadžera i Logistike ne postoje (odluka O5) i nisu potrebni za merenje. `listStaffProfiles` se i u režimu (a) meri kroz service-role, jer app tako radi.
+- **`--runs=N` (default 3) → MEDIJANA.** Prvo pokretanje plaća hladnu konekciju/keš i bilo je 3–4× sporije (uplate 1118 ms → 264 ms); porediti se sme samo medijana. Ostalo: `--only=k1,k2`, `--list`.
+- **Prijavljuje ono što app guta:** PostgREST `error` i svaki rezultat od **tačno 1000 redova** (tihi cap). Baseline 25.09.2026 (`docs/perf/2026-09-25-perf-baseline.txt`, service-role, medijana): Porudžbine **8.321 ms / 7 round-tripova** (`.in(500 UUID)` → `fetch failed` posle ~7,8 s **u svim pokretanjima**, plus `orders scan` vraća tačno 1000 od 1.326 redova → zbir „Za ovaj filter" je i pogrešan, ne samo spor), Dashboard 346 ms / **15** round-tripova, Tiketi 331 ms / 11, Uplate 317 ms, Detalj 299 ms, Katalog 229 ms, Poštarina 174 ms. Ukupno **52 round-tripa**.
+- **`npm run rls:static`** (odluka O5) = **zastavica `--static` na postojećoj `scripts/rls-test.mjs`**, ne nova skripta (bez dupliranja): pokreće samo tri statičke provere (`testTicketPoliciesInMigration`, `testOfferPoliciesInMigration`, `testRouteGuards` kroz zajednički `runStaticChecks()`) i **izlazi pre ijedne prijave**. Čita samo fajlove repoa, nikad bazu → radi bez test naloga. **`npm run rls:test` je nedirano** (statičke provere pa živi test, koji i dalje traži kredencijale). Baseline: `docs/perf/2026-09-25-rls-static-baseline.txt` (PASS).
 
 **Modul „Ponude" — Sportem Offers plugin (potvrđeno sa korisnikom):**
 - **Šta:** na sajtu radi custom WordPress plugin „Sportem Offers" (upsell u side cartu/korpi + order bump na checkoutu). Plugin beleži događaje i izlaže ih kroz REST (`/wp-json/sportem-offers/v1`: `/rules`, `/events`, `/stats`). App ih povlači u Supabase i prikazuje statistiku po pravilu na `/ponude`. **WordPress strana se NE dira** — app je samo čitalac; pravila se menjaju na sajtu i stižu sledećom sinhronizacijom.

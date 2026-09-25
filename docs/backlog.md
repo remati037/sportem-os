@@ -129,6 +129,16 @@ Postoji samo `app/global-error.tsx` i `app/(app)/loading.tsx`. Svaka bačena gre
 
 ## P2 — tehnički dug, radi se kad ima vazduha
 
+- **Živi `rls:test` ne može da se pokrene — nema Logistika nalog** `[P]` (25.09.2026) — postoje
+  samo 2 naloga i **oba su Admin**. `scripts/rls-test.mjs:151` zove `signIn("logistics")` koji radi
+  `process.exit(2)`, pa test staje posle tri statičke provere. Menadžer je opcion (`signInOptional`).
+  **Rok: pre koraka K10** iz `docs/Sportem-Plan-Optimizacija.md` (Katalog na server-side filter je
+  jedini korak koji menja ono što Logistika vidi). Zaobilaznica do tada: `npm run rls:static`
+  (statičke provere) + samo-proveravajuća migracija u K3. Uputstvo za naloge: plan, K0-b.
+- **Nedokazano: „Logistika dobija 0 redova" iz novih SQL funkcija (K5/K6)** `[P]` (25.09.2026) —
+  funkcije su `security invoker` pa RLS važi po konstrukciji, i nijedna ne stoji na ruti koju
+  Logistika otvara, ali provera u `rls:test` čeka nalog iz reda iznad.
+
 - **Neprovereni PostgREST `error` kroz ceo `db/` sloj** `[P]` — obrazac `const { data } = await …` bez `error` je pravilo, ne izuzetak. Svaki takav upit na grešku vrati prazno, što u finansijama znači **0 RSD umesto poruke**. Ovo je koren nalaza #6 i #8.
 - **Nula automatizovanih testova + nema CI-ja** `[P]` — nema `.github/`, nema test runner-a. `rls:test` i `woo:test` su namenske provere, ne test suite. Prvi kandidati za test: snapshot cena, `order_profit` sa NULL-om, `syncOrderStock` idempotentnost, Belgrade granice meseca.
 - **35× `as unknown as`** `[P]` — nema generisanih Supabase tipova (`supabase gen types typescript`). Svaka promena šeme prolazi kroz TS neprimećeno.

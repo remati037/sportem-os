@@ -19,6 +19,11 @@
 //   node --env-file=.env.local --env-file=.env.test.local scripts/rls-test.mjs
 //   (ili: npm run rls:test)
 //
+// `--static` (npm run rls:static, odluka O5 iz plana optimizacije): pokreni SAMO
+// tri statičke provere (politike u migracijama tiketa i ponuda + kapije ruta) i
+// izađi PRE ijedne prijave. Tako postoji kapija za politike i bez test naloga —
+// Menadžer i Logistika trenutno ne postoje. Bez zastavice je ponašanje nedirano.
+//
 // Potrebne env varijable (pored NEXT_PUBLIC_SUPABASE_URL / _ANON_KEY):
 //   RLS_TEST_ADMIN_EMAIL, RLS_TEST_ADMIN_PASSWORD
 //   RLS_TEST_LOGISTICS_EMAIL, RLS_TEST_LOGISTICS_PASSWORD
@@ -33,6 +38,9 @@
 // ============================================================================
 
 import { createClient } from "@supabase/supabase-js";
+
+/** Samo statičke provere (bez prijave i bez ijednog upita na bazu). */
+const STATIC_ONLY = process.argv.slice(2).includes("--static");
 
 const URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -507,7 +515,28 @@ async function testStaffOffersReadOnly() {
   await c.auth.signOut();
 }
 
+/**
+ * Tri statičke provere — čitaju samo fajlove iz repoa (migracije + rute), nikad
+ * bazu. Zato rade i bez kredencijala i pokreću se PRE svake prijave.
+ */
+async function runStaticChecks() {
+  await testTicketPoliciesInMigration();
+  await testOfferPoliciesInMigration();
+  await testRouteGuards();
+}
+
 async function main() {
+  if (STATIC_ONLY) {
+    console.log("RLS statičke provere — Sportem OS (bez prijave, bez upita na bazu)");
+    await runStaticChecks();
+    console.log(
+      failures === 0
+        ? "\n✅ PASS — matrica politika u migracijama i kapije ruta su na mestu.\n"
+        : `\n❌ FAIL — ${failures} provera(e) nije prošla.\n`,
+    );
+    process.exit(failures === 0 ? 0 : 1);
+  }
+
   if (!URL || !ANON) {
     console.error("Nedostaje NEXT_PUBLIC_SUPABASE_URL ili NEXT_PUBLIC_SUPABASE_ANON_KEY.");
     process.exit(2);
@@ -515,9 +544,7 @@ async function main() {
   console.log("RLS test — Sportem OS (Korak 0.5 + T7 Tiketi)");
 
   // Statičke provere prve — daju rezultat i kad test nalozi nisu podešeni.
-  await testTicketPoliciesInMigration();
-  await testOfferPoliciesInMigration();
-  await testRouteGuards();
+  await runStaticChecks();
 
   await testLogistics();
   await testAdmin();
