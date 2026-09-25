@@ -20,8 +20,8 @@
 //   (ili: npm run rls:test)
 //
 // `--static` (npm run rls:static, odluka O5 iz plana optimizacije): pokreni SAMO
-// tri statičke provere (politike u migracijama tiketa i ponuda + kapije ruta) i
-// izađi PRE ijedne prijave. Tako postoji kapija za politike i bez test naloga —
+// statičke provere (politike u migracijama tiketa i ponuda, RLS `initplan`
+// omotač iz K3, kapije ruta) i izađi PRE ijedne prijave. Tako postoji kapija za politike i bez test naloga —
 // Menadžer i Logistika trenutno ne postoje. Bez zastavice je ponašanje nedirano.
 //
 // Potrebne env varijable (pored NEXT_PUBLIC_SUPABASE_URL / _ANON_KEY):
@@ -416,6 +416,107 @@ async function testRouteGuards() {
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
+ * RLS `initplan` (Korak K3) — svaki poziv u politici mora biti u `(select …)`.
+ *
+ * Bez omotača Postgres izvršava `current_app_role()` / `auth.uid()` PO REDU;
+ * sa omotačem jednom po upitu. Migracija 20260926100000_rls_initplan.sql je to
+ * sredila za sve politike koje su postojale tada. Ova provera pazi da se
+ * regresija ne vrati kroz kod:
+ *   • svaka politika iz migracija PRE K3 koja zove funkciju nezaomotano mora
+ *     biti nabrojana u `alter policy` unutar K3 migracije;
+ *   • u migracijama POSLE K3 nijedan poziv ne sme biti nezaomotan.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+const K3_MIGRATION = "20260926100000_rls_initplan.sql";
+
+/** Ukloni SQL linijske komentare — UNDO blok u K3 migraciji je zakomentarisan. */
+function stripSqlComments(sql) {
+  return sql
+    .split("\n")
+    .map((line) => line.replace(/--.*$/, ""))
+    .join("\n");
+}
+
+/** Sve `create policy` / `alter policy` naredbe iz fajla, bez komentara. */
+function policyStatements(sql) {
+  return stripSqlComments(sql).match(/\b(?:create|alter)\s+policy\s+"[^"]+"[\s\S]*?;/gi) ?? [];
+}
+
+/** Ime politike iz naredbe. */
+function policyName(statement) {
+  return statement.match(/policy\s+"([^"]+)"/i)?.[1] ?? "?";
+}
+
+/**
+ * Pozivi koji NISU u `(select …)`. Omotane pojave se prvo zamene sentinelom,
+ * pa se gleda šta je ostalo — isti obrazac koji koristi i DO blok migracije.
+ */
+function unwrappedCalls(statement) {
+  const rest = statement
+    .replace(/\(\s*select\s+(?:[a-z_][a-z0-9_]*\.)?current_app_role\s*\(\)\s*\)/gi, "<<OMOTANO>>")
+    .replace(/\(\s*select\s+auth\.uid\s*\(\)\s*\)/gi, "<<OMOTANO>>");
+  return [
+    ...(rest.match(/(?:[a-z_][a-z0-9_]*\.)?current_app_role\s*\(\)/gi) ?? []),
+    ...(rest.match(/auth\.uid\s*\(\)/gi) ?? []),
+  ];
+}
+
+async function testRlsInitplanInMigrations() {
+  console.log("\nRLS initplan — nijedan `current_app_role()` bez `(select …)`:");
+  const { readdir, readFile } = await import("node:fs/promises");
+  const { fileURLToPath } = await import("node:url");
+  const { dirname, join } = await import("node:path");
+  const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const dir = join(root, "supabase", "migrations");
+
+  let files = [];
+  try {
+    files = (await readdir(dir)).filter((f) => f.endsWith(".sql")).sort();
+  } catch {
+    check("supabase/migrations → čitljiv", false, "folder nije pronađen");
+    return;
+  }
+
+  if (!files.includes(K3_MIGRATION)) {
+    check(`${K3_MIGRATION} → postoji`, false, "migracija K3 nedostaje");
+    return;
+  }
+
+  const sources = new Map();
+  for (const f of files) sources.set(f, await readFile(join(dir, f), "utf8"));
+
+  // (1) K3 migracija pokriva svaku staru politiku koja zove nezaomotano.
+  const k3Altered = new Set(
+    policyStatements(sources.get(K3_MIGRATION))
+      .filter((s) => /^alter/i.test(s.trim()))
+      .map(policyName),
+  );
+  const nepokrivene = [];
+  for (const f of files.filter((f) => f < K3_MIGRATION)) {
+    for (const stmt of policyStatements(sources.get(f))) {
+      if (unwrappedCalls(stmt).length > 0 && !k3Altered.has(policyName(stmt))) {
+        nepokrivene.push(`${policyName(stmt)} (${f})`);
+      }
+    }
+  }
+  check(
+    `${K3_MIGRATION} → zaomotava svaku stariju politiku`,
+    nepokrivene.length === 0,
+    nepokrivene.length ? `nepokriveno: ${nepokrivene.join(", ")}` : `${k3Altered.size} politika`,
+  );
+
+  // (2) K3 i sve posle njega: nijedan nezaomotan poziv.
+  for (const f of files.filter((f) => f >= K3_MIGRATION)) {
+    const greske = [];
+    for (const stmt of policyStatements(sources.get(f))) {
+      const calls = unwrappedCalls(stmt);
+      if (calls.length > 0) greske.push(`"${policyName(stmt)}" → ${calls.join(", ")}`);
+    }
+    check(`${f} → svi pozivi u politikama su omotani`, greske.length === 0, greske.join("; "));
+  }
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
  * Ponude — Logistika ne sme do `offer_*`, a upis je rezervisan za service role.
  * ──────────────────────────────────────────────────────────────────────────── */
 
@@ -516,12 +617,13 @@ async function testStaffOffersReadOnly() {
 }
 
 /**
- * Tri statičke provere — čitaju samo fajlove iz repoa (migracije + rute), nikad
+ * Statičke provere — čitaju samo fajlove iz repoa (migracije + rute), nikad
  * bazu. Zato rade i bez kredencijala i pokreću se PRE svake prijave.
  */
 async function runStaticChecks() {
   await testTicketPoliciesInMigration();
   await testOfferPoliciesInMigration();
+  await testRlsInitplanInMigrations();
   await testRouteGuards();
 }
 
