@@ -5,12 +5,13 @@ import { getAiSession } from "@/lib/ai/access";
 import { getAnthropic } from "@/lib/ai/client";
 import { AI_TITLE_MODEL, costMicroUsd, getAiModel, type AiModel } from "@/lib/ai/models";
 import { SYSTEM_PROMPT, userContextBlock } from "@/lib/ai/system-prompt";
+import { createAiTools } from "@/lib/ai/tools";
 import { todayBelgrade } from "@/lib/date-belgrade";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { mustOne } from "@/lib/supabase/paginate";
 import { chatRequestSchema } from "@/lib/validation/ai";
-import { AI_DEFAULT_TITLE, getAiConversation, listAiMessages } from "@/db/ai";
+import { AI_DEFAULT_TITLE, getAiConversation, isTypedUserMessage, listAiMessages } from "@/db/ai";
 
 /*
  * POST /api/asistent/chat (Korak A2) — JEDINA ruta koja zove Anthropic.
@@ -25,6 +26,7 @@ import { AI_DEFAULT_TITLE, getAiConversation, listAiMessages } from "@/db/ai";
  *   {type:"meta", conversationId}      — razgovor (nov ili postojeći)
  *   {type:"thinking", delta}           — sažetak razmišljanja (sklopivo u UI-ju)
  *   {type:"text", delta}               — tekst odgovora
+ *   {type:"tool", name, label, input}  — asistent čita podatke (A3)
  *   {type:"done", messageId, model}    — odgovor upisan
  *   {type:"title", title}              — auto-naslov (samo prvi odgovor)
  *   {type:"error", message}            — srpska poruka, bez detalja servera
@@ -38,11 +40,14 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 const MAX_TOKENS = 32_000;
+/** Gornja granica krugova „odgovor → alat → odgovor" po pitanju (trošak). */
+const MAX_ITERATIONS = 8;
 
 type Event =
   | { type: "meta"; conversationId: string }
   | { type: "thinking"; delta: string }
   | { type: "text"; delta: string }
+  | { type: "tool"; name: string; label: string; input: Record<string, unknown> }
   | { type: "done"; messageId: string | null; model: string }
   | { type: "title"; title: string }
   | { type: "error"; message: string };
@@ -149,23 +154,25 @@ export async function POST(request: Request) {
   let questionText: string;
 
   if (req.mode === "regenerate") {
-    const last = history.at(-1);
-    if (last?.role === "assistant") {
+    // Ponovi: sve posle poslednje poruke koju je korisnik napisao (odgovor +
+    // eventualni tool_use/tool_result redovi) se briše, pa se odgovara ponovo.
+    const lastTyped = history.findLastIndex((m) => isTypedUserMessage(m));
+    if (lastTyped < 0) return jsonError("Nema pitanja na koje bi se odgovorilo ponovo.", 400);
+    const staleIds = history.slice(lastTyped + 1).map((m) => m.id);
+    if (staleIds.length) {
       // Vlasništvo je dokazano gore (getAiConversation ide kroz RLS).
       const { error } = await createAdminClient()
         .from("ai_messages")
         .delete()
-        .eq("id", last.id)
+        .in("id", staleIds)
         .eq("conversation_id", conversationId);
       if (error) {
         Sentry.captureException(error, { tags: { area: "ai-chat" } });
         return jsonError("Prethodni odgovor nije obrisan.", 500);
       }
-      history = history.slice(0, -1);
     }
-    const lastUser = [...history].reverse().find((m) => m.role === "user");
-    if (!lastUser) return jsonError("Nema pitanja na koje bi se odgovorilo ponovo.", 400);
-    const first = Array.isArray(lastUser.content) ? lastUser.content[0] : null;
+    history = history.slice(0, lastTyped + 1);
+    const first = (history[lastTyped].content as { type?: string; text?: string }[])[0];
     questionText = typeof first?.text === "string" ? first.text : "";
   } else {
     questionText = req.message;
@@ -189,6 +196,7 @@ export async function POST(request: Request) {
     role: m.role,
     content: m.content as Anthropic.Beta.BetaContentBlockParam[],
   }));
+  const startLen = messages.length;
   const isFirstAnswer = !history.some((m) => m.role === "assistant");
   const needsTitle = conversation.title === AI_DEFAULT_TITLE && isFirstAnswer;
 
@@ -211,86 +219,134 @@ export async function POST(request: Request) {
 
       send({ type: "meta", conversationId });
 
-      let partialText = "";
-      let answer = "";
-      let messageId: string | null = null;
+      const tools = createAiTools(supabase, (call) =>
+        send({ type: "tool", name: call.name, label: call.label, input: call.input }),
+      );
+      const runner = client.beta.messages.toolRunner(
+        {
+          model: model.id,
+          max_tokens: MAX_TOKENS,
+          system: SYSTEM_PROMPT,
+          cache_control: { type: "ephemeral" },
+          thinking: { type: "adaptive", display: "summarized" },
+          output_config: { effort: model.effort },
+          messages,
+          tools,
+          max_iterations: MAX_ITERATIONS,
+          stream: true,
+          ...fallbackParams(model),
+        },
+        { signal: abort.signal },
+      );
+
+      let answer = ""; // sav tekst odgovora (za auto-naslov)
+      let iterationText = ""; // tekst tekućeg poziva (za čuvanje pri Stop-u)
+      const finals: Anthropic.Beta.BetaMessage[] = [];
+      let failed = false;
 
       try {
-        const apiStream = client.beta.messages.stream(
-          {
-            model: model.id,
-            max_tokens: MAX_TOKENS,
-            system: SYSTEM_PROMPT,
-            cache_control: { type: "ephemeral" },
-            thinking: { type: "adaptive", display: "summarized" },
-            output_config: { effort: model.effort },
-            messages,
-            ...fallbackParams(model),
-          },
-          { signal: abort.signal },
-        );
-
-        for await (const event of apiStream) {
-          if (event.type !== "content_block_delta") continue;
-          if (event.delta.type === "text_delta") {
-            partialText += event.delta.text;
-            send({ type: "text", delta: event.delta.text });
-          } else if (event.delta.type === "thinking_delta") {
-            send({ type: "thinking", delta: event.delta.thinking });
+        for await (const messageStream of runner) {
+          iterationText = "";
+          for await (const event of messageStream) {
+            if (event.type !== "content_block_delta") continue;
+            if (event.delta.type === "text_delta") {
+              // Odvoji tekst posle alata od teksta pre njega.
+              const delta = !iterationText && answer ? `\n\n${event.delta.text}` : event.delta.text;
+              iterationText += delta;
+              answer += delta;
+              send({ type: "text", delta });
+            } else if (event.delta.type === "thinking_delta") {
+              send({ type: "thinking", delta: event.delta.thinking });
+            }
+          }
+          const final = await messageStream.finalMessage();
+          finals.push(final);
+          if (final.stop_reason === "refusal") {
+            send({ type: "text", delta: "\n\n_Model je odbio da odgovori na ovo pitanje._" });
+            break;
+          }
+          if (final.stop_reason === "max_tokens") {
+            send({ type: "text", delta: "\n\n_Odgovor je prekinut jer je predugačak._" });
+            break;
           }
         }
-
-        const final = await apiStream.finalMessage();
-        const content: unknown[] = [...final.content];
-        if (final.stop_reason === "refusal") {
-          const note = "\n\n_Model je odbio da odgovori na ovo pitanje._";
-          send({ type: "text", delta: note });
-          content.push({ type: "text", text: note.trim() });
-        } else if (final.stop_reason === "max_tokens") {
-          const note = "\n\n_Odgovor je prekinut jer je predugačak._";
-          send({ type: "text", delta: note });
-        }
-        answer = partialText;
-
-        const { data: saved, error } = await supabase
-          .from("ai_messages")
-          .insert({
-            conversation_id: conversationId,
-            role: "assistant",
-            content,
-            model: final.model ?? model.id,
-            input_tokens: final.usage.input_tokens,
-            output_tokens: final.usage.output_tokens,
-            cache_read_tokens: final.usage.cache_read_input_tokens ?? 0,
-            cache_write_tokens: final.usage.cache_creation_input_tokens ?? 0,
-            cost_micro_usd: costMicroUsd(model.id, final.usage),
-          })
-          .select("id")
-          .single();
-        if (error) throw error;
-        messageId = saved?.id ?? null;
       } catch (err) {
-        const aborted = abort.signal.aborted || err instanceof Anthropic.APIUserAbortError;
-        if (aborted) {
-          // Stop: sačuvaj ono što je stiglo (samo tekst — nepotpuni thinking
-          // blokovi bez potpisa ne smeju nazad u API). Tokeni nisu poznati.
-          if (partialText.trim()) {
-            const { data: saved } = await supabase
-              .from("ai_messages")
-              .insert({
-                conversation_id: conversationId,
-                role: "assistant",
-                content: [{ type: "text", text: `${partialText}\n\n_(prekinuto)_` }],
-                model: model.id,
-              })
-              .select("id")
-              .single();
-            messageId = saved?.id ?? null;
-            answer = partialText;
-          }
-        } else {
+        if (!(abort.signal.aborted || err instanceof Anthropic.APIUserAbortError)) {
+          failed = true;
           Sentry.captureException(err, { tags: { area: "ai-chat" }, extra: { model: model.id } });
           send({ type: "error", message: errorMessage(err) });
+        }
+      }
+
+      // ── Upis: sve nove poruke ovog odgovora, redom ────────────────────────
+      // runner.params.messages = istorija + (asistent → rezultati alata)* →
+      // asistent. Pri grešci se ne čuva ništa (Ponovi kreće od pitanja).
+      let messageId: string | null = null;
+      if (!failed) {
+        const added = runner.params.messages.slice(startLen);
+        const aborted = abort.signal.aborted;
+        // `break` (odbijanje / predugačak odgovor) izlazi iz runner-a pre nego
+        // što on sam doda poslednji odgovor u istoriju — dodaj ga ovde.
+        const assistantCount = added.filter((m) => m.role === "assistant").length;
+        const lastFinal = finals.at(-1);
+        if (!aborted && lastFinal && finals.length > assistantCount) {
+          added.push({
+            role: "assistant",
+            content: lastFinal.content as Anthropic.Beta.BetaContentBlockParam[],
+          });
+        }
+        if (aborted) {
+          // Poslednji asistent sa tool_use bez rezultata ne sme u istoriju.
+          const last = added.at(-1);
+          const lastContent = Array.isArray(last?.content) ? last.content : [];
+          if (last?.role === "assistant" && lastContent.some((b) => b.type === "tool_use")) {
+            added.pop();
+            finals.splice(added.filter((m) => m.role === "assistant").length);
+          }
+          // Prekinut tekst tekućeg poziva — samo tekst (nepotpuni thinking
+          // blokovi ne smeju nazad u API). Tokeni za njega nisu poznati.
+          const finishedText = added.at(-1)?.role === "assistant";
+          if (iterationText.trim() && !finishedText) {
+            added.push({
+              role: "assistant",
+              content: [{ type: "text", text: `${iterationText.trim()}\n\n_(prekinuto)_` }],
+            });
+          }
+        }
+
+        let assistantIndex = 0;
+        const base = Date.now();
+        const rows = added.map((m, i) => {
+          const final = m.role === "assistant" ? finals[assistantIndex++] : undefined;
+          return {
+            conversation_id: conversationId,
+            role: m.role,
+            content: m.content,
+            model: m.role === "assistant" ? (final?.model ?? model.id) : null,
+            input_tokens: final?.usage.input_tokens ?? 0,
+            output_tokens: final?.usage.output_tokens ?? 0,
+            cache_read_tokens: final?.usage.cache_read_input_tokens ?? 0,
+            cache_write_tokens: final?.usage.cache_creation_input_tokens ?? 0,
+            cost_micro_usd: final ? costMicroUsd(model.id, final.usage) : 0,
+            // Isti `now()` za ceo batch bi pomešao redosled — eksplicitno +1 ms.
+            created_at: new Date(base + i).toISOString(),
+          };
+        });
+
+        if (rows.length) {
+          const { data: saved, error } = await supabase
+            .from("ai_messages")
+            .insert(rows)
+            .select("id, created_at");
+          if (error) {
+            Sentry.captureException(error, { tags: { area: "ai-chat" } });
+            send({ type: "error", message: "Odgovor nije sačuvan u istoriju." });
+          } else {
+            const sorted = [...(saved ?? [])].sort((a, b) =>
+              a.created_at.localeCompare(b.created_at),
+            );
+            messageId = sorted.at(-1)?.id ?? null;
+          }
         }
       }
 
@@ -302,7 +358,7 @@ export async function POST(request: Request) {
 
       if (messageId) send({ type: "done", messageId, model: model.id });
 
-      if (needsTitle && answer && !abort.signal.aborted) {
+      if (needsTitle && answer.trim() && !abort.signal.aborted) {
         const title = await generateTitle(client, questionText, answer);
         if (title) {
           await supabase.from("ai_conversations").update({ title }).eq("id", conversationId);

@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { requireRole } from "@/lib/auth";
 import { aiConfigured } from "@/lib/ai/client";
 import { isUuid } from "@/lib/validation/uuid";
-import { getAiConversation, listAiConversations, listAiMessages, toDisplayMessage } from "@/db/ai";
+import { getAiConversation, listAiConversations, listAiMessages, toDisplayMessages } from "@/db/ai";
 
 import { AsistentShell } from "../asistent-shell";
 
@@ -28,7 +28,7 @@ export default async function AsistentConversationPage({
   ]);
   if (!conversation) notFound();
 
-  const messages = (await listAiMessages(id)).map(toDisplayMessage);
+  const messages = toDisplayMessages(await listAiMessages(id));
 
   return (
     <AsistentShell

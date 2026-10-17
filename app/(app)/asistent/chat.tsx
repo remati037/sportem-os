@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { ArrowUp, Check, Copy, RotateCcw, Sparkles, Square } from "lucide-react";
+import { ArrowUp, Check, Copy, Database, RotateCcw, Sparkles, Square } from "lucide-react";
 import { toast } from "sonner";
 
 import { AI_MODELS, getAiModel, isAiModelId, type AiModelId } from "@/lib/ai/models";
 import { AI_MESSAGE_MAX } from "@/lib/validation/ai";
+import { describeToolCall } from "@/lib/ai/tool-labels";
 import type { AiDisplayMessage } from "@/db/ai";
 import { Button } from "@/components/ui/button";
 import {
@@ -34,14 +35,17 @@ type StreamEvent =
   | { type: "text"; delta: string }
   | { type: "done"; messageId: string | null; model: string }
   | { type: "title"; title: string }
+  | { type: "tool"; name: string; label: string; input: Record<string, unknown> }
   | { type: "error"; message: string };
 
 const MODEL_STORAGE_KEY = "sportem.asistent.model";
 
 const SUGGESTIONS = [
-  "Kako da povećam prosečnu vrednost korpe na sajtu?",
-  "Napiši tekst za Meta reklamu za fudbalske kopačke.",
-  "Daj mi ideje za vikend akciju pred početak sezone.",
+  "Koji su najprodavaniji artikli ovog meseca?",
+  "Uporedi zaradu ovog i prošlog meseca.",
+  "Koji artikli su na niskom stanju, a dobro se prodaju?",
+  "Ko su nam najbolji kupci ove godine?",
+  "Daj mi ideje za vikend akciju na osnovu prodaje.",
 ];
 
 function readStoredModel(): AiModelId | null {
@@ -169,6 +173,11 @@ export function Chat({
           case "text":
             patchAssistant(currentId, (m) => ({ text: m.text + event.delta }));
             break;
+          case "tool":
+            patchAssistant(currentId, (m) => ({
+              tools: [...m.tools, { name: event.name, input: event.input }],
+            }));
+            break;
           case "thinking":
             patchAssistant(currentId, (m) => ({ thinking: m.thinking + event.delta }));
             break;
@@ -235,8 +244,24 @@ export function Chat({
     const assistantId = localId();
     setMessages((list) => [
       ...list,
-      { id: localId(), role: "user", text: message, thinking: "", model: null, status: "done" },
-      { id: assistantId, role: "assistant", text: "", thinking: "", model, status: "streaming" },
+      {
+        id: localId(),
+        role: "user",
+        text: message,
+        thinking: "",
+        model: null,
+        tools: [],
+        status: "done",
+      },
+      {
+        id: assistantId,
+        role: "assistant",
+        text: "",
+        thinking: "",
+        model,
+        tools: [],
+        status: "streaming",
+      },
     ]);
     setInput("");
     void run(
@@ -252,7 +277,15 @@ export function Chat({
       const trimmed = list.at(-1)?.role === "assistant" ? list.slice(0, -1) : list;
       return [
         ...trimmed,
-        { id: assistantId, role: "assistant", text: "", thinking: "", model, status: "streaming" },
+        {
+          id: assistantId,
+          role: "assistant",
+          text: "",
+          thinking: "",
+          model,
+          tools: [],
+          status: "streaming",
+        },
       ];
     });
     void run({ mode: "regenerate", conversationId: conversationRef.current, model }, assistantId);
@@ -289,8 +322,8 @@ export function Chat({
               <div className="space-y-1">
                 <p className="text-ink text-lg font-semibold">Kako mogu da pomognem?</p>
                 <p className="text-ink-soft max-w-md text-sm">
-                  Predlozi, ideje, tekstovi i analize. Pristup podacima aplikacije (prodaja,
-                  artikli, kupci) stiže u sledećoj verziji.
+                  Pitaj o prodaji, artiklima, kupcima, zalihama i finansijama — ili traži ideje i
+                  tekstove.
                 </p>
               </div>
               <div className="flex w-full max-w-lg flex-col gap-2">
@@ -317,6 +350,10 @@ export function Chat({
                   </li>
                 ) : (
                   <li key={m.id} className="space-y-2">
+                    {m.tools.length ? (
+                      <ToolsUsed tools={m.tools} live={m.status === "streaming" && !m.text} />
+                    ) : null}
+
                     {m.thinking ? (
                       <details className="text-ink-soft text-sm">
                         <summary className="cursor-pointer select-none">
@@ -330,7 +367,7 @@ export function Chat({
 
                     {m.text ? (
                       <Markdown text={m.text} />
-                    ) : m.status === "streaming" && !m.thinking ? (
+                    ) : m.status === "streaming" && !m.thinking && !m.tools.length ? (
                       <p className="text-ink-faint animate-pulse text-sm">Piše…</p>
                     ) : null}
 
@@ -446,6 +483,30 @@ export function Chat({
           </p>
         </form>
       </div>
+    </div>
+  );
+}
+
+/** Kartica „Pogledao…" — koje podatke je asistent pročitao za odgovor. */
+function ToolsUsed({
+  tools,
+  live,
+}: {
+  tools: { name: string; input: Record<string, unknown> }[];
+  live: boolean;
+}) {
+  const unique = [...new Set(tools.map((t) => describeToolCall(t.name, t.input)))];
+  return (
+    <div className="border-border bg-surface text-ink-soft rounded-md border px-3 py-2 text-xs">
+      <div className="text-ink-faint mb-1 flex items-center gap-1.5 font-medium">
+        <Database className="size-3.5" />
+        {live ? "Čita podatke…" : "Pogledao"}
+      </div>
+      <ul className="space-y-0.5">
+        {unique.map((d) => (
+          <li key={d}>{d}</li>
+        ))}
+      </ul>
     </div>
   );
 }
