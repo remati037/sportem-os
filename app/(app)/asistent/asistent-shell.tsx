@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertTriangle, PanelLeft } from "lucide-react";
 
 import type { AiDisplayMessage } from "@/db/ai";
@@ -32,6 +32,18 @@ export function AsistentShell({
   const [chatKey, setChatKey] = useState(0);
   const [fresh, setFresh] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
+
+  // Strana se ne skroluje — skroluje se samo lista poruka (polje za unos
+  // stoji na dnu ekrana). Bez ovoga mobilni pregledač ume da pomeri celu
+  // stranu (adresna traka, tastatura) pa dno „pobegne".
+  useEffect(() => {
+    const html = document.documentElement;
+    const prev = html.style.overflow;
+    html.style.overflow = "hidden";
+    return () => {
+      html.style.overflow = prev;
+    };
+  }, []);
 
   const title = activeId
     ? (items.find((c) => c.id === activeId)?.title ?? conversation?.title ?? "Razgovor")
@@ -73,7 +85,7 @@ export function AsistentShell({
   );
 
   return (
-    <main className="flex h-[calc(100dvh-3.5rem-env(safe-area-inset-bottom))] min-h-0 flex-1 md:h-dvh">
+    <main className="flex h-[calc(100dvh-3.5rem-env(safe-area-inset-bottom))] min-h-0 flex-1 overflow-hidden md:h-dvh">
       <aside className="border-border bg-surface hidden w-64 shrink-0 flex-col border-r p-3 md:flex">
         {list}
       </aside>

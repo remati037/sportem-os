@@ -1,7 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { ArrowUp, Check, Copy, Database, RotateCcw, Sparkles, Square } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  ArrowDown,
+  ArrowUp,
+  Check,
+  Copy,
+  Database,
+  RotateCcw,
+  Sparkles,
+  Square,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { AI_MODELS, getAiModel, isAiModelId, type AiModelId } from "@/lib/ai/models";
@@ -102,11 +111,34 @@ export function Chat({
   // Prekini stream kad se razgovor napusti.
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  // Auto-skrol dok korisnik sam ne odskroluje gore.
-  useEffect(() => {
+  /*
+   * Skrol kao u Claude-u: poslednja poruka je uvek uz polje za unos, a
+   * korisnik skroluje samo NAGORE kroz istoriju. Dok je „zalepljen" za dno,
+   * svaki rast sadržaja (stream, markdown, otvoreno „Razmišljanje") ga drži
+   * na dnu; kad odskroluje gore, ništa ga ne vuče nazad dok ne klikne ↓ ili
+   * pošalje poruku. Prvi prikaz kreće odmah sa dna (layout effect, bez skoka).
+   */
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [atBottom, setAtBottom] = useState(true);
+
+  function scrollToBottom() {
     const el = scrollRef.current;
-    if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
+    if (el) el.scrollTop = el.scrollHeight;
+  }
+
+  useLayoutEffect(() => {
+    if (stickToBottom.current) scrollToBottom();
   }, [messages]);
+
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+    const observer = new ResizeObserver(() => {
+      if (stickToBottom.current) scrollToBottom();
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
 
   // Polje raste sa tekstom (do ~8 redova).
   useEffect(() => {
@@ -135,6 +167,7 @@ export function Chat({
     abortRef.current = controller;
     setStreaming(true);
     stickToBottom.current = true;
+    setAtBottom(true);
 
     try {
       const res = await fetch("/api/asistent/chat", {
@@ -305,117 +338,143 @@ export function Chat({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div
-        ref={scrollRef}
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-        }}
-        className="min-h-0 flex-1 overflow-y-auto"
-      >
-        <div className="mx-auto w-full max-w-3xl px-4 py-6 md:px-6">
-          {messages.length === 0 ? (
-            <div className="flex flex-col items-center gap-4 py-12 text-center">
-              <div className="bg-green-soft text-green-deep rounded-full p-3">
-                <Sparkles className="size-6" />
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div
+          ref={scrollRef}
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+            stickToBottom.current = near;
+            setAtBottom((prev) => (prev === near ? prev : near));
+          }}
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain [overflow-anchor:none]"
+        >
+          <div
+            ref={contentRef}
+            className="mx-auto flex min-h-full w-full max-w-3xl flex-col justify-end px-4 py-6 md:px-6"
+          >
+            {messages.length === 0 ? (
+              <div className="flex flex-col items-center gap-4 py-12 text-center">
+                <div className="bg-green-soft text-green-deep rounded-full p-3">
+                  <Sparkles className="size-6" />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-ink text-lg font-semibold">Kako mogu da pomognem?</p>
+                  <p className="text-ink-soft max-w-md text-sm">
+                    Pitaj o prodaji, artiklima, kupcima, zalihama i finansijama — ili traži ideje i
+                    tekstove.
+                  </p>
+                </div>
+                <div className="flex w-full max-w-lg flex-col gap-2">
+                  {SUGGESTIONS.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => send(s)}
+                      className="border-border bg-surface text-ink hover:bg-surface-2 rounded-lg border px-4 py-2.5 text-left text-sm"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div className="space-y-1">
-                <p className="text-ink text-lg font-semibold">Kako mogu da pomognem?</p>
-                <p className="text-ink-soft max-w-md text-sm">
-                  Pitaj o prodaji, artiklima, kupcima, zalihama i finansijama — ili traži ideje i
-                  tekstove.
-                </p>
-              </div>
-              <div className="flex w-full max-w-lg flex-col gap-2">
-                {SUGGESTIONS.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => send(s)}
-                    className="border-border bg-surface text-ink hover:bg-surface-2 rounded-lg border px-4 py-2.5 text-left text-sm"
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <ul className="space-y-6">
-              {messages.map((m) =>
-                m.role === "user" ? (
-                  <li key={m.id} className="flex justify-end">
-                    <div className="bg-green-soft text-ink max-w-[85%] rounded-2xl rounded-br-md px-4 py-2.5 text-[0.9375rem] break-words whitespace-pre-wrap">
-                      {m.text}
-                    </div>
-                  </li>
-                ) : (
-                  <li key={m.id} className="space-y-2">
-                    {m.tools.length ? (
-                      <ToolsUsed tools={m.tools} live={m.status === "streaming" && !m.text} />
-                    ) : null}
+            ) : (
+              <ul className="space-y-6">
+                {messages.map((m) =>
+                  m.role === "user" ? (
+                    <li key={m.id} className="flex justify-end">
+                      <div className="bg-green-soft text-ink max-w-[85%] rounded-2xl rounded-br-md px-4 py-2.5 text-[0.9375rem] break-words whitespace-pre-wrap">
+                        {m.text}
+                      </div>
+                    </li>
+                  ) : (
+                    <li key={m.id} className="space-y-2">
+                      {m.tools.length ? (
+                        <ToolsUsed tools={m.tools} live={m.status === "streaming" && !m.text} />
+                      ) : null}
 
-                    {m.thinking ? (
-                      <details className="text-ink-soft text-sm">
-                        <summary className="cursor-pointer select-none">
-                          {m.status === "streaming" && !m.text ? "Razmišlja…" : "Razmišljanje"}
-                        </summary>
-                        <div className="border-border mt-2 border-l-2 pl-3 whitespace-pre-wrap">
-                          {m.thinking}
+                      {m.thinking ? (
+                        <details className="text-ink-soft text-sm">
+                          <summary className="cursor-pointer select-none">
+                            {m.status === "streaming" && !m.text ? "Razmišlja…" : "Razmišljanje"}
+                          </summary>
+                          <div className="border-border mt-2 border-l-2 pl-3 whitespace-pre-wrap">
+                            {m.thinking}
+                          </div>
+                        </details>
+                      ) : null}
+
+                      {m.text ? (
+                        <Markdown text={m.text} />
+                      ) : m.status === "streaming" && !m.thinking && !m.tools.length ? (
+                        <p className="text-ink-faint animate-pulse text-sm">Piše…</p>
+                      ) : null}
+
+                      {m.status === "error" ? (
+                        <div className="border-danger bg-danger-soft text-danger rounded-md border px-3 py-2 text-sm">
+                          {m.error}
                         </div>
-                      </details>
-                    ) : null}
+                      ) : null}
+                      {m.status === "stopped" ? (
+                        <p className="text-ink-faint text-xs">Prekinuto.</p>
+                      ) : null}
 
-                    {m.text ? (
-                      <Markdown text={m.text} />
-                    ) : m.status === "streaming" && !m.thinking && !m.tools.length ? (
-                      <p className="text-ink-faint animate-pulse text-sm">Piše…</p>
-                    ) : null}
-
-                    {m.status === "error" ? (
-                      <div className="border-danger bg-danger-soft text-danger rounded-md border px-3 py-2 text-sm">
-                        {m.error}
-                      </div>
-                    ) : null}
-                    {m.status === "stopped" ? (
-                      <p className="text-ink-faint text-xs">Prekinuto.</p>
-                    ) : null}
-
-                    {m.status !== "streaming" ? (
-                      <div className="text-ink-faint flex items-center gap-1 text-xs">
-                        {m.text ? (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon-sm"
-                            className="border-0 bg-transparent"
-                            aria-label="Kopiraj odgovor"
-                            onClick={() => copy(m)}
-                          >
-                            {copied === m.id ? <Check /> : <Copy />}
-                          </Button>
-                        ) : null}
-                        {m === last ? (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon-sm"
-                            className="border-0 bg-transparent"
-                            aria-label="Ponovi odgovor"
-                            onClick={regenerate}
-                            disabled={streaming}
-                          >
-                            <RotateCcw />
-                          </Button>
-                        ) : null}
-                        {m.model ? <span className="ml-1">{getAiModel(m.model).label}</span> : null}
-                      </div>
-                    ) : null}
-                  </li>
-                ),
-              )}
-            </ul>
-          )}
+                      {m.status !== "streaming" ? (
+                        <div className="text-ink-faint flex items-center gap-1 text-xs">
+                          {m.text ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              className="border-0 bg-transparent"
+                              aria-label="Kopiraj odgovor"
+                              onClick={() => copy(m)}
+                            >
+                              {copied === m.id ? <Check /> : <Copy />}
+                            </Button>
+                          ) : null}
+                          {m === last ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              className="border-0 bg-transparent"
+                              aria-label="Ponovi odgovor"
+                              onClick={regenerate}
+                              disabled={streaming}
+                            >
+                              <RotateCcw />
+                            </Button>
+                          ) : null}
+                          {m.model ? (
+                            <span className="ml-1">{getAiModel(m.model).label}</span>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </li>
+                  ),
+                )}
+              </ul>
+            )}
+          </div>
         </div>
+
+        {!atBottom ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Na poslednju poruku"
+            onClick={() => {
+              stickToBottom.current = true;
+              setAtBottom(true);
+              scrollToBottom();
+            }}
+            className="shadow-lift absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full"
+          >
+            <ArrowDown />
+          </Button>
+        ) : null}
       </div>
 
       <div className="border-border bg-paper border-t">
@@ -449,7 +508,8 @@ export function Chat({
                   className="h-8 w-auto gap-1 border-0 bg-transparent px-2 text-sm"
                   aria-label="Model"
                 >
-                  <SelectValue />
+                  {/* Samo naziv — opis bi na telefonu gurnuo dugme „Pošalji" van ekrana. */}
+                  <SelectValue>{getAiModel(model).label}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {AI_MODELS.map((m) => (
