@@ -21,11 +21,13 @@ export function AsistentShell({
   conversation,
   initialMessages,
   configured,
+  initialInput = "",
 }: {
   conversations: ConversationItem[];
   conversation: { id: string; title: string; model: string } | null;
   initialMessages: AiDisplayMessage[];
   configured: boolean;
+  initialInput?: string;
 }) {
   const [items, setItems] = useState(conversations);
   const [activeId, setActiveId] = useState<string | null>(conversation?.id ?? null);
@@ -85,7 +87,7 @@ export function AsistentShell({
   );
 
   return (
-    <main className="flex h-[calc(100dvh-3.5rem-env(safe-area-inset-bottom))] min-h-0 flex-1 overflow-hidden md:h-dvh">
+    <main className="flex h-[calc(100dvh-3.5rem-env(safe-area-inset-bottom))] min-h-0 flex-none overflow-hidden md:h-dvh">
       <aside className="border-border bg-surface hidden w-64 shrink-0 flex-col border-r p-3 md:flex">
         {list}
       </aside>
@@ -127,6 +129,7 @@ export function AsistentShell({
           conversationId={fresh ? null : (conversation?.id ?? null)}
           initialMessages={fresh ? [] : initialMessages}
           initialModel={fresh ? null : (conversation?.model ?? null)}
+          initialInput={fresh ? "" : initialInput}
           onConversationCreated={(id) => {
             setActiveId(id);
             toTop(id, { title: "Nov razgovor" });

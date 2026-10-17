@@ -17,6 +17,7 @@ import { APP_STATUS } from "@/lib/woo";
 import { Badge } from "@/components/ui/badge";
 
 import { RelatedTickets } from "../../tiketi/related-tickets";
+import { AskAssistantButton } from "../../asistent/ask-button";
 import { StatusPill } from "../status-pill";
 import { OrderItemsEditor } from "./order-items-editor";
 import { OrderStatusControl, ResolveReviewButton, type FlowIds } from "./order-status-control";
@@ -98,6 +99,11 @@ export default async function PorudzbinaPage({
             </div>
           ) : null}
         </div>
+        {order.woo_order_id != null ? (
+          <AskAssistantButton
+            question={`Analiziraj porudžbinu #${order.woo_order_id}: artikli, zarada i istorija ovog kupca. Ima li nešto na šta treba da obratim pažnju?`}
+          />
+        ) : null}
       </div>
 
       {order.needs_review ? (
@@ -125,7 +131,10 @@ export default async function PorudzbinaPage({
             <ul className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1">
               {riskyHistory.map((h) => (
                 <li key={h.id}>
-                  <Link href={`/porudzbine/${h.woo_order_id ?? h.id}`} className="num font-medium underline">
+                  <Link
+                    href={`/porudzbine/${h.woo_order_id ?? h.id}`}
+                    className="num font-medium underline"
+                  >
                     {h.woo_order_id != null ? `#${h.woo_order_id}` : "porudžbina"}
                   </Link>
                   {h.ordered_at ? (

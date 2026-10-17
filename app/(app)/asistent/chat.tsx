@@ -7,12 +7,14 @@ import {
   Check,
   Copy,
   Database,
+  Globe,
   RotateCcw,
   Sparkles,
   Square,
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { cn } from "@/lib/utils";
 import { AI_MODELS, getAiModel, isAiModelId, type AiModelId } from "@/lib/ai/models";
 import { AI_MESSAGE_MAX } from "@/lib/validation/ai";
 import { describeToolCall } from "@/lib/ai/tool-labels";
@@ -44,6 +46,7 @@ type StreamEvent =
   | { type: "text"; delta: string }
   | { type: "done"; messageId: string | null; model: string }
   | { type: "title"; title: string }
+  | { type: "sources"; sources: { url: string; title: string | null }[] }
   | { type: "tool"; name: string; label: string; input: Record<string, unknown> }
   | { type: "error"; message: string };
 
@@ -78,6 +81,7 @@ export function Chat({
   conversationId: initialConversationId,
   initialMessages,
   initialModel,
+  initialInput = "",
   onConversationCreated,
   onTitle,
   onActivity,
@@ -85,6 +89,8 @@ export function Chat({
   conversationId: string | null;
   initialMessages: AiDisplayMessage[];
   initialModel: string | null;
+  /** Pred-popunjeno pitanje (npr. „Pitaj asistenta" sa porudžbine — `?pitanje=`). */
+  initialInput?: string;
   onConversationCreated: (id: string) => void;
   onTitle: (id: string, title: string) => void;
   onActivity: (id: string) => void;
@@ -92,7 +98,14 @@ export function Chat({
   const [messages, setMessages] = useState<ChatMessage[]>(() =>
     initialMessages.map((m) => ({ ...m, status: "done" as const })),
   );
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(initialInput);
+  // Web pretraga: isključena podrazumevano; kad ju je razgovor jednom koristio,
+  // ostaje uključena i zaključana (server je ionako drži — v. ruta).
+  const webLocked =
+    initialMessages.some((m) => m.tools.some((t) => t.name === "web_search")) ||
+    messages.some((m) => m.tools.some((t) => t.name === "web_search"));
+  const [webOn, setWebOn] = useState(false);
+  const web = webLocked || webOn;
   // Nov razgovor uzima poslednji izabran model sa ovog uređaja (localStorage);
   // postojeći — model kojim je poslednji put vođen. Na serveru nema storage-a.
   const storedModel = useSyncExternalStore(subscribeStorage, readStoredModel, () => null);
@@ -211,6 +224,14 @@ export function Chat({
               tools: [...m.tools, { name: event.name, input: event.input }],
             }));
             break;
+          case "sources":
+            patchAssistant(currentId, (m) => ({
+              sources: [
+                ...m.sources,
+                ...event.sources.filter((src) => !m.sources.some((x) => x.url === src.url)),
+              ],
+            }));
+            break;
           case "thinking":
             patchAssistant(currentId, (m) => ({ thinking: m.thinking + event.delta }));
             break;
@@ -284,6 +305,7 @@ export function Chat({
         thinking: "",
         model: null,
         tools: [],
+        sources: [],
         status: "done",
       },
       {
@@ -293,12 +315,13 @@ export function Chat({
         thinking: "",
         model,
         tools: [],
+        sources: [],
         status: "streaming",
       },
     ]);
     setInput("");
     void run(
-      { mode: "send", conversationId: conversationRef.current, model, message },
+      { mode: "send", conversationId: conversationRef.current, model, web, message },
       assistantId,
     );
   }
@@ -317,11 +340,15 @@ export function Chat({
           thinking: "",
           model,
           tools: [],
+          sources: [],
           status: "streaming",
         },
       ];
     });
-    void run({ mode: "regenerate", conversationId: conversationRef.current, model }, assistantId);
+    void run(
+      { mode: "regenerate", conversationId: conversationRef.current, model, web },
+      assistantId,
+    );
   }
 
   async function copy(m: ChatMessage) {
@@ -415,6 +442,27 @@ export function Chat({
                           {m.error}
                         </div>
                       ) : null}
+                      {m.sources.length ? (
+                        <div className="text-xs">
+                          <div className="text-ink-faint mb-1 font-medium">Izvori</div>
+                          <ol className="space-y-0.5">
+                            {m.sources.slice(0, 10).map((src, i) => (
+                              <li key={src.url} className="truncate">
+                                <span className="text-ink-faint mr-1">{i + 1}.</span>
+                                <a
+                                  href={src.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-green-deep underline underline-offset-2"
+                                >
+                                  {src.title || new URL(src.url).hostname}
+                                </a>
+                              </li>
+                            ))}
+                          </ol>
+                        </div>
+                      ) : null}
+
                       {m.status === "stopped" ? (
                         <p className="text-ink-faint text-xs">Prekinuto.</p>
                       ) : null}
@@ -497,12 +545,13 @@ export function Chat({
                 }
               }}
               rows={1}
+              autoFocus={!!initialInput}
               maxLength={AI_MESSAGE_MAX}
               placeholder="Pitaj asistenta…"
               aria-label="Poruka"
               className="max-h-[220px] min-h-11 resize-none border-0 bg-transparent focus-visible:ring-0"
             />
-            <div className="flex items-center justify-between gap-2 px-2 pb-2">
+            <div className="flex items-center gap-1 px-2 pb-2">
               <Select value={model} onValueChange={changeModel}>
                 <SelectTrigger
                   className="h-8 w-auto gap-1 border-0 bg-transparent px-2 text-sm"
@@ -520,6 +569,29 @@ export function Chat({
                   ))}
                 </SelectContent>
               </Select>
+
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-pressed={web}
+                disabled={webLocked}
+                title={
+                  webLocked
+                    ? "Ovaj razgovor već koristi web pretragu"
+                    : "Dozvoli asistentu da pretraži web (cene konkurencije, trendovi, ideje)"
+                }
+                onClick={() => setWebOn((v) => !v)}
+                className={cn(
+                  "h-8 gap-1.5 border-0 px-2 text-sm",
+                  web ? "bg-green-soft text-green-deep" : "text-ink-soft bg-transparent",
+                  webLocked && "disabled:bg-green-soft disabled:text-green-deep",
+                )}
+              >
+                <Globe /> Web
+              </Button>
+
+              <div className="flex-1" />
 
               {streaming ? (
                 <Button

@@ -11,7 +11,15 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { mustOne } from "@/lib/supabase/paginate";
 import { chatRequestSchema } from "@/lib/validation/ai";
-import { AI_DEFAULT_TITLE, getAiConversation, isTypedUserMessage, listAiMessages } from "@/db/ai";
+import {
+  AI_DEFAULT_TITLE,
+  getAiConversation,
+  isTypedUserMessage,
+  listAiMessages,
+  sourcesOf,
+  usesWebSearch,
+  type AiSource,
+} from "@/db/ai";
 
 /*
  * POST /api/asistent/chat (Korak A2) — JEDINA ruta koja zove Anthropic.
@@ -28,6 +36,7 @@ import { AI_DEFAULT_TITLE, getAiConversation, isTypedUserMessage, listAiMessages
  *   {type:"text", delta}               — tekst odgovora
  *   {type:"tool", name, label, input}  — asistent čita podatke (A3)
  *   {type:"done", messageId, model}    — odgovor upisan
+ *   {type:"sources", sources}          — izvori sa weba (A4)
  *   {type:"title", title}              — auto-naslov (samo prvi odgovor)
  *   {type:"error", message}            — srpska poruka, bez detalja servera
  *
@@ -42,6 +51,8 @@ export const maxDuration = 300;
 const MAX_TOKENS = 32_000;
 /** Gornja granica krugova „odgovor → alat → odgovor" po pitanju (trošak). */
 const MAX_ITERATIONS = 8;
+/** Najviše web pretraga po jednom odgovoru (svaka se plaća posebno). */
+const WEB_MAX_USES = 5;
 
 type Event =
   | { type: "meta"; conversationId: string }
@@ -50,6 +61,7 @@ type Event =
   | { type: "tool"; name: string; label: string; input: Record<string, unknown> }
   | { type: "done"; messageId: string | null; model: string }
   | { type: "title"; title: string }
+  | { type: "sources"; sources: AiSource[] }
   | { type: "error"; message: string };
 
 function jsonError(message: string, status: number) {
@@ -197,6 +209,7 @@ export async function POST(request: Request) {
     content: m.content as Anthropic.Beta.BetaContentBlockParam[],
   }));
   const startLen = messages.length;
+  const webEnabled = req.web || usesWebSearch(history);
   const isFirstAnswer = !history.some((m) => m.role === "assistant");
   const needsTitle = conversation.title === AI_DEFAULT_TITLE && isFirstAnswer;
 
@@ -219,9 +232,28 @@ export async function POST(request: Request) {
 
       send({ type: "meta", conversationId });
 
-      const tools = createAiTools(supabase, (call) =>
+      const dataTools = createAiTools(supabase, (call) =>
         send({ type: "tool", name: call.name, label: call.label, input: call.input }),
       );
+      // Web pretraga (Anthropic server alat) — samo na prekidač. Kad ju je
+      // razgovor jednom koristio, ostaje uključena: istorija tada nosi
+      // web_search blokove, a skup alata ne menjamo ispod već postojeće istorije.
+      const tools = webEnabled
+        ? [
+            ...dataTools,
+            {
+              type: "web_search_20260209" as const,
+              name: "web_search" as const,
+              max_uses: WEB_MAX_USES,
+              user_location: {
+                type: "approximate" as const,
+                country: "RS",
+                city: "Belgrade",
+                timezone: "Europe/Belgrade",
+              },
+            },
+          ]
+        : dataTools;
       const runner = client.beta.messages.toolRunner(
         {
           model: model.id,
@@ -261,6 +293,14 @@ export async function POST(request: Request) {
           }
           const final = await messageStream.finalMessage();
           finals.push(final);
+          for (const block of final.content) {
+            if (block.type === "server_tool_use" && block.name === "web_search") {
+              const input = (block.input ?? {}) as Record<string, unknown>;
+              send({ type: "tool", name: "web_search", label: "Web pretraga", input });
+            }
+          }
+          const sources = sourcesOf(final.content);
+          if (sources.length) send({ type: "sources", sources });
           if (final.stop_reason === "refusal") {
             send({ type: "text", delta: "\n\n_Model je odbio da odgovori na ovo pitanje._" });
             break;

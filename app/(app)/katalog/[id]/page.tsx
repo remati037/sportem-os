@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/patterns/empty-state";
 
 import { RelatedTickets } from "../../tiketi/related-tickets";
+import { AskAssistantButton } from "../../asistent/ask-button";
 import { ProductActions } from "../product-actions";
 import { VariantFormDialog } from "../variant-form";
 import { VariantsTable } from "../variants-table";
@@ -82,21 +83,28 @@ export default async function ProizvodPage({ params }: { params: Promise<{ id: s
             ) : null}
           </div>
         </div>
-        {isAdmin ? (
-          <ProductActions
-            product={{
-              id: product.id,
-              name: product.name,
-              description: product.description,
-              brand: product.brand,
-              category_id: product.category_id,
-              attribute_names: product.attribute_names,
-              image: product.image,
-              archived: product.archived_at != null,
-            }}
-            categories={categoryOptions}
-          />
-        ) : null}
+        <div className="flex flex-wrap items-start gap-2">
+          {canSeeFinance ? (
+            <AskAssistantButton
+              question={`Kako se prodaje „${product.name}“ ove godine (po mesecima, sve varijante) i koliko je trenutno na stanju? Šta predlažeš?`}
+            />
+          ) : null}
+          {isAdmin ? (
+            <ProductActions
+              product={{
+                id: product.id,
+                name: product.name,
+                description: product.description,
+                brand: product.brand,
+                category_id: product.category_id,
+                attribute_names: product.attribute_names,
+                image: product.image,
+                archived: product.archived_at != null,
+              }}
+              categories={categoryOptions}
+            />
+          ) : null}
+        </div>
       </div>
 
       <div className="mb-4 flex items-center justify-between gap-4">

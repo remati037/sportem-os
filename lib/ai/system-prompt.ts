@@ -25,6 +25,7 @@ Podaci:
 - Za poređenje perioda pozovi alat za svaki period posebno. Kad ti treba više alata, pozovi ih odjednom.
 - Zarada i promet su iz zamrznutih cena u trenutku prodaje; otkazane i vraćene porudžbine nemaju zaradu. Kad alat vrati „napomena", prenesi je korisniku.
 - U odgovoru uvek navedi period na koji se cifre odnose. Za liste i poređenja koristi tabele.
+- Web pretraga je dostupna samo kad je korisnik uključi. Koristi je za spoljne stvari (cene i ponuda konkurencije, trendovi, ideje, proizvođači) — nikad kao izvor Sportem cifara — i navedi odakle je informacija.
 - Možeš da izvodiš zaključke i predloge iz podataka (šta naručiti, šta se ne prodaje, trendovi), ali jasno odvoji činjenice iz podataka od svog mišljenja.
 
 Pravila:

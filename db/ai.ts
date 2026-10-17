@@ -34,7 +34,11 @@ export type AiDisplayMessage = {
   model: string | null;
   /** Alati koje je asistent pozvao za ovaj odgovor (kartica „Pogledao…"). */
   tools: { name: string; input: Record<string, unknown> }[];
+  /** Izvori sa weba (citati iz web pretrage, A4). */
+  sources: AiSource[];
 };
+
+export type AiSource = { url: string; title: string | null };
 
 /** Default naslov iz migracije — po njemu se zna da auto-naslov još nije odrađen. */
 export const AI_DEFAULT_TITLE = "Nov razgovor";
@@ -83,7 +87,29 @@ type Block = {
   thinking?: unknown;
   name?: unknown;
   input?: unknown;
+  citations?: unknown;
 };
+
+/** Jedinstveni web izvori iz citata u tekst blokovima (redosled pojavljivanja). */
+export function sourcesOf(content: unknown): AiSource[] {
+  const seen = new Map<string, AiSource>();
+  for (const b of blocks(content)) {
+    if (b.type !== "text" || !Array.isArray(b.citations)) continue;
+    for (const c of b.citations as { type?: string; url?: unknown; title?: unknown }[]) {
+      if (c.type !== "web_search_result_location" || typeof c.url !== "string") continue;
+      if (!seen.has(c.url))
+        seen.set(c.url, { url: c.url, title: typeof c.title === "string" ? c.title : null });
+    }
+  }
+  return [...seen.values()];
+}
+
+/** Da li je razgovor već koristio web pretragu (tada ostaje uključena — v. ruta). */
+export function usesWebSearch(rows: Pick<AiMessageRow, "content">[]): boolean {
+  return rows.some((r) =>
+    blocks(r.content).some((b) => b.type === "server_tool_use" && b.name === "web_search"),
+  );
+}
 
 function blocks(content: unknown): Block[] {
   return Array.isArray(content) ? (content as Block[]) : [];
@@ -115,6 +141,7 @@ export function toDisplayMessages(rows: AiMessageRow[]): AiDisplayMessage[] {
         thinking: "",
         model: null,
         tools: [],
+        sources: [],
       });
       continue;
     }
@@ -129,8 +156,10 @@ export function toDisplayMessages(rows: AiMessageRow[]): AiDisplayMessage[] {
       .filter(Boolean)
       .join("\n\n");
     const tools = list
-      .filter((b) => b.type === "tool_use" && typeof b.name === "string")
+      .filter((b) => (b.type === "tool_use" || b.type === "server_tool_use") && typeof b.name === "string")
       .map((b) => ({ name: b.name as string, input: (b.input ?? {}) as Record<string, unknown> }));
+
+    const sources = sourcesOf(row.content);
 
     const prev = out.at(-1);
     if (prev?.role === "assistant") {
@@ -138,9 +167,11 @@ export function toDisplayMessages(rows: AiMessageRow[]): AiDisplayMessage[] {
       prev.text = [prev.text, text].filter(Boolean).join("\n\n");
       prev.thinking = [prev.thinking, thinking].filter(Boolean).join("\n\n");
       prev.tools.push(...tools);
+      for (const src of sources)
+        if (!prev.sources.some((p) => p.url === src.url)) prev.sources.push(src);
       prev.model = row.model ?? prev.model;
     } else {
-      out.push({ id: row.id, role: "assistant", text, thinking, model: row.model, tools });
+      out.push({ id: row.id, role: "assistant", text, thinking, model: row.model, tools, sources });
     }
   }
   return out;

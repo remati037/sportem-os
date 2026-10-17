@@ -9,6 +9,8 @@ export const AI_MESSAGE_MAX = 8000;
 export const AI_TITLE_MAX = 120;
 
 const modelField = z.string().refine(isAiModelId, "Nepoznat model.");
+/** Prekidač „Pretraži web" (A4). Isključen podrazumevano — trošak + privatnost. */
+const webField = z.boolean().default(false);
 
 /** Telo POST /api/asistent/chat. Bez `conversationId` → nov razgovor. */
 export const chatRequestSchema = z.discriminatedUnion("mode", [
@@ -16,6 +18,7 @@ export const chatRequestSchema = z.discriminatedUnion("mode", [
     mode: z.literal("send"),
     conversationId: uuid("Neispravan razgovor.").nullable(),
     model: modelField,
+    web: webField,
     message: z
       .string()
       .trim()
@@ -27,6 +30,7 @@ export const chatRequestSchema = z.discriminatedUnion("mode", [
     mode: z.literal("regenerate"),
     conversationId: uuid("Neispravan razgovor."),
     model: modelField,
+    web: webField,
   }),
 ]);
 

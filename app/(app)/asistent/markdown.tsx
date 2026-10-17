@@ -1,6 +1,9 @@
 "use client";
 
+import { useRef } from "react";
+import { Copy, Download } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
+import { toast } from "sonner";
 import remarkGfm from "remark-gfm";
 
 /*
@@ -38,11 +41,7 @@ const components: Components = {
       {children}
     </pre>
   ),
-  table: ({ children }) => (
-    <div className="border-border my-3 overflow-x-auto rounded-md border">
-      <table className="num w-full border-collapse text-sm">{children}</table>
-    </div>
-  ),
+  table: ({ children }) => <ExportableTable>{children}</ExportableTable>,
   thead: ({ children }) => <thead className="bg-surface-2">{children}</thead>,
   th: ({ children }) => (
     <th className="border-border text-ink border-b px-3 py-2 text-left font-semibold whitespace-nowrap">
@@ -62,6 +61,71 @@ export function Markdown({ text }: { text: string }) {
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
         {text}
       </ReactMarkdown>
+    </div>
+  );
+}
+
+/*
+ * Tabela iz odgovora + izvoz (Korak A4). CSV je u formatu koji Excel na
+ * srpskom podešavanju otvara bez čarobnjaka: separator `;`, UTF-8 sa BOM-om.
+ * Ćelije se čitaju iz prikazane tabele (tekst bez markdown-a).
+ */
+function tableToCsv(table: HTMLTableElement): string {
+  const escape = (v: string) => (/[;"\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+  return [...table.rows]
+    .map((row) => [...row.cells].map((c) => escape((c.textContent ?? "").trim())).join(";"))
+    .join("\r\n");
+}
+
+function ExportableTable({ children }: { children: React.ReactNode }) {
+  const ref = useRef<HTMLTableElement>(null);
+
+  async function copy() {
+    if (!ref.current) return;
+    try {
+      await navigator.clipboard.writeText(tableToCsv(ref.current));
+      toast.success("Tabela je kopirana (CSV).");
+    } catch {
+      toast.error("Kopiranje nije uspelo.");
+    }
+  }
+
+  function download() {
+    if (!ref.current) return;
+    const blob = new Blob(["\uFEFF" + tableToCsv(ref.current)], {
+      type: "text/csv;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `sportem-asistent-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <div className="my-3">
+      <div className="border-border overflow-x-auto rounded-md border">
+        <table ref={ref} className="num w-full border-collapse text-sm">
+          {children}
+        </table>
+      </div>
+      <div className="text-ink-faint mt-1 flex justify-end gap-3 text-xs">
+        <button
+          type="button"
+          onClick={copy}
+          className="hover:text-ink inline-flex items-center gap-1"
+        >
+          <Copy className="size-3.5" /> Kopiraj CSV
+        </button>
+        <button
+          type="button"
+          onClick={download}
+          className="hover:text-ink inline-flex items-center gap-1"
+        >
+          <Download className="size-3.5" /> Preuzmi CSV
+        </button>
+      </div>
     </div>
   );
 }
