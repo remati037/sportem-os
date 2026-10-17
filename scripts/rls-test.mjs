@@ -391,6 +391,8 @@ async function testRouteGuards() {
     "app/(app)/ponude/[id]/page.tsx",
     "app/(app)/ponude/actions.ts",
     "app/(app)/asistent/page.tsx",
+    "app/(app)/asistent/[id]/page.tsx",
+    "app/(app)/asistent/actions.ts",
   ];
 
   for (const file of files) {
@@ -414,6 +416,23 @@ async function testRouteGuards() {
       check(`${file} → requireRole("admin", "manager")`, gates >= 1);
     }
   }
+
+  // API ruta asistenta vraća JSON 403 umesto redirecta → kapija je getAiSession,
+  // a spisak rola u njoj mora biti tačno admin + manager.
+  const route = await readFile(join(root, "app/api/asistent/chat/route.ts"), "utf8").catch(
+    () => "",
+  );
+  const access = await readFile(join(root, "lib/ai/access.ts"), "utf8").catch(() => "");
+  check(
+    "app/api/asistent/chat/route.ts → getAiSession() pre svega",
+    /export async function POST[\s\S]*?const session = await getAiSession\(\);\s*if \(!session\)/.test(
+      route,
+    ),
+  );
+  check(
+    'lib/ai/access.ts → AI_ROLES = ["admin", "manager"]',
+    /AI_ROLES: Role\[\] = \["admin", "manager"\];/.test(access),
+  );
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
