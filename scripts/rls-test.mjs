@@ -376,7 +376,7 @@ async function testTicketPoliciesInMigration() {
 /* Kapije ruta su higijena (RLS je izvor sigurnosti), ali `/tiketi` mora da
    redirektuje Logistiku — statički proveravamo da svaki ulaz zove requireRole. */
 async function testRouteGuards() {
-  console.log("\nKapije ruta — /tiketi i /ponude propuštaju samo Admina i Menadžera:");
+  console.log("\nKapije ruta — /tiketi, /ponude i /asistent propuštaju samo Admina i Menadžera:");
   const { readFile } = await import("node:fs/promises");
   const { fileURLToPath } = await import("node:url");
   const { dirname, join } = await import("node:path");
@@ -390,6 +390,7 @@ async function testRouteGuards() {
     "app/(app)/ponude/page.tsx",
     "app/(app)/ponude/[id]/page.tsx",
     "app/(app)/ponude/actions.ts",
+    "app/(app)/asistent/page.tsx",
   ];
 
   for (const file of files) {
@@ -616,6 +617,56 @@ async function testStaffOffersReadOnly() {
   await c.auth.signOut();
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * AI Asistent — istorija je lična i samo za Admina/Menadžera; Logistika nema
+ * nijednu politiku, a poruke se posle upisa ne menjaju.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+async function testAiPoliciesInMigration() {
+  console.log("\nPolitike u migraciji — matrica dozvola za `ai_*`:");
+  const { readFile } = await import("node:fs/promises");
+  const { fileURLToPath } = await import("node:url");
+  const { dirname, join } = await import("node:path");
+  const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const file = "supabase/migrations/20261018120000_ai_asistent.sql";
+
+  let sql = "";
+  try {
+    sql = await readFile(join(root, file), "utf8");
+  } catch {
+    check(`${file} → postoji`, false, "migracija nije pronađena");
+    return;
+  }
+
+  const policies = sql.match(/create policy "ai_[\s\S]*?;/g) ?? [];
+  for (const table of ["ai_conversations", "ai_messages"]) {
+    check(
+      `${table} → RLS uključen`,
+      new RegExp(`alter table public\\.${table}\\s+enable row level security`).test(sql),
+    );
+    const own = policies.filter((b) => b.includes(`on public.${table}`));
+    check(
+      `${table} → svaka politika traži vlasnika i admin/manager`,
+      own.length > 0 &&
+        own.every(
+          (b) => b.includes("(select auth.uid())") && b.includes("in ('admin', 'manager')"),
+        ),
+      `${own.length} politika`,
+    );
+  }
+
+  check(
+    "nijedna ai politika ne pominje 'logistics'",
+    policies.every((b) => !b.includes("logistics")),
+  );
+  check(
+    "ai_messages nema update/delete politiku (poruke su append-only)",
+    policies
+      .filter((b) => b.includes("on public.ai_messages"))
+      .every((b) => /for (select|insert)/.test(b)),
+  );
+}
+
 /**
  * Statičke provere — čitaju samo fajlove iz repoa (migracije + rute), nikad
  * bazu. Zato rade i bez kredencijala i pokreću se PRE svake prijave.
@@ -623,6 +674,7 @@ async function testStaffOffersReadOnly() {
 async function runStaticChecks() {
   await testTicketPoliciesInMigration();
   await testOfferPoliciesInMigration();
+  await testAiPoliciesInMigration();
   await testRlsInitplanInMigrations();
   await testRouteGuards();
 }
