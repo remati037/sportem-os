@@ -6,26 +6,24 @@ import { useState } from "react";
 import { MoreHorizontal } from "lucide-react";
 
 import type { Role } from "@/lib/auth";
-import { isNavItemActive, navPrimaryForRole, navSecondaryForRole } from "@/lib/nav";
+import { SoonBadge } from "@/components/layout/soon-badge";
+import { groupNavItems, isNavItemActive, navPrimaryForRole, navSecondaryForRole } from "@/lib/nav";
 import { cn } from "@/lib/utils";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 
 /* Bottom nav (mobilni) — docs/Sportem-Dizajn-Sistem.md sekcija 4.
    Primarne sekcije (4) + dugme „Više" koje otvara panel odozdo sa sekundarnim stavkama
-   (Troškovi, Korisnici, Podešavanja — po roli). Aktivna stavka: green-deep + gornja zelena traka.
+   grupisanim po sekcijama (lib/nav.ts, „Uskoro" stavke nisu link). Aktivna stavka: green-deep + gornja zelena traka.
    Ako roli nema sekundarnih stavki (Logistika), „Više" se ne prikazuje. */
 export function BottomNav({ role }: { role: Role }) {
   const pathname = usePathname();
   const [moreOpen, setMoreOpen] = useState(false);
   const primary = navPrimaryForRole(role);
   const secondary = navSecondaryForRole(role);
-  const secondaryActive = secondary.some((item) => isNavItemActive(pathname, item.href));
+  const secondaryActive = secondary.some(
+    (item) => !item.soon && isNavItemActive(pathname, item.href),
+  );
+  const sections = groupNavItems(secondary);
 
   return (
     <nav className="border-border bg-surface fixed inset-x-0 bottom-0 z-40 flex border-t pb-[env(safe-area-inset-bottom)] md:hidden">
@@ -70,26 +68,44 @@ export function BottomNav({ role }: { role: Role }) {
             <SheetHeader>
               <SheetTitle>Više</SheetTitle>
             </SheetHeader>
-            <div className="flex flex-col gap-1">
-              {secondary.map((item) => {
-                const active = isNavItemActive(pathname, item.href);
-                const Icon = item.icon;
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    onClick={() => setMoreOpen(false)}
-                    aria-current={active ? "page" : undefined}
-                    className={cn(
-                      "flex items-center gap-3 rounded-lg px-3 py-3 text-[0.9375rem] font-medium transition-colors",
-                      active ? "bg-green-soft text-green-deep" : "text-ink hover:bg-surface-2",
-                    )}
-                  >
-                    <Icon className="size-5 shrink-0" aria-hidden />
-                    <span>{item.label}</span>
-                  </Link>
-                );
-              })}
+            <div className="flex max-h-[70dvh] flex-col gap-4 overflow-y-auto">
+              {sections.map((section) => (
+                <div key={section.id} className="flex flex-col gap-1">
+                  {section.title ? <div className="eyebrow px-3">{section.title}</div> : null}
+                  {section.items.map((item) => {
+                    const Icon = item.icon;
+                    if (item.soon) {
+                      return (
+                        <div
+                          key={item.href}
+                          aria-disabled="true"
+                          className="text-ink-faint flex items-center gap-3 rounded-lg px-3 py-2.5 text-[0.9375rem] font-medium select-none"
+                        >
+                          <Icon className="size-5 shrink-0" aria-hidden />
+                          <span>{item.label}</span>
+                          <SoonBadge />
+                        </div>
+                      );
+                    }
+                    const active = isNavItemActive(pathname, item.href);
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        onClick={() => setMoreOpen(false)}
+                        aria-current={active ? "page" : undefined}
+                        className={cn(
+                          "flex items-center gap-3 rounded-lg px-3 py-2.5 text-[0.9375rem] font-medium transition-colors",
+                          active ? "bg-green-soft text-green-deep" : "text-ink hover:bg-surface-2",
+                        )}
+                      >
+                        <Icon className="size-5 shrink-0" aria-hidden />
+                        <span>{item.label}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              ))}
             </div>
           </SheetContent>
         </Sheet>
