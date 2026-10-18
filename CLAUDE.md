@@ -16,7 +16,6 @@ Vlasnici: **korisnik (Admin)** i **brat (Menadžer)**. **Drug (Logistika)** je d
   za važeće odluke gleda se §3 ovog fajla, ne plan (plan još tvrdi „Email nije u Fazi 1", što više ne važi).
 - `docs/Sportem-Dizajn-Sistem.md` — dizajn tokeni, boje, tipografija, komponente. Izvor istine za UI (Korak 0.2/0.3).
 - `docs/Sportem-Plan-Izvestaji.md` — **živi plan**: modul Izveštaji / Izvoz, faze R0–R8. Bez migracije.
-- `docs/Sportem-Plan-AI-Asistent.md` — **živi plan**: modul AI Asistent (`/asistent`), faze A1–A6. Jedna migracija (A1).
 - `docs/backlog.md` — šta je još otvoreno (P0/P1/P2), provereno nad kodom 22.09.2026.
 
 ---
@@ -72,6 +71,21 @@ Vlasnici: **korisnik (Admin)** i **brat (Menadžer)**. **Drug (Logistika)** je d
 - **Modul NE dira:** zamrznute cene (`order_items`), finansije, RLS politike postojećih tabela, tok statusa porudžbina, `syncOrderStock`, restriktovani view za Logistiku.
 
 ---
+
+### AI Asistent (`/asistent`) — zaključane odluke
+
+> Modul „Asistent" (`docs/arhiva/2026-10-18-Plan-AI-Asistent.md`, faze A1–A6 — **sve urađeno**). Implementacione
+> beleške po koracima su u §10 („Korak A1"…„Korak A6").
+
+- **Samo Claude** (Anthropic API, `@anthropic-ai/sdk`): Opus 5.5 (podrazumevano) · Sonnet 5.5 · Haiku 5.5, bira se u chatu. Ključ `ANTHROPIC_API_KEY` **isključivo na serveru** (`lib/ai/client.ts`, `server-only`); nikad ka klijentu, u log ni u poruku greške.
+- **Pristup: SAMO Admin i Menadžer** — asistent vidi zaradu. Logistika nema stavku menija, rutu (`requireRole`), API (`getAiSession` → 403) ni **nijednu RLS politiku** na `ai_*` (deny-by-default).
+- **Istorija je LIČNA** — RLS pušta samo vlasnika razgovora; Admin ne vidi Menadžerove razgovore i obrnuto. Poruke su **append-only** (nema update/delete politike; brišu se samo kaskadno sa razgovorom; „Ponovi" briše kroz service role tek posle provere vlasništva).
+- **Asistent SAMO ČITA** — nijedan alat ne piše u bazu. Alati čitaju **RLS klijentom korisnika** (RLS ostaje izvor sigurnosti i za AI).
+- **Svaka Sportem cifra dolazi iz alata, nikad iz „glave" modela.** Promet/zarada **isključivo iz zamrznutih `order_items`** (§4), ista pravila kao Dashboard (`computePeriodMetrics`: `ordered_at`, Beograd, Otkazano/Vraćeno po imenu), artikli **po `sku`**. Dokaz: `npm run ai:check` — 0 RSD razlike.
+- **Web pretraga je opciona** (prekidač, isključen podrazumevano); kad je razgovor jednom koristi, ostaje uključena. Nikad izvor Sportem cifara.
+- **Novac u integer-ima:** cena po poruci u `ai_messages.cost_micro_usd` (mikro-USD). Mesečni limit `AI_MONTHLY_LIMIT_USD` važi za ceo nalog (80 % upozorenje, 100 % blokada).
+- **Van opsega v1:** pisanje u bazu (tiketi/statusi/cene), deljenje razgovora, prilozi/slike, glasovni unos, drugi provajderi, pristup za Logistiku, zakazani AI izveštaji, slobodni SQL upiti.
+- **Modul NE dira:** zamrznute cene i `order_items`, finansije, tok statusa, webhook, `syncOrderStock`, RLS politike postojećih tabela.
 
 ## 4. Centralni princip: zamrznute cene (snapshot) — NE DIRATI bez potvrde
 
@@ -493,7 +507,7 @@ npm run icons          # regeneriši PWA ikonice
 - **UNDO SQL je zakomentarisan na dnu migracije**, svaka linija sa prefiksom `-- ` (skini ga i pokreni). Vraća stari view, briše 8 indeksa, obe generisane kolone i funkciju; `pg_trgm` se NE briše. Ako se vraća unazad, **vrati i kod** (`git revert`) — posle UNDO-a stari view nikad ne vraća NULL, pa provera u `issueInvoice` postaje mrtvo slovo.
 - **NEDIRANO:** zamrznute cene (`order_items` se ne piše ni ne menja), RLS politike (nove kolone pokrivaju postojeće politike na nivou tabele — Logistika na `orders`/`customers` i dalje nema nijednu `select` politiku), tok statusa porudžbina, webhook, `syncOrderStock`, obaveštenja, `db/customer-risk.ts` (i dalje radi po JS indeksu — prelazak je K6).
 
-**Korak A1 — AI Asistent: baza + skelet (plan `docs/Sportem-Plan-AI-Asistent.md`, potvrđeno sa korisnikom):**
+**Korak A1 — AI Asistent: baza + skelet (plan `docs/arhiva/2026-10-18-Plan-AI-Asistent.md`, potvrđeno sa korisnikom):**
 - **Odluke modula:** samo Claude (Opus 5.5 podrazumevano / Sonnet 5.5 / Haiku 5.5, bira se u chatu); pristup **Admin + Menadžer** (asistent vidi zaradu → Logistika nema stavku, rutu ni RLS politiku); **samo čitanje** (nijedan alat ne piše u bazu); istorija **lična po korisniku**.
 - **Migracija `20261018120000_ai_asistent.sql`:** `ai_conversations` (`user_id`, `title`, `model`, `archived_at`, `updated_at` trigger) + `ai_messages` (`content jsonb` = **ceo niz Anthropic content blokova**, ne samo tekst — razgovor se nastavlja append-only; tokeni + `cost_micro_usd bigint`, bez float-a). RLS: `ai_conversations_own` (`for all`, vlasnik + admin/manager), `ai_messages_select_own` / `ai_messages_insert_own` kroz `exists` na vlasnika razgovora — **nema update/delete politike** na porukama (brišu se samo kaskadno sa razgovorom). Svi pozivi omotani `(select …)` (K3). **Pre produkcije: `supabase db push`** — bez toga `/asistent` pada (upit baca kroz `mustRows`).
 - **Kod:** `@anthropic-ai/sdk`; `lib/ai/client.ts` (`server-only`, `getAnthropic()`/`aiConfigured()`, bez ključa → null, kao Resend/VAPID); `lib/ai/models.ts` (BEZ `server-only` — picker na klijentu): `AI_MODELS` (id, srpski naziv, `effort`, cene u **mikro-USD po MTok, integer**), `DEFAULT_AI_MODEL`, `AI_TITLE_MODEL` (Haiku), `costMicroUsd()`. `db/ai.ts` (`listAiConversations`, RLS klijent). Strana `app/(app)/asistent/page.tsx` (`requireRole("admin","manager")`, upozorenje kad nema ključa, lista razgovora). Nav „Asistent" (`Sparkles`, `STAFF`, sekundarna).
@@ -531,3 +545,10 @@ npm run icons          # regeneriši PWA ikonice
 - **`lib/ai/usage.ts` (`server-only`):** `getAiBudget(userId)` sabira tekući **beogradski** mesec (`belgradeLocalToUtc`) kroz **service role** — limit važi za ceo nalog, a RLS svakome pokazuje samo svoje poruke; ka klijentu ide samo zbir. `aiLimitMicro()` čita `AI_MONTHLY_LIMIT_USD` (prazno = bez limita u app-u).
 - **Ruta:** pre svakog poziva proverava limit — na ≥ 100 % vraća **429** sa srpskom porukom; neuspelo merenje ne gasi asistenta (Sentry; spending limit na Anthropic nalogu ostaje poslednja brana). Događaj `done` nosi `costMicro` (UI odmah dopisuje potrošnju) i `contextTokens` poslednjeg poziva.
 - **UI:** gore desno „Ovaj mesec" — **Admin** vidi ukupno / limit + svoje, **Menadžer** samo svoje (`toBudgetView` u `app/(app)/asistent/budget.ts`). Na ≥ 80 % (`AI_WARN_RATIO`) žuto upozorenje, na 100 % crveno + slanje onemogućeno. Kad kontekst pređe `AI_LONG_CONTEXT_TOKENS` (150k) — napomena iznad polja „Razgovor je dugačak…" + „Počni nov razgovor" (`lastContextTokens` iz poslednjeg odgovora). Odstupanje od plana: limit se ne prikazuje u `/podesavanja` — vidi se u zaglavlju asistenta, a menja se kroz Vercel env.
+
+**Korak A6 — AI Asistent: QA, dozvole i dokumentacija (zatvara modul):**
+- **Bez migracije i bez nove zavisnosti.** Zaključane odluke modula su u §3 („AI Asistent — zaključane odluke"); plan je premešten u `docs/arhiva/2026-10-18-Plan-AI-Asistent.md` i označen kao urađen (A1–A6).
+- **`npm run rls:test` dopunjen** (ista skripta, ne nova): Admin pravi sopstveni razgovor `__rls-test` + poruku, čita je, a **update/delete poruke ne menja nijedan red**, i insert razgovora na TUĐE ime je odbijen; **Logistika → 0 redova na oba `ai_*` + odbijen insert**; **Menadžer ne vidi Adminov razgovor ni poruke, ne može da upiše poruku u njega, preimenuje ga ni obriše**; na kraju se test razgovor briše (poruke kaskadno). Menadžer deo je opcion kao kod T7.
+- **Živi deo NIJE pokrenut** — kao i za T7, nalozi Menadžera i Logistike još ne postoje (prvo `/korisnici`, pa kredencijali u `.env.test.local`). Statički deo (`npm run rls:static`: politike `ai_*` u migraciji, `initplan` omotač, kapije `/asistent`, `/asistent/[id]`, akcija i API rute) prolazi.
+- **QA (u pravom `AppShell`-u):** 360 px bez horizontalnog skrola i bez skrola strane; prazno stanje (predlozi), bez ključa (upozorenje), potrošen limit (crveno + slanje onemogućeno), Menadžer ne vidi ukupnu potrošnju ni iznos limita.
+- **Pre produkcije:** `AI_MONTHLY_LIMIT_USD` u Vercel env (bez njega limit u app-u ne važi) + spending limit na console.anthropic.com.

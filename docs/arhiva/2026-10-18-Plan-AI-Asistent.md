@@ -1,6 +1,6 @@
 # Sportem — Plan implementacije: AI Asistent
 
-> Verzija 1.0 · 18.10.2026 · status: **spreman za rad**
+> Verzija 1.0 · 18.10.2026 · status: **URAĐENO (A1–A6, 18.10.2026)** — važeće odluke su u `CLAUDE.md` §3 („AI Asistent — zaključane odluke") i beleškama „Korak A1"…„Korak A6" u §10.
 > Prati pravila iz `CLAUDE.md` (zaključane odluke, migracije, RLS, srpski UI, zamrznute cene).
 > **Jedan korak = jedna sesija.** Za svaku sesiju: `CLAUDE.md` + tekst tog koraka.
 

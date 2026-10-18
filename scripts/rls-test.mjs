@@ -9,6 +9,9 @@
 //   • pušta Admina i na podešavanja board-a                         (T7)
 //   • ne pušta Logistiku ni do jedne `offer_*` tabele (Ponude), i ne
 //     dozvoljava upis nijednoj roli — ponude piše samo service role
+//   • AI Asistent (A6): istorija je LIČNA — Logistika ne vidi i ne piše
+//     `ai_*`, Menadžer ne vidi i ne dira Adminov razgovor, poruke se posle
+//     upisa ne menjaju (nema update/delete politike)
 //
 // Preduslovi:
 //   • RLS migracije primenjene (supabase db push, uklj. 20260825120000_tiketi.sql)
@@ -29,6 +32,9 @@
 //   RLS_TEST_LOGISTICS_EMAIL, RLS_TEST_LOGISTICS_PASSWORD
 //   RLS_TEST_MANAGER_EMAIL, RLS_TEST_MANAGER_PASSWORD   (opciono — bez njih se
 //     Menadžer deo preskače uz upozorenje, ostatak testa i dalje važi)
+//
+// NAPOMENA: AI deo pravi jedan razgovor „__rls-test" sa jednom porukom kao
+// Admin i briše ga na kraju (poruke idu kaskadno).
 //
 // NAPOMENA: test tiketa PIŠE u bazu (pravi i odmah briše jedan tiket i jednu
 // kolonu sa prefiksom „__rls-test“). Brojač `ticket_code_seq` time odmakne za
@@ -686,6 +692,131 @@ async function testAiPoliciesInMigration() {
   );
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * AI Asistent (A6) — istorija je lična i samo za Admina/Menadžera.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+const AI_TABLES = ["ai_conversations", "ai_messages"];
+
+async function userIdOf(client) {
+  const { data } = await client.auth.getUser();
+  return data.user?.id ?? null;
+}
+
+/** Admin pravi svoj razgovor + poruku; vraća {client, convId} za kasnije provere i čišćenje. */
+async function testAdminAi() {
+  console.log("\nAdmin — sopstveni AI razgovor: piše, čita, ali poruke ne menja:");
+  const c = await signIn("admin");
+  const me = await userIdOf(c);
+
+  const conv = await c
+    .from("ai_conversations")
+    .insert({ user_id: me, title: TEST_PREFIX, model: "claude-haiku-5-5" })
+    .select("id")
+    .single();
+  check("ai_conversations ← insert sopstvenog razgovora", !conv.error, conv.error?.message ?? "");
+  const convId = conv.data?.id ?? null;
+  if (!convId) return { client: c, convId: null };
+
+  const msg = await c
+    .from("ai_messages")
+    .insert({
+      conversation_id: convId,
+      role: "user",
+      content: [{ type: "text", text: TEST_PREFIX }],
+    })
+    .select("id")
+    .single();
+  check("ai_messages ← insert u sopstveni razgovor", !msg.error, msg.error?.message ?? "");
+
+  const read = await c.from("ai_messages").select("id").eq("conversation_id", convId);
+  check("ai_messages → čita sopstvenu poruku", (read.data?.length ?? 0) === 1);
+
+  if (msg.data?.id) {
+    await expectUpdateNoRows(
+      c,
+      "ai_messages",
+      msg.data.id,
+      { content: [{ type: "text", text: "izmenjeno" }] },
+      "ai_messages → update ne menja nijedan red (append-only)",
+    );
+    const del = await c.from("ai_messages").delete().eq("id", msg.data.id).select("id");
+    check(
+      "ai_messages → delete ne briše nijedan red (briše se samo kaskadno)",
+      !!del.error || (del.data?.length ?? 0) === 0,
+      del.error ? `odbijeno (${del.error.code ?? "greška"})` : `obrisano: ${del.data?.length ?? 0}`,
+    );
+  }
+
+  await expectInsertDenied(
+    c,
+    "ai_conversations",
+    { user_id: "00000000-0000-0000-0000-000000000000", title: TEST_PREFIX, model: "x" },
+    "ai_conversations ← insert na TUĐE ime odbijen",
+  );
+
+  return { client: c, convId };
+}
+
+async function testLogisticsAi() {
+  console.log("\nLogistika — AI asistent MORA biti nedostupan (vidi zaradu):");
+  const c = await signIn("logistics");
+  for (const table of AI_TABLES) check(`${table} → 0 redova`, (await countRows(c, table)) === 0);
+  await expectInsertDenied(
+    c,
+    "ai_conversations",
+    { user_id: await userIdOf(c), title: TEST_PREFIX, model: "x" },
+    "ai_conversations ← insert sopstvenog razgovora odbijen",
+  );
+  await c.auth.signOut();
+}
+
+async function testManagerAi(adminConvId) {
+  console.log("\nMenadžer — ne vidi i ne dira Adminov razgovor (istorija je lična):");
+  const c = await signInOptional("manager");
+  if (!c) return;
+  if (!adminConvId) {
+    console.log("  ⚠ preskočeno — Adminov test razgovor nije napravljen");
+    await c.auth.signOut();
+    return;
+  }
+
+  const seen = await c.from("ai_conversations").select("id").eq("id", adminConvId);
+  check("ai_conversations → Adminov razgovor nevidljiv", (seen.data?.length ?? 0) === 0);
+  const msgs = await c.from("ai_messages").select("id").eq("conversation_id", adminConvId);
+  check("ai_messages → Adminove poruke nevidljive", (msgs.data?.length ?? 0) === 0);
+  await expectInsertDenied(
+    c,
+    "ai_messages",
+    { conversation_id: adminConvId, role: "user", content: [{ type: "text", text: TEST_PREFIX }] },
+    "ai_messages ← upis u Adminov razgovor odbijen",
+  );
+  await expectUpdateNoRows(
+    c,
+    "ai_conversations",
+    adminConvId,
+    { title: "preuzeto" },
+    "ai_conversations → preimenovanje Adminovog razgovora ne menja red",
+  );
+  const del = await c.from("ai_conversations").delete().eq("id", adminConvId).select("id");
+  check(
+    "ai_conversations → brisanje Adminovog razgovora ne briše red",
+    !!del.error || (del.data?.length ?? 0) === 0,
+  );
+  await c.auth.signOut();
+}
+
+async function cleanupAdminAi({ client, convId }) {
+  if (convId) {
+    const del = await client.from("ai_conversations").delete().eq("id", convId).select("id");
+    check(
+      "čišćenje — Adminov test razgovor obrisan (poruke kaskadno)",
+      (del.data?.length ?? 0) === 1,
+    );
+  }
+  await client.auth.signOut();
+}
+
 /**
  * Statičke provere — čitaju samo fajlove iz repoa (migracije + rute), nikad
  * bazu. Zato rade i bez kredencijala i pokreću se PRE svake prijave.
@@ -714,7 +845,7 @@ async function main() {
     console.error("Nedostaje NEXT_PUBLIC_SUPABASE_URL ili NEXT_PUBLIC_SUPABASE_ANON_KEY.");
     process.exit(2);
   }
-  console.log("RLS test — Sportem OS (Korak 0.5 + T7 Tiketi)");
+  console.log("RLS test — Sportem OS (Korak 0.5 + T7 Tiketi + A6 Asistent)");
 
   // Statičke provere prve — daju rezultat i kad test nalozi nisu podešeni.
   await runStaticChecks();
@@ -731,9 +862,14 @@ async function main() {
   await testLogisticsOffers(adminOfferCounts);
   await testStaffOffersReadOnly();
 
+  const adminAi = await testAdminAi();
+  await testLogisticsAi();
+  await testManagerAi(adminAi.convId);
+  await cleanupAdminAi(adminAi);
+
   console.log(
     failures === 0
-      ? "\n✅ PASS — RLS skriva finansije i tikete od Logistike; Menadžer ne dira podešavanja.\n"
+      ? "\n✅ PASS — RLS skriva finansije, tikete i AI od Logistike; Menadžer ne dira podešavanja ni tuđe razgovore.\n"
       : `\n❌ FAIL — ${failures} provera(e) nije prošla.\n`,
   );
   process.exit(failures === 0 ? 0 : 1);
