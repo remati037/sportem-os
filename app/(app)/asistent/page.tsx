@@ -1,5 +1,7 @@
 import { requireRole } from "@/lib/auth";
 import { aiConfigured } from "@/lib/ai/client";
+import { getAiBudget } from "@/lib/ai/usage";
+import { toBudgetView } from "./budget";
 import { listAiConversations } from "@/db/ai";
 import { AI_MESSAGE_MAX } from "@/lib/validation/ai";
 
@@ -19,11 +21,14 @@ export default async function AsistentPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireRole("admin", "manager");
+  const session = await requireRole("admin", "manager");
   // „Pitaj asistenta" sa porudžbine/proizvoda — pitanje se samo pred-popuni.
   const sp = await searchParams;
   const question = typeof sp.pitanje === "string" ? sp.pitanje.slice(0, AI_MESSAGE_MAX) : "";
-  const conversations = await listAiConversations();
+  const [conversations, budget] = await Promise.all([
+    listAiConversations(),
+    getAiBudget(session.userId),
+  ]);
 
   return (
     <AsistentShell
@@ -33,6 +38,7 @@ export default async function AsistentPage({
       initialMessages={[]}
       configured={aiConfigured()}
       initialInput={question}
+      budget={toBudgetView(budget, session.profile.role)}
     />
   );
 }

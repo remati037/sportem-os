@@ -15,7 +15,13 @@ import {
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
-import { AI_MODELS, getAiModel, isAiModelId, type AiModelId } from "@/lib/ai/models";
+import {
+  AI_LONG_CONTEXT_TOKENS,
+  AI_MODELS,
+  getAiModel,
+  isAiModelId,
+  type AiModelId,
+} from "@/lib/ai/models";
 import { AI_MESSAGE_MAX } from "@/lib/validation/ai";
 import { describeToolCall } from "@/lib/ai/tool-labels";
 import type { AiDisplayMessage } from "@/db/ai";
@@ -44,7 +50,13 @@ type StreamEvent =
   | { type: "meta"; conversationId: string }
   | { type: "thinking"; delta: string }
   | { type: "text"; delta: string }
-  | { type: "done"; messageId: string | null; model: string }
+  | {
+      type: "done";
+      messageId: string | null;
+      model: string;
+      contextTokens: number;
+      costMicro: number;
+    }
   | { type: "title"; title: string }
   | { type: "sources"; sources: { url: string; title: string | null }[] }
   | { type: "tool"; name: string; label: string; input: Record<string, unknown> }
@@ -85,6 +97,10 @@ export function Chat({
   onConversationCreated,
   onTitle,
   onActivity,
+  onSpent,
+  onNew,
+  blocked = false,
+  initialContextTokens = 0,
 }: {
   conversationId: string | null;
   initialMessages: AiDisplayMessage[];
@@ -94,7 +110,14 @@ export function Chat({
   onConversationCreated: (id: string) => void;
   onTitle: (id: string, title: string) => void;
   onActivity: (id: string) => void;
+  /** Cena upravo završenog odgovora (mikro-USD) — za potrošnju u zaglavlju. */
+  onSpent: (micro: number) => void;
+  onNew: () => void;
+  /** Mesečni limit je potrošen — slanje je onemogućeno (server ionako odbija). */
+  blocked?: boolean;
+  initialContextTokens?: number;
 }) {
+  const [contextSize, setContextSize] = useState(initialContextTokens);
   const [messages, setMessages] = useState<ChatMessage[]>(() =>
     initialMessages.map((m) => ({ ...m, status: "done" as const })),
   );
@@ -236,6 +259,8 @@ export function Chat({
             patchAssistant(currentId, (m) => ({ thinking: m.thinking + event.delta }));
             break;
           case "done": {
+            setContextSize(event.contextTokens);
+            onSpent(event.costMicro);
             const savedId = event.messageId ?? currentId;
             patchAssistant(currentId, () => ({
               id: savedId,
@@ -290,7 +315,7 @@ export function Chat({
 
   function send(text?: string) {
     const message = (text ?? input).trim();
-    if (!message || streaming) return;
+    if (!message || streaming || blocked) return;
     if (message.length > AI_MESSAGE_MAX) {
       toast.error(`Poruka je predugačka (najviše ${AI_MESSAGE_MAX} znakova).`);
       return;
@@ -327,7 +352,7 @@ export function Chat({
   }
 
   function regenerate() {
-    if (streaming || !conversationRef.current) return;
+    if (streaming || blocked || !conversationRef.current) return;
     const assistantId = localId();
     setMessages((list) => {
       const trimmed = list.at(-1)?.role === "assistant" ? list.slice(0, -1) : list;
@@ -533,6 +558,20 @@ export function Chat({
           }}
           className="mx-auto w-full max-w-3xl px-4 py-3 md:px-6"
         >
+          {contextSize > AI_LONG_CONTEXT_TOKENS ? (
+            <div className="text-ink-soft mb-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span>
+                Razgovor je dugačak — svaka nova poruka šalje celu istoriju pa je sporija i skuplja.
+              </span>
+              <button
+                type="button"
+                onClick={onNew}
+                className="text-green-deep shrink-0 font-medium underline underline-offset-2"
+              >
+                Počni nov razgovor
+              </button>
+            </div>
+          ) : null}
           <div className="border-input bg-surface focus-within:border-green focus-within:ring-green/20 rounded-xl border focus-within:ring-[3px]">
             <Textarea
               ref={textareaRef}
@@ -604,7 +643,12 @@ export function Chat({
                   <Square className="fill-current" />
                 </Button>
               ) : (
-                <Button type="submit" size="icon-sm" aria-label="Pošalji" disabled={!input.trim()}>
+                <Button
+                  type="submit"
+                  size="icon-sm"
+                  aria-label="Pošalji"
+                  disabled={!input.trim() || blocked}
+                >
                   <ArrowUp />
                 </Button>
               )}

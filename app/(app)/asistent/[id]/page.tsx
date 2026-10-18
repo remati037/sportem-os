@@ -2,8 +2,16 @@ import { notFound } from "next/navigation";
 
 import { requireRole } from "@/lib/auth";
 import { aiConfigured } from "@/lib/ai/client";
+import { getAiBudget } from "@/lib/ai/usage";
+import { toBudgetView } from "../budget";
 import { isUuid } from "@/lib/validation/uuid";
-import { getAiConversation, listAiConversations, listAiMessages, toDisplayMessages } from "@/db/ai";
+import {
+  getAiConversation,
+  listAiConversations,
+  listAiMessages,
+  lastContextTokens,
+  toDisplayMessages,
+} from "@/db/ai";
 
 import { AsistentShell } from "../asistent-shell";
 
@@ -18,17 +26,19 @@ export default async function AsistentConversationPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireRole("admin", "manager");
+  const session = await requireRole("admin", "manager");
   const { id } = await params;
   if (!isUuid(id)) notFound();
 
-  const [conversation, conversations] = await Promise.all([
+  const [conversation, conversations, budget] = await Promise.all([
     getAiConversation(id),
     listAiConversations(),
+    getAiBudget(session.userId),
   ]);
   if (!conversation) notFound();
 
-  const messages = toDisplayMessages(await listAiMessages(id));
+  const rows = await listAiMessages(id);
+  const messages = toDisplayMessages(rows);
 
   return (
     <AsistentShell
@@ -37,6 +47,8 @@ export default async function AsistentConversationPage({
       conversation={conversation}
       initialMessages={messages}
       configured={aiConfigured()}
+      budget={toBudgetView(budget, session.profile.role)}
+      initialContextTokens={lastContextTokens(rows)}
     />
   );
 }

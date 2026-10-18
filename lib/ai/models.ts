@@ -67,7 +67,20 @@ export type AiUsage = {
   output_tokens: number;
   cache_read_input_tokens?: number | null;
   cache_creation_input_tokens?: number | null;
+  server_tool_use?: { web_search_requests?: number | null } | null;
 };
+
+/** Web pretraga: 10 $ na 1.000 pretraga = 10.000 mikro-USD po pretrazi. */
+export const WEB_SEARCH_MICRO_USD = 10_000;
+
+/** Veličina konteksta jednog poziva (sve ulazne tokene, keširane i ne). */
+export function contextTokens(usage: AiUsage): number {
+  return (
+    usage.input_tokens +
+    (usage.cache_read_input_tokens ?? 0) +
+    (usage.cache_creation_input_tokens ?? 0)
+  );
+}
 
 /** Cena jednog odgovora u milionitim delovima USD (integer). */
 export function costMicroUsd(modelId: string, usage: AiUsage): number {
@@ -77,5 +90,22 @@ export function costMicroUsd(modelId: string, usage: AiUsage): number {
     usage.output_tokens * price.output +
     (usage.cache_read_input_tokens ?? 0) * price.cacheRead +
     (usage.cache_creation_input_tokens ?? 0) * price.cacheWrite;
-  return Math.round(total / 1_000_000);
+  const searches = usage.server_tool_use?.web_search_requests ?? 0;
+  return Math.round(total / 1_000_000) + searches * WEB_SEARCH_MICRO_USD;
 }
+
+/** „1,23 US$" — prikaz mikro-USD (samo prikaz; računanje ostaje u integer-ima). */
+export function usd(micro: number): string {
+  return new Intl.NumberFormat("sr-RS", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(micro / 1_000_000);
+}
+
+/** Prag upozorenja za mesečni limit (80 %) — deljen server/klijent. */
+export const AI_WARN_RATIO = 0.8;
+
+/** Kontekst iznad ovoga → predlog „počni nov razgovor" (svaka poruka šalje celu istoriju). */
+export const AI_LONG_CONTEXT_TOKENS = 150_000;

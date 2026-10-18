@@ -23,6 +23,9 @@ export type AiMessageRow = {
   content: unknown;
   model: string | null;
   created_at: string;
+  input_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
 };
 
 /** Poruka za prikaz u chatu (bez tool/thinking sirovine). */
@@ -74,7 +77,9 @@ export async function listAiMessages(conversationId: string): Promise<AiMessageR
   return selectAll<AiMessageRow>("ai_messages", () =>
     supabase
       .from("ai_messages")
-      .select("id, role, content, model, created_at")
+      .select(
+        "id, role, content, model, created_at, input_tokens, cache_read_tokens, cache_write_tokens",
+      )
       .eq("conversation_id", conversationId)
       .order("created_at")
       .order("id"),
@@ -156,7 +161,10 @@ export function toDisplayMessages(rows: AiMessageRow[]): AiDisplayMessage[] {
       .filter(Boolean)
       .join("\n\n");
     const tools = list
-      .filter((b) => (b.type === "tool_use" || b.type === "server_tool_use") && typeof b.name === "string")
+      .filter(
+        (b) =>
+          (b.type === "tool_use" || b.type === "server_tool_use") && typeof b.name === "string",
+      )
       .map((b) => ({ name: b.name as string, input: (b.input ?? {}) as Record<string, unknown> }));
 
     const sources = sourcesOf(row.content);
@@ -175,4 +183,10 @@ export function toDisplayMessages(rows: AiMessageRow[]): AiDisplayMessage[] {
     }
   }
   return out;
+}
+
+/** Veličina konteksta poslednjeg odgovora (tokeni) — za napomenu o dugom razgovoru. */
+export function lastContextTokens(rows: AiMessageRow[]): number {
+  const last = [...rows].reverse().find((r) => r.role === "assistant" && r.input_tokens > 0);
+  return last ? last.input_tokens + last.cache_read_tokens + last.cache_write_tokens : 0;
 }

@@ -3,7 +3,15 @@ import * as Sentry from "@sentry/nextjs";
 
 import { getAiSession } from "@/lib/ai/access";
 import { getAnthropic } from "@/lib/ai/client";
-import { AI_TITLE_MODEL, costMicroUsd, getAiModel, type AiModel } from "@/lib/ai/models";
+import {
+  AI_TITLE_MODEL,
+  contextTokens,
+  costMicroUsd,
+  getAiModel,
+  usd,
+  type AiModel,
+} from "@/lib/ai/models";
+import { getAiBudget } from "@/lib/ai/usage";
 import { SYSTEM_PROMPT, userContextBlock } from "@/lib/ai/system-prompt";
 import { createAiTools } from "@/lib/ai/tools";
 import { todayBelgrade } from "@/lib/date-belgrade";
@@ -59,7 +67,15 @@ type Event =
   | { type: "thinking"; delta: string }
   | { type: "text"; delta: string }
   | { type: "tool"; name: string; label: string; input: Record<string, unknown> }
-  | { type: "done"; messageId: string | null; model: string }
+  | {
+      type: "done";
+      messageId: string | null;
+      model: string;
+      /** Veličina konteksta poslednjeg poziva (za „razgovor je predugačak"). */
+      contextTokens: number;
+      /** Cena ovog odgovora (mikro-USD) — UI dopisuje na mesečnu potrošnju. */
+      costMicro: number;
+    }
   | { type: "title"; title: string }
   | { type: "sources"; sources: AiSource[] }
   | { type: "error"; message: string };
@@ -136,6 +152,21 @@ export async function POST(request: Request) {
   const client = getAnthropic();
   if (!client) return jsonError("AI asistent nije podešen (nedostaje ključ na serveru).", 503);
 
+  // Mesečni limit (A5) — proverava se PRE svakog poziva, za ceo nalog.
+  try {
+    const budget = await getAiBudget(session.userId);
+    if (budget.blocked && budget.limitMicro != null) {
+      return jsonError(
+        `Mesečni limit AI asistenta je potrošen (${usd(budget.totalMicro)} od ${usd(budget.limitMicro)}). Limit se resetuje 1. u mesecu.`,
+        429,
+      );
+    }
+  } catch (err) {
+    // Neuspelo merenje ne sme da ugasi asistenta — spending limit na
+    // Anthropic nalogu i dalje važi kao poslednja brana.
+    Sentry.captureException(err, { tags: { area: "ai-budget" } });
+  }
+
   const model = getAiModel(req.model);
   const supabase = await createClient();
 
@@ -195,7 +226,9 @@ export async function POST(request: Request) {
     const { data: inserted, error } = await supabase
       .from("ai_messages")
       .insert({ conversation_id: conversationId, role: "user", content })
-      .select("id, role, content, model, created_at")
+      .select(
+        "id, role, content, model, created_at, input_tokens, cache_read_tokens, cache_write_tokens",
+      )
       .single();
     if (error || !inserted) {
       Sentry.captureException(error, { tags: { area: "ai-chat" } });
@@ -367,7 +400,7 @@ export async function POST(request: Request) {
             output_tokens: final?.usage.output_tokens ?? 0,
             cache_read_tokens: final?.usage.cache_read_input_tokens ?? 0,
             cache_write_tokens: final?.usage.cache_creation_input_tokens ?? 0,
-            cost_micro_usd: final ? costMicroUsd(model.id, final.usage) : 0,
+            cost_micro_usd: final ? costMicroUsd(final.model ?? model.id, final.usage) : 0,
             // Isti `now()` za ceo batch bi pomešao redosled — eksplicitno +1 ms.
             created_at: new Date(base + i).toISOString(),
           };
@@ -396,7 +429,16 @@ export async function POST(request: Request) {
         .update({ model: model.id, updated_at: new Date().toISOString() })
         .eq("id", conversationId);
 
-      if (messageId) send({ type: "done", messageId, model: model.id });
+      if (messageId) {
+        const lastFinal = finals.at(-1);
+        send({
+          type: "done",
+          messageId,
+          model: model.id,
+          contextTokens: lastFinal ? contextTokens(lastFinal.usage) : 0,
+          costMicro: finals.reduce((sum, f) => sum + costMicroUsd(f.model ?? model.id, f.usage), 0),
+        });
+      }
 
       if (needsTitle && answer.trim() && !abort.signal.aborted) {
         const title = await generateTitle(client, questionText, answer);
