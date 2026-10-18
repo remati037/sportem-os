@@ -1,6 +1,6 @@
 # Sportem — Plan implementacije: Kupci
 
-> Verzija 1.1 · 18.10.2026 · status: **u radu — odluke §0.2 i §0.3 potvrđene 18.10.2026; C1 urađen**
+> Verzija 1.1 · 18.10.2026 · status: **u radu — odluke §0.2 i §0.3 potvrđene 18.10.2026; C1–C2 urađeni**
 > Prati pravila iz `CLAUDE.md` (zaključane odluke, migracije, RLS, srpski UI, zamrznute cene).
 > **Jedan korak = jedna sesija.** Za svaku sesiju: `CLAUDE.md` + tekst tog koraka + „PROMPT ZA SESIJU".
 
@@ -141,7 +141,7 @@ taj dan; danas više) — isti broj porudžbina, promet i zarada po kupcu, 0 RSD
 
 ---
 
-### C2 — Profil kupca `/kupci/[id]`
+### C2 — Profil kupca `/kupci/[id]` ✅ urađeno 18.10.2026 (beleška: CLAUDE.md §10 „Korak C2")
 
 **Cilj:** sve o jednom kupcu na jednom ekranu.
 

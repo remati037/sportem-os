@@ -245,7 +245,7 @@ function DesktopTable({ rows }: { rows: CustomerListRow[] }) {
     <div className="border-border bg-surface shadow-soft hidden overflow-hidden rounded-lg border md:block">
       <Table>
         <TableHeader>
-          <TableRow>
+          <TableRow className="border-border hover:bg-transparent">
             <TableHead>Kupac</TableHead>
             <TableHead>Grad</TableHead>
             <TableHead className="text-right">Porudžbine</TableHead>
@@ -256,7 +256,7 @@ function DesktopTable({ rows }: { rows: CustomerListRow[] }) {
         </TableHeader>
         <TableBody>
           {rows.map((r) => (
-            <TableRow key={r.repId}>
+            <TableRow key={r.repId} className="border-border">
               <TableCell>
                 <div className="flex flex-wrap items-center gap-2">
                   <Link

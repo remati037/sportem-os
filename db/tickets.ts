@@ -1080,6 +1080,38 @@ export async function listTicketsForProduct(productId: string): Promise<TicketLi
   return rows;
 }
 
+/**
+ * Tiketi jednog KUPCA (profil `/kupci/[id]`, Korak C2). Kupac je grupa od više
+ * `customers` redova (db/customers.ts), pa se traže tiketi vezani za bilo koji
+ * red grupe — i tiketi vezani za neku od njegovih porudžbina (npr. auto-tiket
+ * „rizičan kupac" nosi obe veze, a ručni tiket često samo porudžbinu).
+ */
+export async function listTicketsForCustomers(
+  customerIds: readonly string[],
+  orderIds: readonly string[] = [],
+): Promise<TicketListRow[]> {
+  const supabase = await createClient();
+  const byId = new Map<string, TicketRaw>();
+  const collect = async (column: "customer_id" | "order_id", ids: readonly string[]) => {
+    for (const chunk of chunked(ids)) {
+      const res = await supabase
+        .from("tickets")
+        .select(TICKET_COLS)
+        .in(column, chunk)
+        .order("code", { ascending: false })
+        .range(0, LINKED_TICKETS_LIMIT - 1);
+      for (const t of mustRows<TicketRaw>(res, `tiketi kupca (${column})`)) byId.set(t.id, t);
+    }
+  };
+  await Promise.all([collect("customer_id", customerIds), collect("order_id", orderIds)]);
+
+  const raw = [...byId.values()].sort((a, b) => b.code - a.code).slice(0, LINKED_TICKETS_LIMIT);
+  if (raw.length === 0) return [];
+
+  const { rows } = await hydrateTickets(supabase, raw);
+  return rows;
+}
+
 /* ── Kartica „Moji tiketi" na Dashboardu (Korak T6) ─────────────────────── */
 
 export type MyTicketsSummary = {

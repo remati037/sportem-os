@@ -402,6 +402,7 @@ async function testRouteGuards() {
     "app/(app)/asistent/[id]/page.tsx",
     "app/(app)/asistent/actions.ts",
     "app/(app)/kupci/page.tsx",
+    "app/(app)/kupci/[id]/page.tsx",
   ];
 
   for (const file of files) {

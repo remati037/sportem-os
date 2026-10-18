@@ -4,7 +4,8 @@ import { cache } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/server";
-import { mustRows, selectAllByIdShards } from "@/lib/supabase/paginate";
+import { mustRows, selectAllByIdShards, selectAllIn } from "@/lib/supabase/paginate";
+import { isUuid } from "@/lib/validation/uuid";
 import { belgradeDate, todayBelgrade } from "@/lib/date-belgrade";
 import { CANCELLED_STATUS_NAMES } from "@/lib/woo";
 import { normEmail } from "@/db/customer-risk";
@@ -401,4 +402,196 @@ export async function listCustomers({
   }));
 
   return { rows, total: filtered.length, counts };
+}
+
+/* ── Profil /kupci/[id] (Korak C2) ───────────────────────────────────────── */
+
+export type CustomerProfileOrder = {
+  id: string;
+  woo_order_id: number | null;
+  ordered_at: string;
+  status: { name: string; color: string | null } | null;
+  cancelled: boolean;
+  needs_vp: boolean;
+  revenue: number; // vrednost stavki (zamrznuto), i za otkazane — prikaz
+  profit: number | null; // null dok neka stavka nema VP
+};
+
+export type CustomerProfileArticle = {
+  sku: string;
+  name: string | null; // product_name snapshot sa najnovije stavke
+  units: number;
+  orders: number;
+};
+
+export type CustomerCancellation = {
+  orderId: string;
+  woo_order_id: number | null;
+  ordered_at: string;
+  status: string | null;
+  reason: string | null; // poslednja napomena pri prelasku u Otkazano/Vraćeno
+};
+
+export type CustomerProfile = {
+  group: CustomerGroup;
+  address: string | null; // sa najnovije porudžbine: ulica, poštanski broj grad
+  orders: CustomerProfileOrder[];
+  articles: CustomerProfileArticle[];
+  cancellations: CustomerCancellation[];
+};
+
+type ProfileOrderRow = {
+  id: string;
+  woo_order_id: number | null;
+  ordered_at: string | null;
+  created_at: string;
+  status_id: string;
+  needs_vp: boolean;
+  ship_address: string | null;
+  ship_postal_code: string | null;
+  ship_city: string | null;
+  status: { name: string; color: string | null } | null;
+};
+
+type ProfileItemRow = {
+  order_id: string;
+  sku: string | null;
+  product_name: string | null;
+  quantity: number;
+  mp_at_sale: number;
+  profit_at_sale: number | null;
+};
+
+/** Grupa kojoj pripada `customers.id` (bilo koji red grupe, ne samo repId). */
+export async function findCustomerGroup(customerId: string): Promise<CustomerGroup | null> {
+  if (!isUuid(customerId)) return null;
+  const groups = await loadCustomerGroups();
+  return groups.find((g) => g.customerIds.includes(customerId)) ?? null;
+}
+
+/**
+ * Sve o jednom kupcu: porudžbine (najnovije prvo), artikli po `sku`, razlozi
+ * otkazivanja. Zbirovi (promet/zarada) su iz grupe — iste cifre kao lista.
+ * Novac isključivo iz zamrznutih `order_items`; katalog se ne čita.
+ */
+export async function getCustomerProfile(customerId: string): Promise<CustomerProfile | null> {
+  const group = await findCustomerGroup(customerId);
+  if (!group) return null;
+
+  const supabase = await createClient();
+  const [orderRows, itemRows, statuses] = await Promise.all([
+    selectAllIn<ProfileOrderRow, string>("profil kupca: orders", group.orderIds, (chunk) =>
+      supabase
+        .from("orders")
+        .select(
+          "id, woo_order_id, ordered_at, created_at, status_id, needs_vp, ship_address, ship_postal_code, ship_city, status:order_statuses(name, color)",
+        )
+        .in("id", chunk)
+        .order("id", { ascending: true }),
+    ),
+    selectAllIn<ProfileItemRow, string>("profil kupca: order_items", group.orderIds, (chunk) =>
+      supabase
+        .from("order_items")
+        .select("order_id, sku, product_name, quantity, mp_at_sale, profit_at_sale")
+        .in("order_id", chunk)
+        .order("id", { ascending: true }),
+    ),
+    supabase.from("order_statuses").select("id").in("name", CANCELLED_STATUS_NAMES),
+  ]);
+  const cancelledIds = new Set(
+    mustRows<{ id: string }>(statuses, "profil kupca: statusi Otkazano/Vraćeno").map((s) => s.id),
+  );
+
+  const time = (o: ProfileOrderRow) => o.ordered_at ?? o.created_at;
+  orderRows.sort((a, b) => time(b).localeCompare(time(a)) || a.id.localeCompare(b.id));
+
+  // ── novac po porudžbini ──
+  const money = new Map<string, { revenue: number; profit: number; missingVp: boolean }>();
+  for (const it of itemRows) {
+    const m = money.get(it.order_id) ?? { revenue: 0, profit: 0, missingVp: false };
+    m.revenue += it.mp_at_sale * it.quantity;
+    if (it.profit_at_sale == null) m.missingVp = true;
+    else m.profit += it.profit_at_sale;
+    money.set(it.order_id, m);
+  }
+
+  const orders: CustomerProfileOrder[] = orderRows.map((o) => {
+    const m = money.get(o.id);
+    return {
+      id: o.id,
+      woo_order_id: o.woo_order_id,
+      ordered_at: time(o),
+      status: o.status,
+      cancelled: cancelledIds.has(o.status_id),
+      needs_vp: o.needs_vp,
+      revenue: m?.revenue ?? 0,
+      profit: m?.missingVp ? null : (m?.profit ?? 0),
+    };
+  });
+
+  // ── artikli po SKU (samo realizovane porudžbine) ──
+  const realized = new Set(orders.filter((o) => !o.cancelled).map((o) => o.id));
+  const orderTimeById = new Map(orders.map((o) => [o.id, o.ordered_at]));
+  const bySku = new Map<
+    string,
+    { name: string | null; nameAt: string; units: number; orders: Set<string> }
+  >();
+  for (const it of itemRows) {
+    if (!realized.has(it.order_id)) continue;
+    const sku = it.sku?.trim() || "(bez SKU)";
+    const at = orderTimeById.get(it.order_id) ?? "";
+    const a = bySku.get(sku) ?? { name: null, nameAt: "", units: 0, orders: new Set<string>() };
+    a.units += it.quantity;
+    a.orders.add(it.order_id);
+    if (it.product_name && at >= a.nameAt) {
+      a.name = it.product_name;
+      a.nameAt = at;
+    }
+    bySku.set(sku, a);
+  }
+  const articles = [...bySku.entries()]
+    .map(([sku, a]) => ({ sku, name: a.name, units: a.units, orders: a.orders.size }))
+    .sort((x, y) => y.units - x.units || x.sku.localeCompare(y.sku));
+
+  // ── razlozi otkazivanja (order_status_history.note) ──
+  const cancelledOrders = orders.filter((o) => o.cancelled);
+  const reasons = new Map<string, string>();
+  if (cancelledOrders.length > 0) {
+    const notes = await selectAllIn<
+      { order_id: string; to_status_id: string; note: string | null; created_at: string },
+      string
+    >(
+      "profil kupca: razlozi otkazivanja",
+      cancelledOrders.map((o) => o.id),
+      (chunk) =>
+        supabase
+          .from("order_status_history")
+          .select("order_id, to_status_id, note, created_at")
+          .in("order_id", chunk)
+          .not("note", "is", null)
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true }),
+    );
+    // Najnovija napomena pri prelasku u otkazni status pobeđuje.
+    for (const n of notes) {
+      if (!cancelledIds.has(n.to_status_id) || !n.note?.trim()) continue;
+      if (!reasons.has(n.order_id)) reasons.set(n.order_id, n.note.trim());
+    }
+  }
+  const cancellations: CustomerCancellation[] = cancelledOrders.map((o) => ({
+    orderId: o.id,
+    woo_order_id: o.woo_order_id,
+    ordered_at: o.ordered_at,
+    status: o.status?.name ?? null,
+    reason: reasons.get(o.id) ?? null,
+  }));
+
+  const newest = orderRows[0];
+  const street = newest?.ship_address?.trim();
+  const place = [newest?.ship_postal_code?.trim(), newest?.ship_city?.trim()]
+    .filter(Boolean)
+    .join(" ");
+  const address = [street, place].filter(Boolean).join(", ") || null;
+
+  return { group, address, orders, articles, cancellations };
 }
