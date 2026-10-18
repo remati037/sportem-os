@@ -1,6 +1,6 @@
 # Sportem — Plan implementacije: Kupci
 
-> Verzija 1.0 · 18.10.2026 · status: **nacrt — odluke iz §0.2 potvrditi na početku prve sesije**
+> Verzija 1.1 · 18.10.2026 · status: **u radu — odluke §0.2 i §0.3 potvrđene 18.10.2026; C1 urađen**
 > Prati pravila iz `CLAUDE.md` (zaključane odluke, migracije, RLS, srpski UI, zamrznute cene).
 > **Jedan korak = jedna sesija.** Za svaku sesiju: `CLAUDE.md` + tekst tog koraka + „PROMPT ZA SESIJU".
 
@@ -22,7 +22,7 @@ Ovaj modul je **radni ekran** (pretraga → jedan kupac → akcija). Oba stoje n
 spajanja kupaca** (`db/customers.ts`, korak C1) — R2 je posle toga samo nekoliko definicija u
 registru izveštaja i ne sme da pravi sopstveno spajanje. Ko god od njih krene prvi, pravi C1.
 
-### 0.2 Odluke — PREDLOG (potvrditi sa korisnikom pre C1)
+### 0.2 Odluke — POTVRĐENE 18.10.2026 (sve po predlogu)
 
 | # | Tema | Predlog | Zašto |
 |---|---|---|---|
@@ -35,7 +35,7 @@ registru izveštaja i ne sme da pravi sopstveno spajanje. Ko god od njih krene p
 | D7 | Izmena podataka kupca | **ne** — kontakt je snapshot iz Woo-a, menja se na sajtu | app nije CRM za unos; webhook je izvor |
 | D8 | Spajanje dva kupca ručno („to je ista osoba") | **van v1** | traži tabelu aliasa i menja sve zbirove; prvo videti koliko se stvarno javlja |
 
-### 0.3 Otvorena pitanja (pitati na početku C1)
+### 0.3 Pitanja — ODGOVORENA 18.10.2026 (sve po predlogu: fiksne oznake · 3 meseca · Menadžer piše · interni mejlovi isključeni)
 
 1. **D6 — oznake:** fiksna lista (`Stalni kupac` · `Veleprodaja` · `Pazi — zvati pre slanja`) ili podesiva u `/podesavanja` kao tagovi tiketa? Predlog: **fiksna u v1**.
 2. **„Neaktivan"** — posle koliko meseci bez kupovine? Predlog: **3**, podesivo u filteru.
@@ -106,7 +106,7 @@ grupe (tada beleške iz C3 prate oba stara ključa — v. C3).
 
 ## 2. Faze i koraci
 
-### C1 — Spajanje kupaca + lista `/kupci`
+### C1 — Spajanje kupaca + lista `/kupci` ✅ urađeno 18.10.2026 (beleška: CLAUDE.md §10 „Korak C1")
 
 **Cilj:** lista svih kupaca koja se poklapa sa ručnim izvozom ponovnih kupaca.
 

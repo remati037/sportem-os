@@ -39,7 +39,7 @@ type IndexRow = {
  */
 const OUR_EMAILS = new Set(["mmarkom2000@gmail.com", "milenkovic.m2003@gmail.com"]);
 
-function normEmail(raw: string | null | undefined): string | null {
+export function normEmail(raw: string | null | undefined): string | null {
   const e = (raw ?? "").trim().toLowerCase();
   if (!e || OUR_EMAILS.has(e)) return null;
   return e;

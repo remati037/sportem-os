@@ -19,7 +19,8 @@
     "offers:check": "node --env-file-if-exists=.env.local scripts/offers-check.mjs",
     "ai:check": "npx --yes tsx@4.20.6 --conditions=react-server --env-file-if-exists=.env.local scripts/ai-check.ts",
     "backfill": "node --env-file-if-exists=.env.local scripts/woo-backfill.mjs",
-    "backfill:apply": "node --env-file-if-exists=.env.local scripts/woo-backfill.mjs --apply"
+    "backfill:apply": "node --env-file-if-exists=.env.local scripts/woo-backfill.mjs --apply",
+    "provera:c1": "npx --yes tsx@4.20.6 --conditions=react-server --env-file-if-exists=.env.local scripts/provera-c1.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",

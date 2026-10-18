@@ -780,6 +780,53 @@ const PROBES = [
       ]);
     },
   },
+
+  {
+    key: "kupci",
+    name: "Kupci — lista  (app/(app)/kupci/page.tsx)",
+    async run(ctx) {
+      const { rec, c } = ctx;
+      await getProfileQuery(ctx);
+
+      // lib/supabase/paginate.ts → selectAllByIdShards (4 UUID opsega paralelno)
+      const bounds = [
+        "00000000-0000-0000-0000-000000000000",
+        "40000000-0000-0000-0000-000000000000",
+        "80000000-0000-0000-0000-000000000000",
+        "c0000000-0000-0000-0000-000000000000",
+      ];
+      const shards = (label, build) =>
+        Promise.all(
+          bounds.map((lo, i) =>
+            paginated(rec, `${label} [deo ${i + 1}/4]`, () => build(lo, bounds[i + 1] ?? null)),
+          ),
+        );
+
+      // db/customers.ts → fetchCustomerSources (statusi + porudžbine + stavke paralelno;
+      // grupisanje je u JS-u)
+      await Promise.all([
+        rec.run("kupci: order_statuses (Otkazano/Vraćeno)", () =>
+          c.from("order_statuses").select("id").in("name", CANCELLED_STATUS_NAMES),
+        ),
+        shards("kupci: orders", (lo, hi) => {
+          const q = c
+            .from("orders")
+            .select(
+              "id, woo_order_id, ordered_at, created_at, status_id, needs_vp, customer_id, ship_name, ship_city, ship_phone, ship_phone_norm, customer:customers(name, phone, phone_norm, email, city)",
+            )
+            .gte("id", lo);
+          return (hi ? q.lt("id", hi) : q).order("id", { ascending: true });
+        }),
+        shards("kupci: order_items", (lo, hi) => {
+          const q = c
+            .from("order_items")
+            .select("order_id, quantity, mp_at_sale, profit_at_sale")
+            .gte("id", lo);
+          return (hi ? q.lt("id", hi) : q).order("id", { ascending: true });
+        }),
+      ]);
+    },
+  },
 ];
 
 const ZERO_UUID = "00000000-0000-0000-0000-000000000000";

@@ -156,3 +156,37 @@ export async function selectAllIn<Row, Id>(
   }
   return rows;
 }
+
+/**
+ * Granice četiri jednaka UUID opsega (po prvoj heks cifri: 0–3, 4–7, 8–b, c–f).
+ * UUID-jevi su nasumični (v4), pa su delovi približno iste veličine.
+ */
+const UUID_SHARD_BOUNDS = [
+  "00000000-0000-0000-0000-000000000000",
+  "40000000-0000-0000-0000-000000000000",
+  "80000000-0000-0000-0000-000000000000",
+  "c0000000-0000-0000-0000-000000000000",
+] as const;
+
+/**
+ * Cela tabela PARALELNO: `selectAll` nad četiri opsega `id`-ja istovremeno.
+ * `selectAll` čita strane redom (svaka čeka prethodnu), pa tabela od 1.500 redova
+ * košta dva uzastopna zahteva; ovde je zid jedan zahtev od ~400 redova.
+ *
+ * `build(lo, hi)` mora da doda `.gte("id", lo)` i, kad `hi` nije `null`,
+ * `.lt("id", hi)` — opsezi se ne preklapaju i zajedno pokrivaju sve UUID-jeve.
+ * Svaki deo je i dalje paginiran (`order("id")` je obavezan, kao uvek).
+ */
+export async function selectAllByIdShards<Row>(
+  label: string,
+  build: (lo: string, hi: string | null) => RangeableQuery,
+): Promise<Row[]> {
+  const parts = await Promise.all(
+    UUID_SHARD_BOUNDS.map((lo, i) =>
+      selectAll<Row>(`${label} [deo ${i + 1}/${UUID_SHARD_BOUNDS.length}]`, () =>
+        build(lo, UUID_SHARD_BOUNDS[i + 1] ?? null),
+      ),
+    ),
+  );
+  return parts.flat();
+}

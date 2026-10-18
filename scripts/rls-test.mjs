@@ -382,7 +382,9 @@ async function testTicketPoliciesInMigration() {
 /* Kapije ruta su higijena (RLS je izvor sigurnosti), ali `/tiketi` mora da
    redirektuje Logistiku — statički proveravamo da svaki ulaz zove requireRole. */
 async function testRouteGuards() {
-  console.log("\nKapije ruta — /tiketi, /ponude i /asistent propuštaju samo Admina i Menadžera:");
+  console.log(
+    "\nKapije ruta — /tiketi, /ponude, /asistent i /kupci propuštaju samo Admina i Menadžera:",
+  );
   const { readFile } = await import("node:fs/promises");
   const { fileURLToPath } = await import("node:url");
   const { dirname, join } = await import("node:path");
@@ -399,6 +401,7 @@ async function testRouteGuards() {
     "app/(app)/asistent/page.tsx",
     "app/(app)/asistent/[id]/page.tsx",
     "app/(app)/asistent/actions.ts",
+    "app/(app)/kupci/page.tsx",
   ];
 
   for (const file of files) {
