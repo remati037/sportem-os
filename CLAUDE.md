@@ -16,6 +16,7 @@ Vlasnici: **korisnik (Admin)** i **brat (Menadžer)**. **Drug (Logistika)** je d
   za važeće odluke gleda se §3 ovog fajla, ne plan (plan još tvrdi „Email nije u Fazi 1", što više ne važi).
 - `docs/Sportem-Dizajn-Sistem.md` — dizajn tokeni, boje, tipografija, komponente. Izvor istine za UI (Korak 0.2/0.3).
 - `docs/Sportem-Plan-Izvestaji.md` — **živi plan**: modul Izveštaji / Izvoz, faze R0–R8. Bez migracije.
+- `docs/Sportem-Plan-Kupci.md` (C1–C6), `docs/Sportem-Plan-Nabavka.md` (N1–N4), `docs/Sportem-Plan-Reklame.md` (M0–M5) — **nacrti** za „Uskoro" stavke iz navigacije; odluke u njihovom §0 su PREDLOG i potvrđuju se na početku prvog koraka.
 - `docs/backlog.md` — šta je još otvoreno (P0/P1/P2), provereno nad kodom 22.09.2026.
 
 ---
