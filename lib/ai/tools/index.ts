@@ -15,8 +15,20 @@ import {
 } from "@/db/finance";
 import { getOrderDetail, getOrderStatusHistory } from "@/db/orders";
 import { getOfferStats, listOfferRules } from "@/db/offers";
+import {
+  findCustomerGroup,
+  getCustomerFlags,
+  getCustomerNotes,
+  getCustomerProfileForGroup,
+  isRepeatCustomer,
+  isRiskyCustomer,
+  loadCustomerGroups,
+  searchCustomerGroups,
+  type CustomerGroup,
+} from "@/db/customers";
+import { customerFlagMeta } from "@/lib/customers";
 import { resolveOfferPeriod } from "@/lib/offers/period";
-import { chunked, mustRows, selectAll } from "@/lib/supabase/paginate";
+import { chunked, mustOne, mustRows, selectAll } from "@/lib/supabase/paginate";
 
 import { AI_TOOL_LABELS } from "@/lib/ai/tool-labels";
 
@@ -403,6 +415,114 @@ export function createAiTools(
               zarada_rsd: o.cancelled ? 0 : t.profit,
             };
           }),
+        };
+      },
+    ),
+
+    tool(
+      "kupac_profil",
+      "Profil JEDNOG kupca kroz celu istoriju (kupac = sve porudžbine spojene po telefonu, pa po e-mailu — iste cifre kao strana /kupci): broj porudžbina, otkazane/vraćene, promet, zarada, prosečna korpa, prva i poslednja kupovina, šta kupuje (po SKU), razlozi otkazivanja, oznake i beleške tima. Traži po imenu, gradu, telefonu ili e-mailu (`pretraga`) ili po broju porudžbine. Kad pretraga pogodi više kupaca, vraća spisak kandidata — tada pitaj korisnika na kog misli. Telefon i e-mail vraća SAMO uz `sa_kontaktom: true`, i to samo kad korisnik izričito traži kontakt.",
+      z.object({
+        pretraga: z.string().max(100).optional().describe("Ime, grad, telefon ili e-mail kupca"),
+        broj_porudzbine: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Woo broj neke porudžbine tog kupca"),
+        sa_kontaktom: z.boolean().default(false),
+      }),
+      async ({ pretraga, broj_porudzbine, sa_kontaktom }) => {
+        // Svi kupci jednom po pozivu, kroz klijent alata (RLS korisnika).
+        const groups = await loadCustomerGroups(supabase);
+        let group: CustomerGroup | null = null;
+
+        if (broj_porudzbine) {
+          const order = mustOne<{ customer_id: string | null }>(
+            await supabase
+              .from("orders")
+              .select("customer_id")
+              .eq("woo_order_id", broj_porudzbine)
+              .maybeSingle(),
+            "AI: porudžbina kupca",
+          );
+          if (!order) return { greska: `Porudžbina #${broj_porudzbine} ne postoji.` };
+          group = await findCustomerGroup(order.customer_id ?? "", supabase, groups);
+        } else if (pretraga?.trim()) {
+          const found = searchCustomerGroups(groups, pretraga, 10);
+          if (found.length === 0) return { greska: `Nema kupca za „${pretraga}”.` };
+          if (found.length > 1) {
+            return {
+              napomena:
+                "Više kupaca odgovara pretrazi — pitaj korisnika na kog misli (ili suzi po gradu/broju porudžbine).",
+              kandidati: found.map((c) => ({
+                ime: c.name,
+                grad: c.city,
+                porudzbine: c.orderCount,
+                promet_rsd: c.revenue,
+                poslednja_kupovina: c.lastOrderAt.slice(0, 10),
+              })),
+            };
+          }
+          group = found[0];
+        } else {
+          return { greska: "Zadaj pretragu (ime/telefon/e-mail) ili broj porudžbine." };
+        }
+
+        if (!group) return { greska: "Kupac nije pronađen." };
+        const [profile, flags, notes] = await Promise.all([
+          getCustomerProfileForGroup(group, supabase),
+          getCustomerFlags(group, supabase),
+          getCustomerNotes(group, supabase),
+        ]);
+        const g = profile.group;
+
+        return {
+          ime: g.name,
+          grad: g.city,
+          ...(sa_kontaktom ? { telefon: g.phone, email: g.email, adresa: profile.address } : {}),
+          link: `/kupci/${g.repId}`,
+          porudzbine_ukupno: g.orderCount,
+          porudzbine_realizovane: g.realizedCount,
+          otkazano_ili_vraceno: g.cancelledCount,
+          stopa_otkazivanja_procenat: pct(g.cancelledCount, g.orderCount),
+          promet_rsd: g.revenue,
+          zarada_rsd: g.profit,
+          komada: g.units,
+          prosecna_korpa_rsd: g.realizedCount > 0 ? round(g.revenue / g.realizedCount) : 0,
+          prva_kupovina: g.firstOrderAt.slice(0, 10),
+          poslednja_kupovina: g.lastOrderAt.slice(0, 10),
+          ponovni_kupac: isRepeatCustomer(g),
+          rizican_kupac: isRiskyCustomer(g),
+          oznake: flags.map((f) => customerFlagMeta(f).label),
+          porudzbine: profile.orders.slice(0, 20).map((o) => ({
+            broj: o.woo_order_id,
+            datum: o.ordered_at.slice(0, 10),
+            status: o.status?.name ?? null,
+            vrednost_rsd: o.revenue,
+            zarada_rsd: o.cancelled ? null : o.profit,
+          })),
+          artikli: profile.articles.slice(0, 15).map((a) => ({
+            sku: a.sku,
+            naziv: a.name,
+            komada: a.units,
+            porudzbina: a.orders,
+          })),
+          razlozi_otkazivanja: profile.cancellations.slice(0, 10).map((c) => ({
+            broj: c.woo_order_id,
+            status: c.status,
+            razlog: c.reason,
+          })),
+          beleske: notes.slice(0, 5).map((n) => ({
+            datum: n.created_at.slice(0, 10),
+            autor: n.authorName,
+            tekst: n.body,
+          })),
+          ...(g.needsVpCount > 0
+            ? {
+                napomena: `${g.needsVpCount} porudžbina bez VP — zarada je nepotpuna (niža od stvarne).`,
+              }
+            : {}),
         };
       },
     ),

@@ -73,7 +73,13 @@ export function LinkedPanel({ context }: { context: TicketLinkedContext }) {
         {customer ? (
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-3">
             <User className="text-ink-faint size-4 shrink-0" />
-            <span className="text-ink text-sm font-medium">{customer.name ?? "Bez imena"}</span>
+            {/* Profil sam preusmerava na glavni red grupe kupca (Kupci C2/C4). */}
+            <Link
+              href={`/kupci/${customer.id}`}
+              className="text-ink hover:text-green text-sm font-medium underline-offset-2 hover:underline"
+            >
+              {customer.name ?? "Bez imena"}
+            </Link>
             {customer.phone ? (
               <a
                 href={`tel:${customer.phone}`}

@@ -8,6 +8,7 @@ export const AI_TOOL_LABELS: Record<string, string> = {
   artikal_prodaja: "Prodaja artikla",
   prodaja_po_vremenu: "Prodaja kroz vreme",
   kupci_top: "Kupci",
+  kupac_profil: "Profil kupca",
   porudzbine_pretraga: "Porudžbine",
   porudzbina_detalj: "Detalj porudžbine",
   zalihe: "Zalihe",
@@ -34,6 +35,7 @@ export function describeToolCall(name: string, input: Record<string, unknown>): 
     if (typeof input[key] === "string" && input[key]) parts.push(`„${input[key] as string}“`);
   }
   if (typeof input.broj === "number") parts.push(`#${input.broj}`);
+  if (typeof input.broj_porudzbine === "number") parts.push(`#${input.broj_porudzbine}`);
   if (typeof input.vrsta === "string") parts.push(input.vrsta);
   return parts.length ? `${label} · ${parts.join(" · ")}` : label;
 }

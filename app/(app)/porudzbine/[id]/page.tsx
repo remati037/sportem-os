@@ -58,7 +58,7 @@ export default async function PorudzbinaPage({
       isAdmin && !order.invoice_id ? getActiveVariantOptions() : Promise.resolve([]),
       getOrderCancellationHistory(order),
       listTicketsForOrder(order.id),
-      getOrderCustomerContext(order.customer_id),
+      getOrderCustomerContext(order.customer_id, order.id),
     ],
   );
 
@@ -213,12 +213,22 @@ export default async function PorudzbinaPage({
                   </p>
                 </div>
               ) : null}
-              <Link
-                href={`/kupci/${customerCtx.repId}`}
-                className="text-green hover:text-green-deep inline-flex text-sm font-medium"
-              >
-                Profil kupca →
-              </Link>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                {customerCtx.orderOrdinal != null && customerCtx.orderCount > 1 ? (
+                  <span className="text-ink-soft text-xs">
+                    <span className="num">{customerCtx.orderOrdinal}.</span> porudžbina ovog kupca
+                    (od <span className="num">{customerCtx.orderCount}</span>)
+                  </span>
+                ) : (
+                  <span className="text-ink-faint text-xs">Prva porudžbina ovog kupca</span>
+                )}
+                <Link
+                  href={`/kupci/${customerCtx.repId}`}
+                  className="text-green hover:text-green-deep inline-flex text-sm font-medium"
+                >
+                  Profil kupca →
+                </Link>
+              </div>
             </div>
           ) : null}
         </section>

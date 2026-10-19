@@ -1,6 +1,6 @@
 # Sportem — Plan implementacije: Kupci
 
-> Verzija 1.1 · 18.10.2026 · status: **u radu — odluke §0.2 i §0.3 potvrđene 18.10.2026; C1–C3 urađeni**
+> Verzija 1.1 · 18.10.2026 · status: **u radu — odluke §0.2 i §0.3 potvrđene 18.10.2026; C1–C4 urađeni**
 > Prati pravila iz `CLAUDE.md` (zaključane odluke, migracije, RLS, srpski UI, zamrznute cene).
 > **Jedan korak = jedna sesija.** Za svaku sesiju: `CLAUDE.md` + tekst tog koraka + „PROMPT ZA SESIJU".
 
@@ -216,7 +216,7 @@ izmeni Adminovu belešku; `npm run rls:static` prolazi sa novim politikama.
 
 ---
 
-### C4 — Veze iz ostatka aplikacije + asistent
+### C4 — Veze iz ostatka aplikacije + asistent ✅ urađeno 19.10.2026 (beleška: CLAUDE.md §10 „Korak C4")
 
 **Cilj:** do profila se stiže odakle god se kupac pojavi.
 

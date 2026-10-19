@@ -262,10 +262,19 @@ export function groupCustomerOrders({
 }
 
 /** Svi kupci, jednom po zahtevu (RLS klijent korisnika). */
-export const loadCustomerGroups = cache(async (): Promise<CustomerGroup[]> => {
+const loadGroupsForRequest = cache(async (): Promise<CustomerGroup[]> => {
   const supabase = await createClient();
   return groupCustomerOrders(await fetchCustomerSources(supabase));
 });
+
+/**
+ * Svi kupci. Bez `client`-a — RLS klijent korisnika iz kolačića, jednom po
+ * zahtevu. Sa `client`-om (AI alat dobija svoj, skripte service-role) — tim
+ * klijentom, bez keša.
+ */
+export async function loadCustomerGroups(client?: SupabaseClient): Promise<CustomerGroup[]> {
+  return client ? groupCustomerOrders(await fetchCustomerSources(client)) : loadGroupsForRequest();
+}
 
 /* ── Lista /kupci ─────────────────────────────────────────────────────────── */
 
@@ -470,10 +479,14 @@ type ProfileItemRow = {
 };
 
 /** Grupa kojoj pripada `customers.id` (bilo koji red grupe, ne samo repId). */
-export async function findCustomerGroup(customerId: string): Promise<CustomerGroup | null> {
+export async function findCustomerGroup(
+  customerId: string,
+  client?: SupabaseClient,
+  groups?: CustomerGroup[],
+): Promise<CustomerGroup | null> {
   if (!isUuid(customerId)) return null;
-  const groups = await loadCustomerGroups();
-  return groups.find((g) => g.customerIds.includes(customerId)) ?? null;
+  const all = groups ?? (await loadCustomerGroups(client));
+  return all.find((g) => g.customerIds.includes(customerId)) ?? null;
 }
 
 /**
@@ -483,9 +496,15 @@ export async function findCustomerGroup(customerId: string): Promise<CustomerGro
  */
 export async function getCustomerProfile(customerId: string): Promise<CustomerProfile | null> {
   const group = await findCustomerGroup(customerId);
-  if (!group) return null;
+  return group ? getCustomerProfileForGroup(group) : null;
+}
 
-  const supabase = await createClient();
+/** Isto kao `getCustomerProfile`, za već nađenu grupu (AI alat prosleđuje svoj klijent). */
+export async function getCustomerProfileForGroup(
+  group: CustomerGroup,
+  client?: SupabaseClient,
+): Promise<CustomerProfile> {
+  const supabase = client ?? (await createClient());
   const [orderRows, itemRows, statuses] = await Promise.all([
     selectAllIn<ProfileOrderRow, string>("profil kupca: orders", group.orderIds, (chunk) =>
       supabase
@@ -664,8 +683,11 @@ function groupFlags(g: CustomerGroup, index: Map<string, string[]>): CustomerFla
 }
 
 /** Oznake jednog kupca (unija preko svih kandidat-ključeva). */
-export async function getCustomerFlags(g: CustomerGroup): Promise<CustomerFlag[]> {
-  const supabase = await createClient();
+export async function getCustomerFlags(
+  g: CustomerGroup,
+  client?: SupabaseClient,
+): Promise<CustomerFlag[]> {
+  const supabase = client ?? (await createClient());
   const rows = await selectAllIn<{ flag: string }, string>(
     "kupac: oznake",
     customerCandidateKeys(g),
@@ -690,8 +712,11 @@ export type CustomerNote = {
 };
 
 /** Beleške jednog kupca (svi kandidat-ključevi), najnovije prvo. */
-export async function getCustomerNotes(g: CustomerGroup): Promise<CustomerNote[]> {
-  const supabase = await createClient();
+export async function getCustomerNotes(
+  g: CustomerGroup,
+  client?: SupabaseClient,
+): Promise<CustomerNote[]> {
+  const supabase = client ?? (await createClient());
   const [rows, staff] = await Promise.all([
     selectAllIn<Omit<CustomerNote, "authorName">, string>(
       "kupac: beleške",
@@ -745,6 +770,9 @@ export async function ordersWithFlag(
 
 export type OrderCustomerContext = {
   repId: string;
+  /** Redni broj ove porudžbine kod kupca (1 = prva) i ukupno porudžbina kupca. */
+  orderOrdinal: number | null;
+  orderCount: number;
   flags: CustomerFlag[];
   latestNote: CustomerNote | null;
   noteCount: number;
@@ -753,17 +781,41 @@ export type OrderCustomerContext = {
 /** Detalj porudžbine: oznake + poslednja beleška kupca + link na profil (C3). */
 export async function getOrderCustomerContext(
   customerId: string | null,
+  orderId: string,
 ): Promise<OrderCustomerContext | null> {
   if (!customerId) return null;
   const group = await findCustomerGroup(customerId);
   if (!group) return null;
+  // `orderIds` su najnovije prvo → redni broj se broji od najstarije.
+  const idx = group.orderIds.indexOf(orderId);
+  const base = {
+    repId: group.repId,
+    orderOrdinal: idx >= 0 ? group.orderIds.length - idx : null,
+    orderCount: group.orderCount,
+  };
   // Best-effort: beleške/oznake su pomoć na detalju porudžbine — ako tabele još
   // nema (migracija nije primenjena), detalj ostaje ceo, samo bez njih.
   try {
     const [flags, notes] = await Promise.all([getCustomerFlags(group), getCustomerNotes(group)]);
-    return { repId: group.repId, flags, latestNote: notes[0] ?? null, noteCount: notes.length };
+    return { ...base, flags, latestNote: notes[0] ?? null, noteCount: notes.length };
   } catch (err) {
     Sentry.captureException(err);
-    return { repId: group.repId, flags: [], latestNote: null, noteCount: 0 };
+    return { ...base, flags: [], latestNote: null, noteCount: 0 };
   }
+}
+
+/**
+ * Kupci koji odgovaraju pretrazi (ime, grad, e-mail ili telefon) — za AI alat
+ * `kupac_profil` (C4). Ista pretraga kao lista `/kupci`; najnoviji prvo.
+ */
+export function searchCustomerGroups(
+  groups: CustomerGroup[],
+  q: string,
+  limit = 10,
+): CustomerGroup[] {
+  if (!q.trim()) return [];
+  return groups
+    .filter((g) => matchesSearch(g, q))
+    .sort((a, b) => b.lastOrderAt.localeCompare(a.lastOrderAt))
+    .slice(0, limit);
 }

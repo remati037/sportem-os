@@ -135,6 +135,105 @@ function shift(d: string, n: number) {
 
 const rsd = (n: number) => `${new Intl.NumberFormat("sr-RS").format(n)} RSD`;
 
+// ── kupac_profil (Kupci C4) — cifre = nezavisan zbir porudžbina tog kupca ───
+type ProfileOut = {
+  ime: string | null;
+  porudzbine_ukupno: number;
+  otkazano_ili_vraceno: number;
+  promet_rsd: number;
+  zarada_rsd: number;
+  porudzbine: { broj: number | null }[];
+};
+
+async function referenceForOrders(wooNumbers: number[]) {
+  const { data: st } = await supabase.from("order_statuses").select("id, name");
+  const cancelIds = new Set(
+    (st ?? []).filter((s) => CANCELLED_STATUS_NAMES.includes(s.name)).map((s) => s.id),
+  );
+  const { data: orders, error } = await supabase
+    .from("orders")
+    .select("id, status_id")
+    .in("woo_order_id", wooNumbers);
+  if (error) throw new Error(error.message);
+  const realized = (orders ?? []).filter((o) => !cancelIds.has(o.status_id)).map((o) => o.id);
+  let promet = 0;
+  let zarada = 0;
+  if (realized.length > 0) {
+    const { data: items, error: e2 } = await supabase
+      .from("order_items")
+      .select("quantity, mp_at_sale, profit_at_sale")
+      .in("order_id", realized);
+    if (e2) throw new Error(e2.message);
+    for (const it of items ?? []) {
+      promet += it.mp_at_sale * it.quantity;
+      zarada += it.profit_at_sale ?? 0;
+    }
+  }
+  return {
+    broj: orders?.length ?? 0,
+    otkazano: (orders?.length ?? 0) - realized.length,
+    promet,
+    zarada,
+  };
+}
+
+async function checkCustomerProfiles() {
+  console.log("\nkupac_profil — 3 kupca, cifre = zbir njihovih porudžbina:");
+  // Kandidati: najveći ponovni kupci sa ≤ 20 porudžbina (alat vraća do 20 porudžbina)
+  // + jedan sa otkazivanjem. Biraju se iz porudžbina, ne iz koda koji se proverava.
+  const { data: rows, error } = await supabase
+    .from("orders")
+    .select("woo_order_id, customer_id, cancelled_at")
+    .not("woo_order_id", "is", null)
+    .order("ordered_at", { ascending: false })
+    .limit(1000);
+  if (error) throw new Error(error.message);
+  const byCustomer = new Map<string, { woo: number; cancelled: boolean }[]>();
+  for (const r of rows ?? []) {
+    const list = byCustomer.get(r.customer_id) ?? [];
+    list.push({ woo: r.woo_order_id, cancelled: r.cancelled_at != null });
+    byCustomer.set(r.customer_id, list);
+  }
+  const multi = [...byCustomer.values()].filter((l) => l.length >= 2 && l.length <= 20);
+  multi.sort((a, b) => b.length - a.length);
+  const live = (l: { cancelled: boolean }[]) => l.filter((o) => !o.cancelled).length;
+  const withSales = multi.filter((l) => live(l) >= 2);
+  const mixed = multi.find((l) => live(l) >= 1 && l.some((o) => o.cancelled));
+  const picks = [
+    ...new Set([withSales[0], withSales[1], mixed].filter(Boolean).map((l) => l![0].woo)),
+  ];
+
+  for (const woo of picks) {
+    const out = (await runTool("kupac_profil", { broj_porudzbine: woo })) as ProfileOut;
+    const numbers = out.porudzbine.map((o) => o.broj).filter((n): n is number => n != null);
+    const ref = await referenceForOrders(numbers);
+    const label = `${out.ime ?? "kupac"} (#${woo}, ${out.porudzbine_ukupno} porudžbina)`;
+    check(
+      `${label} — lista porudžbina je potpuna`,
+      out.porudzbine_ukupno <= 20 &&
+        numbers.length === out.porudzbine_ukupno &&
+        numbers.includes(woo),
+      `${numbers.length} u listi`,
+    );
+    check(
+      `${label} — otkazano/vraćeno`,
+      out.otkazano_ili_vraceno === ref.otkazano,
+      `${out.otkazano_ili_vraceno} vs ${ref.otkazano}`,
+    );
+    check(
+      `${label} — promet`,
+      out.promet_rsd === ref.promet,
+      `${rsd(out.promet_rsd)} vs ${rsd(ref.promet)}`,
+    );
+    check(
+      `${label} — zarada`,
+      out.zarada_rsd === ref.zarada,
+      `${rsd(out.zarada_rsd)} vs ${rsd(ref.zarada)}`,
+    );
+    check(`${label} — bez kontakta podrazumevano`, !("telefon" in out) && !("email" in out));
+  }
+}
+
 async function main() {
   console.log("Provera alata AI asistenta — Sportem OS (samo čita)\n");
 
@@ -201,6 +300,8 @@ async function main() {
   check("porudzbine_pretraga", Array.isArray(por.porudzbine), `${por.pronadjeno} pronađeno`);
   const tro = await runTool("troskovi", { od: "2026-01-01", do: today });
   check("troskovi", typeof tro.ukupno_rsd === "number", rsd(tro.ukupno_rsd));
+
+  await checkCustomerProfiles();
 
   console.log(
     failures === 0
