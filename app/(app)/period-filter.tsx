@@ -41,28 +41,28 @@ export function PeriodFilter({ period }: { period: Period }) {
       </div>
 
       <form method="get" action="/" className="flex items-end gap-2">
-        <label className="flex flex-col gap-0.5">
+        <label className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-none">
           <span className="text-ink-faint text-xs">Od</span>
           <input
             type="date"
             name="od"
             defaultValue={period.from}
             max={period.to}
-            className="border-border bg-surface text-ink rounded-md border px-2 py-1 text-sm"
+            className="border-border bg-surface text-ink w-full min-w-0 rounded-md border px-2 py-1 text-sm"
           />
         </label>
-        <label className="flex flex-col gap-0.5">
+        <label className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-none">
           <span className="text-ink-faint text-xs">Do</span>
           <input
             type="date"
             name="do"
             defaultValue={period.to}
-            className="border-border bg-surface text-ink rounded-md border px-2 py-1 text-sm"
+            className="border-border bg-surface text-ink w-full min-w-0 rounded-md border px-2 py-1 text-sm"
           />
         </label>
         <button
           type="submit"
-          className="border-green/30 bg-green-soft text-green-deep hover:bg-green/10 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors"
+          className="border-green/30 bg-green-soft text-green-deep hover:bg-green/10 shrink-0 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors"
         >
           Primeni
         </button>

@@ -373,92 +373,59 @@ const PROBES = [
       await getProfileQuery(ctx);
       const period = currentMonthPeriod();
 
+      // lib/period.ts comparisonRange (preset „mesec"): isti deo prošlog meseca
+      // + tekući mesec isečen na danas.
+      const today = todayBelgrade();
+      const elapsed = Number(today.slice(8, 10));
+      const [y, m] = today.split("-").map(Number);
+      const prevStart = new Date(Date.UTC(y, m - 2, 1, 12)).toISOString().slice(0, 10);
+      const prevLastDay = new Date(Date.UTC(y, m - 1, 0, 12)).getUTCDate();
+      const prevTo = `${prevStart.slice(0, 8)}${String(Math.min(elapsed, prevLastDay)).padStart(2, "0")}`;
+
       await Promise.all([
         // getDashboardMetrics → computePeriodMetrics
         computePeriodMetrics(ctx, period, "metrike:"),
-        // getWaitingOrders
+        // poređenje: tekući isečen na danas (kad se seče) + prethodni
+        today < period.to
+          ? computePeriodMetrics(ctx, { from: period.from, to: today }, "poređenje tekući:")
+          : Promise.resolve(),
+        computePeriodMetrics(ctx, { from: prevStart, to: prevTo }, "poređenje prošli:"),
+        // getDashboardCharts → loadSales + order_statuses
         (async () => {
-          const created = await rec.run("čeka: order_statuses (Kreirano)", () =>
-            c.from("order_statuses").select("id").eq("name", APP_STATUS.created).maybeSingle(),
-          );
-          await Promise.all([
-            rec.run("čeka: orders count needs_vp", () =>
-              c.from("orders").select("id", { count: "exact", head: true }).eq("needs_vp", true),
+          const { gteUtc, ltUtc } = rangeToUtcPrefilter(period.from, period.to);
+          const [, orders] = await Promise.all([
+            rec.run("grafikoni: order_statuses (loadSales)", () =>
+              c.from("order_statuses").select("id, name"),
             ),
-            created.data?.id
-              ? rec.run("čeka: orders count Kreirano", () =>
-                  c
-                    .from("orders")
-                    .select("id", { count: "exact", head: true })
-                    .eq("status_id", created.data.id),
-                )
-              : Promise.resolve(),
-            getUnpaidDeliveredXexpress(ctx, "čeka:"),
-            rec.run("čeka: orders count needs_review", () =>
+            paginated(rec, "grafikoni: orders u periodu", () =>
               c
                 .from("orders")
-                .select("id", { count: "exact", head: true })
-                .eq("needs_review", true),
-            ),
-          ]);
-        })(),
-        // getLowStockVariants
-        paginated(rec, "nisko stanje: product_variants + products", () =>
-          c
-            .from("product_variants")
-            .select(
-              "id, product_id, sku, variant_name, stock_quantity, low_stock_threshold, archived_at, products(name, archived_at)",
-            )
-            .is("archived_at", null)
-            .not("stock_counted_at", "is", null)
-            .order("id", { ascending: true }),
-        ),
-        // getUncountedVariantCount
-        paginated(rec, "fali količina: product_variants", () =>
-          c
-            .from("product_variants")
-            .select("id, products(archived_at)")
-            .is("archived_at", null)
-            .is("stock_counted_at", null)
-            .order("id", { ascending: true }),
-        ),
-        // getMyTicketsSummary
-        (async () => {
-          const [open] = await Promise.all([
-            paginated(
-              rec,
-              "moji tiketi: tickets otvoreni",
-              () =>
-                c
-                  .from("tickets")
-                  .select("id, due_date, column_id")
-                  .is("completed_at", null)
-                  .order("id", { ascending: true }),
-              { maxRows: TICKET_SCAN_CAP },
-            ),
-            paginated(rec, "moji tiketi: ticket_columns", () =>
-              c
-                .from("ticket_columns")
-                .select("id, name, color, sort_order, is_done, wip_limit")
-                .order("sort_order", { ascending: true })
-                .order("name", { ascending: true })
+                .select(
+                  "id, woo_order_id, ordered_at, status_id, delivery_method, payment_status, customer_id, ship_name, ship_city, needs_vp, goods_total",
+                )
+                .not("ordered_at", "is", null)
+                .gte("ordered_at", gteUtc)
+                .lt("ordered_at", ltUtc)
+                .order("ordered_at", { ascending: true })
                 .order("id", { ascending: true }),
             ),
+            rec.run("grafikoni: order_statuses (boje)", () =>
+              c.from("order_statuses").select("name, color, sort_order").order("sort_order"),
+            ),
           ]);
-          if (open.length > 0) {
-            // Bez sesije (service-role režim) nema „mog" korisnika — upit se ipak
-            // izvrši da round-tripovi ostanu isti, ali label to kaže naglas.
-            const label = ctx.userId
-              ? "moji tiketi: ticket_assignees"
-              : "moji tiketi: ticket_assignees (bez sesije — prazan user_id)";
-            await paginated(rec, label, () =>
-              c
-                .from("ticket_assignees")
-                .select("ticket_id")
-                .eq("user_id", ctx.userId ?? ZERO_UUID)
-                .order("ticket_id", { ascending: true }),
-            );
-          }
+          const ids = orders
+            .filter((o) => {
+              const d = belgradeDate(o.ordered_at);
+              return d >= period.from && d <= period.to;
+            })
+            .map((o) => o.id);
+          await paginatedIn(rec, "grafikoni: order_items", ids, (chunk) =>
+            c
+              .from("order_items")
+              .select("order_id, sku, product_name, quantity, mp_at_sale, profit_at_sale")
+              .in("order_id", chunk)
+              .order("id", { ascending: true }),
+          );
         })(),
       ]);
     },
@@ -829,7 +796,6 @@ const PROBES = [
   },
 ];
 
-const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
 
 /* ── Ispis ───────────────────────────────────────────────────────────────── */
 

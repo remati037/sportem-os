@@ -64,7 +64,7 @@ export function rangeToUtcPrefilter(from: string, to: string): { gteUtc: string;
 
 /** „d. M. yyyy." (Belgrade) za jedan kalendarski datum. */
 function dayLabel(dateStr: string): string {
-  return new Intl.DateTimeFormat("sr-RS", {
+  return new Intl.DateTimeFormat("sr-Latn-RS", {
     day: "numeric",
     month: "numeric",
     year: "numeric",
@@ -74,7 +74,7 @@ function dayLabel(dateStr: string): string {
 
 /** „jul 2026" (Belgrade) za mesec kome pripada datum. */
 function monthLabel(dateStr: string): string {
-  return new Intl.DateTimeFormat("sr-RS", {
+  return new Intl.DateTimeFormat("sr-Latn-RS", {
     month: "long",
     year: "numeric",
     timeZone: TZ,
@@ -119,4 +119,51 @@ export function resolvePeriod(sp: Record<string, string | string[] | undefined>)
 export function presetHref(preset: PresetKey, today: string = todayBelgrade()): string {
   const b = presetBounds(preset, today);
   return `/?od=${b.from}&do=${b.to}`;
+}
+
+/**
+ * Raspon za poređenje kartica sa prethodnim periodom — ISTI broj proteklih dana,
+ * da tekući mesec od 19 dana ne bi bio poređen sa celim prošlim mesecom.
+ * Tekući period se seče na „danas" (budući dani nemaju porudžbina). Za „mesec"
+ * poredi sa istim delom prošlog kalendarskog meseca; inače sa istom dužinom
+ * odmah pre `from`. Vraća i tekući isečeni raspon, da se obe strane računaju
+ * nad istim brojem dana.
+ */
+export function comparisonRange(
+  period: Period,
+  today: string = todayBelgrade(),
+): { current: { from: string; to: string }; previous: { from: string; to: string }; label: string } | null {
+  const to = period.to < today ? period.to : today;
+  if (to < period.from) return null; // ceo period je u budućnosti
+  const len =
+    Math.round(
+      (new Date(`${to}T12:00:00Z`).getTime() - new Date(`${period.from}T12:00:00Z`).getTime()) /
+        86_400_000,
+    ) + 1;
+
+  if (period.preset === "mesec") {
+    const [y, m] = period.from.split("-").map(Number);
+    const prevStart = new Date(Date.UTC(y, m - 2, 1, 12)).toISOString().slice(0, 10);
+    const prevLast = new Date(Date.UTC(y, m - 1, 0, 12)).toISOString().slice(0, 10);
+    const prevTo = addDays(prevStart, len - 1);
+    return {
+      current: { from: period.from, to },
+      previous: { from: prevStart, to: prevTo < prevLast ? prevTo : prevLast },
+      label: "prošli mesec",
+    };
+  }
+
+  // Ceo prethodni period iste dužine, pa iz njega isti broj proteklih dana
+  // (nedelja od srede → prošli pon–sre, ne pet–ned).
+  const fullLen =
+    Math.round(
+      (new Date(`${period.to}T12:00:00Z`).getTime() - new Date(`${period.from}T12:00:00Z`).getTime()) /
+        86_400_000,
+    ) + 1;
+  const prevFrom = addDays(period.from, -fullLen);
+  return {
+    current: { from: period.from, to },
+    previous: { from: prevFrom, to: addDays(prevFrom, len - 1) },
+    label: period.preset === "dan" ? "juče" : period.preset === "nedelja" ? "prošla nedelja" : "prethodni period",
+  };
 }
