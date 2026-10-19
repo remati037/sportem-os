@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { Check } from "lucide-react";
+import { Check, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { CUSTOMER_FLAGS, type CustomerFlag } from "@/lib/customers";
@@ -62,10 +62,10 @@ export function CustomerFlags({
               "rounded-pill inline-flex h-7 items-center gap-1 border px-2.5 text-xs font-semibold transition-colors disabled:opacity-60",
               on
                 ? ACTIVE[f.variant]
-                : "border-border text-ink-faint hover:text-ink-soft hover:border-border-strong border-dashed",
+                : "border-border-strong bg-surface text-ink-soft hover:text-ink hover:bg-surface-2",
             )}
           >
-            {on ? <Check className="size-3" /> : null}
+            {on ? <Check className="size-3" /> : <Plus className="size-3" />}
             {f.label}
           </button>
         );
