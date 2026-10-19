@@ -210,7 +210,7 @@ od 07.09.2026** na svaku porudžbinu i svaki dinar. To je kriterijum prihvatanja
 
 ### R2 — Kupci
 
-**Cilj:** izvozi o kupcima. *(Radni ekran kupaca je zaseban modul — `docs/Sportem-Plan-Kupci.md`; R2 koristi njegovo spajanje kupaca iz `db/customers.ts`, korak C1 — ko krene prvi, pravi C1.)*
+**Cilj:** izvozi o kupcima. *(Radni ekran kupaca je zaseban modul — `docs/arhiva/2026-10-18-Plan-Kupci.md`; R2 koristi njegovo spajanje kupaca iz `db/customers.ts`, korak C1 — ko krene prvi, pravi C1.)*
 
 **Fajlovi**
 - `db/reports-customers.ts` **(novo)**

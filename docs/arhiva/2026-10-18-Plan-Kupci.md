@@ -1,6 +1,6 @@
 # Sportem — Plan implementacije: Kupci
 
-> Verzija 1.1 · 18.10.2026 · status: **u radu — odluke §0.2 i §0.3 potvrđene 18.10.2026; C1–C4 urađeni**
+> Verzija 1.1 · 18.10.2026 · status: **u radu — odluke §0.2 i §0.3 potvrđene 18.10.2026; C1–C5 urađeni — modul ZAVRŠEN (C6 nije potreban: /kupci 289 ms < 400 ms). Plan je u arhivi; važeće odluke su u CLAUDE.md §3 „Kupci"**
 > Prati pravila iz `CLAUDE.md` (zaključane odluke, migracije, RLS, srpski UI, zamrznute cene).
 > **Jedan korak = jedna sesija.** Za svaku sesiju: `CLAUDE.md` + tekst tog koraka + „PROMPT ZA SESIJU".
 
@@ -240,7 +240,7 @@ Petrović" odgovara iz alata, cifra = profil.
 
 ---
 
-### C5 — QA, dozvole i dokumentacija (zatvara modul)
+### C5 — QA, dozvole i dokumentacija (zatvara modul) ✅ urađeno 20.10.2026 (beleška: CLAUDE.md §10 „Korak C5")
 
 **Fajlovi**
 - `scripts/rls-test.mjs` — **dopuna**: Logistika → 0 redova na `customer_notes`/`customer_flags` + odbijen insert; Menadžer → piše svoju belešku, ne menja tuđu (akcija); statička kapija da `/kupci`, `/kupci/[id]` i sve akcije zovu `requireRole("admin","manager")`
@@ -259,7 +259,7 @@ Petrović" odgovara iz alata, cifra = profil.
 
 ---
 
-### C6 — (opciono) grupisanje u SQL
+### C6 — (opciono) grupisanje u SQL — NIJE POTREBNO (C1: 289 ms posle `selectAllByIdShards`)
 
 Samo ako `npm run perf` za `/kupci` pređe 400 ms. Funkcija `customer_groups()` (`security invoker`,
 statusi kao parametar, novac iz `order_items`) po obrascu K5/K6, uz `scripts/provera-c6.mjs` koja

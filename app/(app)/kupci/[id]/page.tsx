@@ -38,7 +38,7 @@ import { CustomerNotes } from "./notes";
 export const dynamic = "force-dynamic";
 
 /*
- * Profil kupca (Korak C2, docs/Sportem-Plan-Kupci.md). `id` je `customers.id`
+ * Profil kupca (Korak C2, docs/arhiva/2026-10-18-Plan-Kupci.md). `id` je `customers.id`
  * najnovije porudžbine grupe (repId iz C1); bilo koji drugi red iste grupe
  * preusmerava na njega, nepoznat id → 404. Pristup: Admin i Menadžer.
  * Promet/zarada iz zamrznutih `order_items`; otkazane/vraćene su u spisku i

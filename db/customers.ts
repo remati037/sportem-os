@@ -14,7 +14,7 @@ import { CANCELLED_STATUS_NAMES } from "@/lib/woo";
 import { normEmail } from "@/db/customer-risk";
 
 /*
- * Kupci (Korak C1, docs/Sportem-Plan-Kupci.md) — ko je „jedan kupac".
+ * Kupci (Korak C1, docs/arhiva/2026-10-18-Plan-Kupci.md) — ko je „jedan kupac".
  *
  * `customer_id` je nepouzdan: kupac bez telefona dobija nov `customers` red pri
  * svakoj porudžbini. Zato je kupac GRUPA porudžbina spojenih (union-find) po:

@@ -830,6 +830,115 @@ async function cleanupAdminAi({ client, convId }) {
  * Kupci (C3) — beleške i oznake: samo Admin/Menadžer, belešku menja samo autor.
  * ──────────────────────────────────────────────────────────────────────────── */
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * Kupci (C5) — beleške/oznake: samo Admin i Menadžer, belešku menja samo autor.
+ * Test piše pod ključem `p:__rls-test` i sve briše na kraju.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+const CUSTOMER_TABLES = ["customer_notes", "customer_flags"];
+const TEST_CUSTOMER_KEY = `p:${TEST_PREFIX}`;
+
+/** Admin upisuje belešku + oznaku; vraća {client, noteId} za kasnije provere i čišćenje. */
+async function testAdminCustomers() {
+  console.log("\nAdmin — beleška i oznaka kupca: piše i čita:");
+  const c = await signIn("admin");
+  const me = await userIdOf(c);
+  const note = await c
+    .from("customer_notes")
+    .insert({ customer_key: TEST_CUSTOMER_KEY, body: TEST_PREFIX, created_by: me })
+    .select("id")
+    .single();
+  check("customer_notes ← insert sopstvene beleške", !note.error, note.error?.message ?? "");
+  const flag = await c
+    .from("customer_flags")
+    .insert({ customer_key: TEST_CUSTOMER_KEY, flag: "zvati", created_by: me });
+  check("customer_flags ← insert oznake", !flag.error, flag.error?.message ?? "");
+  await expectInsertDenied(
+    c,
+    "customer_notes",
+    { customer_key: TEST_CUSTOMER_KEY, body: TEST_PREFIX, created_by: null },
+    "customer_notes ← beleška bez autora (tuđe ime) odbijena",
+  );
+  return { client: c, noteId: note.data?.id ?? null };
+}
+
+async function testLogisticsCustomers() {
+  console.log("\nLogistika — beleške i oznake kupaca MORAJU biti nedostupne:");
+  const c = await signIn("logistics");
+  for (const table of CUSTOMER_TABLES) {
+    check(`${table} → 0 redova`, (await countRows(c, table)) === 0);
+  }
+  await expectInsertDenied(
+    c,
+    "customer_notes",
+    { customer_key: TEST_CUSTOMER_KEY, body: TEST_PREFIX, created_by: await userIdOf(c) },
+    "customer_notes ← insert odbijen",
+  );
+  const flag = await c
+    .from("customer_flags")
+    .insert({ customer_key: `${TEST_CUSTOMER_KEY}-log`, flag: "stalni" });
+  check("customer_flags ← insert odbijen", !!flag.error, flag.error?.code ?? "upis PROŠAO");
+  if (!flag.error)
+    await c.from("customer_flags").delete().eq("customer_key", `${TEST_CUSTOMER_KEY}-log`);
+  await c.auth.signOut();
+}
+
+async function testManagerCustomers(adminNoteId) {
+  console.log("\nMenadžer — čita i piše svoje, ali ne menja Adminovu belešku:");
+  const c = await signInOptional("manager");
+  if (!c) return;
+  const me = await userIdOf(c);
+
+  const seen = await c.from("customer_notes").select("id").eq("customer_key", TEST_CUSTOMER_KEY);
+  check("customer_notes → vidi Adminovu belešku", (seen.data?.length ?? 0) >= 1);
+  if (adminNoteId) {
+    await expectUpdateNoRows(
+      c,
+      "customer_notes",
+      adminNoteId,
+      { body: "preuzeto" },
+      "customer_notes → izmena Adminove beleške ne menja red",
+    );
+    const del = await c.from("customer_notes").delete().eq("id", adminNoteId).select("id");
+    check(
+      "customer_notes → brisanje Adminove beleške ne briše red",
+      !!del.error || (del.data?.length ?? 0) === 0,
+    );
+  }
+  const own = await c
+    .from("customer_notes")
+    .insert({ customer_key: TEST_CUSTOMER_KEY, body: TEST_PREFIX, created_by: me })
+    .select("id")
+    .single();
+  check("customer_notes ← insert sopstvene beleške", !own.error, own.error?.message ?? "");
+  if (own.data?.id) {
+    const upd = await c
+      .from("customer_notes")
+      .update({ body: `${TEST_PREFIX} izmena` })
+      .eq("id", own.data.id)
+      .select("id");
+    check("customer_notes → menja sopstvenu belešku", (upd.data?.length ?? 0) === 1);
+    const del = await c.from("customer_notes").delete().eq("id", own.data.id).select("id");
+    check("customer_notes → briše sopstvenu belešku", (del.data?.length ?? 0) === 1);
+  }
+  const flag = await c
+    .from("customer_flags")
+    .insert({ customer_key: TEST_CUSTOMER_KEY, flag: "stalni", created_by: me });
+  check("customer_flags ← Menadžer postavlja oznaku", !flag.error, flag.error?.message ?? "");
+  await c.auth.signOut();
+}
+
+async function cleanupAdminCustomers({ client }) {
+  await client.from("customer_notes").delete().eq("customer_key", TEST_CUSTOMER_KEY);
+  await client.from("customer_flags").delete().eq("customer_key", TEST_CUSTOMER_KEY);
+  const left = await client
+    .from("customer_notes")
+    .select("id")
+    .eq("customer_key", TEST_CUSTOMER_KEY);
+  check("čišćenje → test beleške obrisane", (left.data?.length ?? 0) === 0);
+  await client.auth.signOut();
+}
+
 async function testCustomerPoliciesInMigration() {
   console.log("\nPolitike u migraciji — matrica dozvola za `customer_notes` / `customer_flags`:");
   const { readFile } = await import("node:fs/promises");
@@ -904,7 +1013,7 @@ async function main() {
     console.error("Nedostaje NEXT_PUBLIC_SUPABASE_URL ili NEXT_PUBLIC_SUPABASE_ANON_KEY.");
     process.exit(2);
   }
-  console.log("RLS test — Sportem OS (Korak 0.5 + T7 Tiketi + A6 Asistent)");
+  console.log("RLS test — Sportem OS (Korak 0.5 + T7 Tiketi + A6 Asistent + C5 Kupci)");
 
   // Statičke provere prve — daju rezultat i kad test nalozi nisu podešeni.
   await runStaticChecks();
@@ -926,9 +1035,14 @@ async function main() {
   await testManagerAi(adminAi.convId);
   await cleanupAdminAi(adminAi);
 
+  const adminCustomers = await testAdminCustomers();
+  await testLogisticsCustomers();
+  await testManagerCustomers(adminCustomers.noteId);
+  await cleanupAdminCustomers(adminCustomers);
+
   console.log(
     failures === 0
-      ? "\n✅ PASS — RLS skriva finansije, tikete i AI od Logistike; Menadžer ne dira podešavanja ni tuđe razgovore.\n"
+      ? "\n✅ PASS — RLS skriva finansije, tikete, AI i beleške kupaca od Logistike; Menadžer ne dira podešavanja, tuđe razgovore ni tuđe beleške.\n"
       : `\n❌ FAIL — ${failures} provera(e) nije prošla.\n`,
   );
   process.exit(failures === 0 ? 0 : 1);

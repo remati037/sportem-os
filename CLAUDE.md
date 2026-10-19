@@ -16,7 +16,7 @@ Vlasnici: **korisnik (Admin)** i **brat (Menadžer)**. **Drug (Logistika)** je d
   za važeće odluke gleda se §3 ovog fajla, ne plan (plan još tvrdi „Email nije u Fazi 1", što više ne važi).
 - `docs/Sportem-Dizajn-Sistem.md` — dizajn tokeni, boje, tipografija, komponente. Izvor istine za UI (Korak 0.2/0.3).
 - `docs/Sportem-Plan-Izvestaji.md` — **živi plan**: modul Izveštaji / Izvoz, faze R0–R8. Bez migracije.
-- `docs/Sportem-Plan-Kupci.md` (C1–C6), `docs/Sportem-Plan-Nabavka.md` (N1–N4), `docs/Sportem-Plan-Reklame.md` (M0–M5) — **nacrti** za „Uskoro" stavke iz navigacije; odluke u njihovom §0 su PREDLOG i potvrđuju se na početku prvog koraka.
+- `docs/Sportem-Plan-Nabavka.md` (N1–N4), `docs/Sportem-Plan-Reklame.md` (M0–M5) — **nacrti** za „Uskoro" stavke iz navigacije (Kupci je urađen — plan u `docs/arhiva/2026-10-18-Plan-Kupci.md`); odluke u njihovom §0 su PREDLOG i potvrđuju se na početku prvog koraka.
 - `docs/backlog.md` — šta je još otvoreno (P0/P1/P2), provereno nad kodom 22.09.2026.
 
 ---
@@ -87,6 +87,21 @@ Vlasnici: **korisnik (Admin)** i **brat (Menadžer)**. **Drug (Logistika)** je d
 - **Novac u integer-ima:** cena po poruci u `ai_messages.cost_micro_usd` (mikro-USD). Mesečni limit `AI_MONTHLY_LIMIT_USD` važi za ceo nalog (80 % upozorenje, 100 % blokada).
 - **Van opsega v1:** pisanje u bazu (tiketi/statusi/cene), deljenje razgovora, prilozi/slike, glasovni unos, drugi provajderi, pristup za Logistiku, zakazani AI izveštaji, slobodni SQL upiti.
 - **Modul NE dira:** zamrznute cene i `order_items`, finansije, tok statusa, webhook, `syncOrderStock`, RLS politike postojećih tabela.
+
+### Kupci (`/kupci`) — zaključane odluke
+
+> Modul „Kupci" (`docs/arhiva/2026-10-18-Plan-Kupci.md`, faze C1–C5 — **sve urađeno**; C6 nije potreban). Implementacione
+> beleške po koracima su u §10 („Korak C1"…„Korak C5").
+
+- **Kupac = GRUPA porudžbina** spojenih (union-find) po normalizovanom telefonu (`ship_phone_norm` / `customers.phone_norm`), pa po e-mailu (`lower(trim)`, interni mejlovi `OUR_EMAILS` se ne računaju), pa po istom `customers` redu. `customer_id` sam nije pouzdan. **Ručno spajanje/razdvajanje kupaca je van opsega.**
+- **Ime, grad i kontakt** sa najnovije porudžbine. **URL profila je `repId`** (`customers.id` najnovije porudžbine); bilo koji drugi red grupe preusmerava na njega. **Telefon i e-mail nikad u URL-u kao identitet**, i nisu kolone liste.
+- **Pristup: SAMO Admin i Menadžer** (promet, zarada, PII). Logistika nema stavku, rutu (`requireRole`) ni nijednu politiku na `customer_*` (i već nema na `orders`/`customers`).
+- **Novac isključivo iz zamrznutih `order_items`**; Otkazano/Vraćeno **po imenu** — u broju porudžbina, ne u prometu/zaradi/artiklima (isto kao Dashboard). Artikli **po `sku`**.
+- **„Ponovni"** = ≥ 2 realizovane · **„Rizičan"** = ≥ 1 otkazana/vraćena · **„Neaktivan"** = kupio bar jednom, poslednja porudžbina pre N meseci (podrazumevano **3**, filter 3/6/12).
+- **Beleške i oznake** su jedina šema modula (`customer_notes`, `customer_flags`), ključ je **ključ grupe** (`p:`/`e:`/`c:`), čita se preko svih kandidat-ključeva grupe. **Oznake su FIKSNA lista** (Stalni kupac · Veleprodaja · Pazi — zvati pre slanja). **Admin i Menadžer pišu oboje; belešku menja/briše samo autor — i u RLS-u.** Oznaka je samo upozorenje — **nikad ne blokira porudžbinu ni webhook**; PDF liste za slanje se ne menja.
+- **Kontakt kupca se ne menja u app-u** (snapshot iz Woo-a). **AI alat `kupac_profil`** samo čita, iste cifre kao `/kupci`; kontakt vraća samo na izričit zahtev.
+- **Van opsega v1:** ručno spajanje kupaca, izmena kontakta, slanje SMS/mejla iz app-a, segmenti za Meta publiku, lojalnost/popusti, blokiranje kupca, pristup za Logistiku.
+- **Modul NE dira:** zamrznute cene i `order_items`, `customers` šemu, webhook i `upsertCustomer`, tok statusa, finansije, RLS postojećih tabela, pravilo rizika (`db/customer-risk.ts`).
 
 ## 4. Centralni princip: zamrznute cene (snapshot) — NE DIRATI bez potvrde
 
@@ -560,7 +575,7 @@ npm run icons          # regeneriši PWA ikonice
 - **„Uskoro" (`soon: true`): Kupci, Nabavka, Izveštaji, Reklame** — samo Admin + Menadžer; renderuju se kao `div` sa `aria-disabled`, sivo + badge „Uskoro" (`components/layout/soon-badge.tsx`), **nikad kao link** (`href` je samo ključ, ruta ne postoji). Nikad nisu primarne (donji bar) i ne pale aktivno stanje „Više". Kad se modul napravi: skine se `soon`.
 - **Donji bar nepromenjen** (Dashboard · Porudžbine · Tiketi · Finansije · Više; Logistici Katalog). Logistika i dalje vidi samo Katalog, Obaveštenja, Podešavanja. Sidebar stavke su `h-9` (sa sekcijama lista staje u ~900 px visine). Bez migracije.
 
-**Korak C1 — Kupci: spajanje + lista `/kupci` (plan `docs/Sportem-Plan-Kupci.md`, potvrđeno sa korisnikom):**
+**Korak C1 — Kupci: spajanje + lista `/kupci` (plan `docs/arhiva/2026-10-18-Plan-Kupci.md`, potvrđeno sa korisnikom):**
 - **Odluke §0.2 (D1–D8) potvrđene bez izmena**, uz odgovore na §0.3: oznake kupca su **fiksna lista** (C3), „neaktivan" = **3 meseca** podrazumevano (filter nudi 3/6/12), **Menadžer sme da piše beleške/oznake** (C3), interni mejlovi (`OUR_EMAILS`) se tretiraju kao da e-maila nema (telefon i dalje spaja).
 - **Bez migracije.** `db/customers.ts` (`server-only`): `fetchCustomerSources(supabase)` (statusi + sve porudžbine sa `customer:customers(...)` + cela tabela `order_items`) → čista `groupCustomerOrders()` (union-find po `ship_phone_norm`/`customers.phone_norm` iz K4, `normEmail` iz `db/customer-risk.ts` — sada izvezen — i istom `customer_id`) → `loadCustomerGroups()` (`cache()`, RLS klijent) → `listCustomers()` (pretraga/filter/sort/strana u JS-u). **Ključ grupe (`p:`/`e:`/`c:`) nikad ne ide na klijent ni u URL**; URL profila je `repId` = `customer_id` najnovije porudžbine (jedinstven: isti `customers` red je uvek u jednoj grupi).
 - **Pravila:** „Ponovni" = ≥ 2 realizovane (bez Otkazano/Vraćeno); „Rizičan" = ≥ 1 otkazana/vraćena (**po imenu statusa**, ne po `cancelled_at`); „Neaktivan" = bar jedna realizovana, a poslednja porudžbina pre N meseci (Beograd kalendar). Broj porudžbina = svi statusi; promet/zarada/komadi samo realizovane, iz zamrznutih `order_items` (`profit_at_sale ?? 0`, kao `computePeriodMetrics`); zarada sa `*` kad grupa ima `needs_vp` porudžbine. Ime/grad/telefon sa najnovije porudžbine (`ship_*`, pa `customers.*`). Pretraga: cifre → po normalizovanim telefonima grupe (prima i 381/00381), tekst → sva imena, gradovi i e-mailovi grupe, bez obzira na dijakritike („đ" = „d" i „dj").
@@ -593,6 +608,12 @@ npm run icons          # regeneriši PWA ikonice
 - **`npm run ai:check` dopunjen** (`checkCustomerProfiles`): 3 kupca biraju se iz porudžbina (dva najveća ponovna + jedan sa otkazanom i realizovanom), alat se pokreće po broju porudžbine i poredi sa **nezavisnim** zbirom stavki njihovih porudžbina (statusi po imenu) — lista potpuna, otkazano/promet/zarada **0 RSD razlike**, bez kontakta podrazumevano (provereno 19.10.2026).
 - **Nije vizuelno provereno u pregledaču** (drugi chat drži `next dev` u ovom folderu): link u tiketu i red „N. porudžbina" su tekst/link u postojećim `flex-wrap` blokovima.
 - **Nedirano:** zamrznute cene i `order_items`, RLS, webhook, tok statusa, finansije, ostali AI alati.
+
+**Korak C5 — Kupci: QA, dozvole i dokumentacija (zatvara modul):**
+- **Bez migracije i bez nove zavisnosti.** Zaključane odluke su u §3 („Kupci — zaključane odluke"); plan je premešten u `docs/arhiva/2026-10-18-Plan-Kupci.md` i označen kao urađen (C1–C5; **C6 nije potreban** — `/kupci` 289 ms).
+- **`npm run rls:test` dopunjen** (ista skripta): Admin upisuje belešku + oznaku pod `p:__rls-test`, beleška na tuđe ime odbijena; **Logistika → 0 redova na oba `customer_*` + odbijen insert**; **Menadžer vidi Adminovu belešku, ali je ne menja ni briše, piše/menja/briše svoju i postavlja oznaku** (opciono, kao T7/A6); na kraju se sve briše. **Živi deo NIJE pokrenut** — nema `.env.test.local` ni naloga Menadžera/Logistike (prvo `/korisnici`). Iste politike su uvežbane na lokalnom Postgresu u C3; statički deo (`rls:static`: matrica `customer_*`, initplan, kapije `/kupci`, `/kupci/[id]`, `kupci/actions.ts`) prolazi.
+- **QA nad podacima:** `provera:c1` i dalje PASS (57/59 tačno po telefonu, sve razlike objašnjene); svaka od 1.511 porudžbina je u tačno jednoj grupi, `repId` jedinstven, **Σ promet svih grupa = Σ realizovanih stavki** (6.754.297 RSD). Pravila spajanja provereni i sintetički (u pravim podacima nema kupca bez telefona sa više `customers` redova): isti e-mail bez telefona → jedan kupac (bez obzira na velika slova/razmak), lanac telefon↔e-mail spaja, interni mejl ne spaja, otkazana u broju a ne u prometu, ključ telefon pre e-maila.
+- **Prazna stanja:** „Nema kupaca za ovu pretragu/ovaj filter", „Još nema beležaka", „Nema realizovanih kupovina", „Nema tiketa vezanih za ovog kupca". 360 px bez horizontalnog skrola (C1–C3). Logistika na `/kupci` → `requireRole` redirect.
 
 **Dashboard = kartice + grafikoni (promenjena odluka, potvrđeno sa korisnikom 19.10.2026):**
 - **Ostaju:** filter perioda i 4 kartice (Zarada / Neto profit / Porudžbine / Prosečna marža — i dalje `computePeriodMetrics`, cifre nedirane). **Uklonjeno sve ispod:** „Porudžbine koje čekaju", „Moji tiketi" (T6), „Niska zaliha" i napomena o nepopisanim varijantama. Mrtve funkcije `getWaitingOrders` (`db/dashboard.ts`) i `getMyTicketsSummary` (`db/tickets.ts`) obrisane; nisko stanje i dalje stiže kroz dnevni push, a „Moji tiketi" kroz filter `/tiketi?moji=1`.

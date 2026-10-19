@@ -38,7 +38,7 @@ import { CustomersToolbar } from "./customers-toolbar";
 export const dynamic = "force-dynamic";
 
 /*
- * Kupci (Korak C1, docs/Sportem-Plan-Kupci.md) — lista kupaca spojenih po
+ * Kupci (Korak C1, docs/arhiva/2026-10-18-Plan-Kupci.md) — lista kupaca spojenih po
  * telefonu pa e-mailu (db/customers.ts). Pristup: Admin i Menadžer (promet,
  * zarada i PII). Novac iz zamrznutih `order_items`; otkazane/vraćene su u broju
  * porudžbina, ne u prometu i zaradi. Stanje (pretraga, filter, sort, strana) je
