@@ -11,6 +11,8 @@ import {
 } from "@/db/orders";
 import { getOrderCancellationHistory, porudzbinePlural } from "@/db/customer-risk";
 import { listTicketsForOrder } from "@/db/tickets";
+import { getOrderCustomerContext } from "@/db/customers";
+import { customerFlagMeta } from "@/lib/customers";
 import { otkupOf } from "@/db/finance";
 import { rsd, datum, datumVreme } from "@/lib/format";
 import { APP_STATUS } from "@/lib/woo";
@@ -49,13 +51,16 @@ export default async function PorudzbinaPage({
   const order = await getOrderDetail(id);
   if (!order) notFound();
 
-  const [statuses, history, variantOptions, riskyHistory, tickets] = await Promise.all([
-    getOrderStatuses(),
-    getOrderStatusHistory(order.id),
-    isAdmin && !order.invoice_id ? getActiveVariantOptions() : Promise.resolve([]),
-    getOrderCancellationHistory(order),
-    listTicketsForOrder(order.id),
-  ]);
+  const [statuses, history, variantOptions, riskyHistory, tickets, customerCtx] = await Promise.all(
+    [
+      getOrderStatuses(),
+      getOrderStatusHistory(order.id),
+      isAdmin && !order.invoice_id ? getActiveVariantOptions() : Promise.resolve([]),
+      getOrderCancellationHistory(order),
+      listTicketsForOrder(order.id),
+      getOrderCustomerContext(order.customer_id),
+    ],
+  );
 
   // Poznati (seed) statusi toka — razrešeni po imenu (nikad hardkodovan UUID).
   const flow: FlowIds = {
@@ -178,6 +183,44 @@ export default async function PorudzbinaPage({
               value={order.delivery_method === "licno" ? "Lično" : "XExpress"}
             />
           </dl>
+
+          {/* Oznake i poslednja beleška kupca (Kupci C3) */}
+          {customerCtx ? (
+            <div className="border-border mt-3 space-y-2 border-t pt-3">
+              {customerCtx.flags.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {customerCtx.flags.map((f) => {
+                    const meta = customerFlagMeta(f);
+                    return (
+                      <Badge key={f} variant={meta.variant}>
+                        {meta.label}
+                      </Badge>
+                    );
+                  })}
+                </div>
+              ) : null}
+              {customerCtx.latestNote ? (
+                <div className="bg-surface-2 rounded-md px-3 py-2 text-sm">
+                  <p className="text-ink-soft break-words whitespace-pre-wrap">
+                    {customerCtx.latestNote.body}
+                  </p>
+                  <p className="text-ink-faint mt-1 text-xs">
+                    {customerCtx.latestNote.authorName ?? "Nepoznat"} ·{" "}
+                    <span className="num">{datum(customerCtx.latestNote.created_at)}</span>
+                    {customerCtx.noteCount > 1
+                      ? ` · još ${customerCtx.noteCount - 1} na profilu`
+                      : ""}
+                  </p>
+                </div>
+              ) : null}
+              <Link
+                href={`/kupci/${customerCtx.repId}`}
+                className="text-green hover:text-green-deep inline-flex text-sm font-medium"
+              >
+                Profil kupca →
+              </Link>
+            </div>
+          ) : null}
         </section>
 
         <section className="border-border bg-surface shadow-soft rounded-lg border p-4">

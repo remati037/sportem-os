@@ -60,7 +60,7 @@ const LINKED_TICKETS_LIMIT = 20; // db/tickets.ts
 const PDV_RATE = 20; // db/finance.ts XEXPRESS_VAT_RATE
 
 const ORDER_LIST_COLS =
-  "id, woo_order_id, ordered_at, goods_total, needs_vp, needs_review, ship_name, ship_phone, status:order_statuses(name, color), customer:customers(name, phone, email)";
+  "id, woo_order_id, ordered_at, goods_total, needs_vp, needs_review, ship_name, ship_phone, ship_phone_norm, customer_id, status:order_statuses(name, color), customer:customers(name, phone, email, phone_norm)";
 const ORDER_DETAIL_COLS = `id, woo_order_id, customer_id, delivery_method, payment_status, invoice_id, needs_vp, needs_review,
    review_reason, woo_status, ship_name, ship_phone, ship_address, ship_city,
    ship_postal_code, ship_note, goods_total, shipping_charged, shipping_actual,
@@ -442,13 +442,32 @@ const PROBES = [
         // getOrders (bez filtera, strana 1)
         (async () => {
           await buildCancellationIndex(ctx, "lista:");
-          await rec.run(`lista: orders strana 1 (${ORDERS_PER_PAGE} po strani, count exact)`, () =>
+          const page = await rec.run(
+            `lista: orders strana 1 (${ORDERS_PER_PAGE} po strani, count exact)`,
+            () =>
+              c
+                .from("orders")
+                .select(ORDER_LIST_COLS, { count: "exact" })
+                .order("ordered_at", { ascending: false, nullsFirst: false })
+                .order("id", { ascending: true })
+                .range(0, ORDERS_PER_PAGE - 1),
+          );
+          // db/customers.ts → ordersWithFlag: oznaka „zvati" po ključevima porudžbina sa strane
+          // (normEmail iz db/customer-risk.ts — interni mejlovi se ovde ne isključuju; sonda meri upit)
+          const keys = new Set();
+          for (const o of page.data ?? []) {
+            if (o.customer_id) keys.add(`c:${o.customer_id}`);
+            for (const p of [o.ship_phone_norm, o.customer?.phone_norm]) if (p) keys.add(`p:${p}`);
+            const em = (o.customer?.email ?? "").trim().toLowerCase();
+            if (em) keys.add(`e:${em}`);
+          }
+          await paginatedIn(rec, "lista: customer_flags (zvati)", [...keys], (chunk) =>
             c
-              .from("orders")
-              .select(ORDER_LIST_COLS, { count: "exact" })
-              .order("ordered_at", { ascending: false, nullsFirst: false })
-              .order("id", { ascending: true })
-              .range(0, ORDERS_PER_PAGE - 1),
+              .from("customer_flags")
+              .select("customer_key")
+              .eq("flag", "zvati")
+              .in("customer_key", chunk)
+              .order("customer_key", { ascending: true }),
           );
         })(),
         // getOrderStatuses
@@ -795,7 +814,6 @@ const PROBES = [
     },
   },
 ];
-
 
 /* ── Ispis ───────────────────────────────────────────────────────────────── */
 

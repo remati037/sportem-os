@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ChevronLeft, ChevronRight, Contact } from "lucide-react";
 
 import { requireRole } from "@/lib/auth";
+import { customerFlagMeta } from "@/lib/customers";
 import { cn } from "@/lib/utils";
 import { datum, num, rsd } from "@/lib/format";
 import {
@@ -49,6 +50,7 @@ const FILTER_LABEL: Record<CustomerFilter, string> = {
   ponovni: "Ponovni",
   rizicni: "Rizični",
   neaktivni: "Neaktivni",
+  oznaka: "Sa oznakom",
 };
 
 type Sp = Record<string, string | string[] | undefined>;
@@ -208,11 +210,19 @@ function PageLink({
 }
 
 function CustomerBadges({ row }: { row: CustomerListRow }) {
-  if (!row.risky && !row.repeat) return null;
+  if (!row.risky && !row.repeat && row.flags.length === 0) return null;
   return (
     <span className="inline-flex flex-wrap gap-1">
       {row.repeat ? <Badge variant="success">Ponovni</Badge> : null}
       {row.risky ? <Badge variant="danger">Rizičan</Badge> : null}
+      {row.flags.map((f) => {
+        const meta = customerFlagMeta(f);
+        return (
+          <Badge key={f} variant={meta.variant}>
+            {meta.label}
+          </Badge>
+        );
+      })}
     </span>
   );
 }

@@ -403,6 +403,7 @@ async function testRouteGuards() {
     "app/(app)/asistent/actions.ts",
     "app/(app)/kupci/page.tsx",
     "app/(app)/kupci/[id]/page.tsx",
+    "app/(app)/kupci/actions.ts",
   ];
 
   for (const file of files) {
@@ -825,10 +826,64 @@ async function cleanupAdminAi({ client, convId }) {
  * Statičke provere — čitaju samo fajlove iz repoa (migracije + rute), nikad
  * bazu. Zato rade i bez kredencijala i pokreću se PRE svake prijave.
  */
+/* ────────────────────────────────────────────────────────────────────────────
+ * Kupci (C3) — beleške i oznake: samo Admin/Menadžer, belešku menja samo autor.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+async function testCustomerPoliciesInMigration() {
+  console.log("\nPolitike u migraciji — matrica dozvola za `customer_notes` / `customer_flags`:");
+  const { readFile } = await import("node:fs/promises");
+  const { fileURLToPath } = await import("node:url");
+  const { dirname, join } = await import("node:path");
+  const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const file = "supabase/migrations/20261019120000_kupci_beleske.sql";
+
+  let sql = "";
+  try {
+    sql = await readFile(join(root, file), "utf8");
+  } catch {
+    check(`${file} → postoji`, false, "migracija nije pronađena");
+    return;
+  }
+
+  const policies = sql.match(/create policy "customer_[\s\S]*?;/g) ?? [];
+  for (const table of ["customer_notes", "customer_flags"]) {
+    check(
+      `${table} → RLS uključen`,
+      new RegExp(`alter table public\\.${table}\\s+enable row level security`).test(sql),
+    );
+    const own = policies.filter((b) => b.includes(`on public.${table}`));
+    check(
+      `${table} → svaka politika traži admin/manager`,
+      own.length > 0 &&
+        own.every((b) => b.includes("(select public.current_app_role()) in ('admin', 'manager')")),
+      `${own.length} politika`,
+    );
+  }
+  check(
+    "nijedna customer_* politika ne pominje 'logistics'",
+    policies.every((b) => !b.includes("logistics")),
+  );
+  const authorOnly = policies.filter(
+    (b) => b.includes("on public.customer_notes") && /for (update|delete)/.test(b),
+  );
+  check(
+    "customer_notes → izmenu i brisanje sme samo autor (created_by = auth.uid())",
+    authorOnly.length === 2 &&
+      authorOnly.every((b) => b.includes("created_by = (select auth.uid())")),
+    `${authorOnly.length} politika`,
+  );
+  check(
+    "customer_notes → nema `for all` politike (zaobišla bi pravilo autora)",
+    !policies.some((b) => b.includes("on public.customer_notes") && /for all/.test(b)),
+  );
+}
+
 async function runStaticChecks() {
   await testTicketPoliciesInMigration();
   await testOfferPoliciesInMigration();
   await testAiPoliciesInMigration();
+  await testCustomerPoliciesInMigration();
   await testRlsInitplanInMigrations();
   await testRouteGuards();
 }

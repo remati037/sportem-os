@@ -1,6 +1,6 @@
 # Sportem — Plan implementacije: Kupci
 
-> Verzija 1.1 · 18.10.2026 · status: **u radu — odluke §0.2 i §0.3 potvrđene 18.10.2026; C1–C2 urađeni**
+> Verzija 1.1 · 18.10.2026 · status: **u radu — odluke §0.2 i §0.3 potvrđene 18.10.2026; C1–C3 urađeni**
 > Prati pravila iz `CLAUDE.md` (zaključane odluke, migracije, RLS, srpski UI, zamrznute cene).
 > **Jedan korak = jedna sesija.** Za svaku sesiju: `CLAUDE.md` + tekst tog koraka + „PROMPT ZA SESIJU".
 
@@ -179,7 +179,7 @@ tiket vezan za tog kupca se vidi na profilu.
 
 ---
 
-### C3 — Beleške i oznake (jedina migracija modula)
+### C3 — Beleške i oznake (jedina migracija modula) ✅ urađeno 19.10.2026 (beleška: CLAUDE.md §10 „Korak C3")
 
 **Cilj:** znanje o kupcu ostaje u app-u, ne u glavi.
 

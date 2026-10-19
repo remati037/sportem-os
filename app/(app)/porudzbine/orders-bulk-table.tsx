@@ -71,9 +71,11 @@ export function OrdersBulkTable({
   const [pending, startTransition] = useTransition();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   // Bulk promena statusa: izabrani ciljni status + (obavezan) razlog za Otkazano/Vraćeno.
-  const [intent, setIntent] = useState<{ statusId: string; statusName: string; needsReason: boolean } | null>(
-    null,
-  );
+  const [intent, setIntent] = useState<{
+    statusId: string;
+    statusName: string;
+    needsReason: boolean;
+  } | null>(null);
   const [reason, setReason] = useState("");
 
   const pageIds = useMemo(() => orders.map((o) => o.id), [orders]);
@@ -281,7 +283,10 @@ export function OrdersBulkTable({
                   {o.ordered_at ? datum(o.ordered_at) : "—"}
                 </TableCell>
                 <TableCell className="text-ink px-4 py-2.5">
-                  {o.ship_name ?? o.customer?.name ?? "—"}
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    {o.ship_name ?? o.customer?.name ?? "—"}
+                    {o.call_first ? <Badge variant="warning">Zvati pre slanja</Badge> : null}
+                  </span>
                 </TableCell>
                 <TableCell className="px-4 py-2.5">
                   {o.status ? <StatusPill name={o.status.name} color={o.status.color} /> : "—"}
@@ -325,20 +330,28 @@ export function OrdersBulkTable({
                   onClick={(e) => e.stopPropagation()}
                 />
               }
-              title={<span className="num">{o.woo_order_id != null ? `#${o.woo_order_id}` : "—"}</span>}
+              title={
+                <span className="num">{o.woo_order_id != null ? `#${o.woo_order_id}` : "—"}</span>
+              }
               subtitle={
                 <span>
-                  {o.ordered_at ? datum(o.ordered_at) : "—"} · {o.ship_name ?? o.customer?.name ?? "—"}
+                  {o.ordered_at ? datum(o.ordered_at) : "—"} ·{" "}
+                  {o.ship_name ?? o.customer?.name ?? "—"}
                 </span>
               }
-              trailing={o.status ? <StatusPill name={o.status.name} color={o.status.color} /> : null}
+              trailing={
+                o.status ? <StatusPill name={o.status.name} color={o.status.color} /> : null
+              }
             />
             <div className="mt-3 space-y-1.5">
               <MobileCardField label="Iznos">
-                <span className="num font-medium">{o.goods_total != null ? rsd(o.goods_total) : "—"}</span>
+                <span className="num font-medium">
+                  {o.goods_total != null ? rsd(o.goods_total) : "—"}
+                </span>
               </MobileCardField>
-              {o.needs_vp || o.needs_review || o.risky_cancel_count > 0 ? (
+              {o.needs_vp || o.needs_review || o.risky_cancel_count > 0 || o.call_first ? (
                 <div className="relative z-10 flex flex-wrap gap-1.5">
+                  {o.call_first ? <Badge variant="warning">Zvati pre slanja</Badge> : null}
                   {o.needs_vp ? <Badge variant="warning">Nedostaje VP</Badge> : null}
                   {o.needs_review ? <Badge variant="danger">Za proveru</Badge> : null}
                   {o.risky_cancel_count > 0 ? (

@@ -1,10 +1,13 @@
 import "server-only";
 
+import * as Sentry from "@sentry/nextjs";
 import { cache } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/server";
-import { mustRows, selectAllByIdShards, selectAllIn } from "@/lib/supabase/paginate";
+import { mustRows, selectAll, selectAllByIdShards, selectAllIn } from "@/lib/supabase/paginate";
+import { CUSTOMER_FLAGS, type CustomerFlag } from "@/lib/customers";
+import { listStaffProfiles } from "@/db/profiles";
 import { isUuid } from "@/lib/validation/uuid";
 import { belgradeDate, todayBelgrade } from "@/lib/date-belgrade";
 import { CANCELLED_STATUS_NAMES } from "@/lib/woo";
@@ -266,7 +269,7 @@ export const loadCustomerGroups = cache(async (): Promise<CustomerGroup[]> => {
 
 /* ── Lista /kupci ─────────────────────────────────────────────────────────── */
 
-export const CUSTOMER_FILTERS = ["sve", "ponovni", "rizicni", "neaktivni"] as const;
+export const CUSTOMER_FILTERS = ["sve", "ponovni", "rizicni", "neaktivni", "oznaka"] as const;
 export type CustomerFilter = (typeof CUSTOMER_FILTERS)[number];
 
 export const CUSTOMER_SORTS = ["promet", "zarada", "porudzbine", "poslednja"] as const;
@@ -289,6 +292,7 @@ export type CustomerListRow = {
   lastOrderAt: string;
   risky: boolean;
   repeat: boolean;
+  flags: CustomerFlag[];
 };
 
 /** „Ponovni" = bar dve realizovane porudžbine; „rizičan" = bar jedna otkazana/vraćena. */
@@ -352,7 +356,8 @@ export async function listCustomers({
   sort: CustomerSort;
   page: number;
 }): Promise<CustomerListResult> {
-  const groups = await loadCustomerGroups();
+  const [groups, flagIndex] = await Promise.all([loadCustomerGroups(), loadFlagIndex()]);
+  const flagsOf = (g: CustomerGroup) => groupFlags(g, flagIndex);
   const cutoff = inactiveCutoff(months);
 
   const searched = groups.filter((g) => matchesSearch(g, q));
@@ -362,6 +367,7 @@ export async function listCustomers({
     rizicni: isRiskyCustomer,
     // Neaktivan = kupio je bar jednom, ali ne od pre N meseci.
     neaktivni: (g) => g.realizedCount >= 1 && belgradeDate(g.lastOrderAt) < cutoff,
+    oznaka: (g) => flagsOf(g).length > 0,
   };
 
   const counts = Object.fromEntries(
@@ -399,6 +405,7 @@ export async function listCustomers({
     lastOrderAt: g.lastOrderAt,
     risky: isRiskyCustomer(g),
     repeat: isRepeatCustomer(g),
+    flags: flagsOf(g),
   }));
 
   return { rows, total: filtered.length, counts };
@@ -594,4 +601,169 @@ export async function getCustomerProfile(customerId: string): Promise<CustomerPr
   const address = [street, place].filter(Boolean).join(", ") || null;
 
   return { group, address, orders, articles, cancellations };
+}
+
+/* ── Beleške i oznake (Korak C3) ─────────────────────────────────────────── */
+
+/*
+ * Ključ beleške/oznake je ključ GRUPE (`p:` / `e:` / `c:`), ne `customers.id`.
+ * Kandidat-ključevi su svi telefoni, e-mailovi i `customers` redovi grupe: kad
+ * nova porudžbina spoji dve grupe, beleške obe stare grupe se i dalje nalaze.
+ * Ključevi NIKAD ne idu na klijent — akcije primaju repId i same razrešavaju.
+ */
+export function customerCandidateKeys(g: CustomerGroup): string[] {
+  return [
+    ...g.phones.map((p) => `p:${p}`),
+    ...g.emails.map((e) => `e:${e}`),
+    ...g.customerIds.map((c) => `c:${c}`),
+  ];
+}
+
+/** Ključevi jedne porudžbine (isti oblik kao kandidat-ključevi grupe). */
+export function orderCustomerKeys(o: {
+  customer_id: string | null;
+  ship_phone_norm?: string | null;
+  customer?: { phone_norm?: string | null; email?: string | null } | null;
+}): string[] {
+  const keys = new Set<string>();
+  if (o.customer_id) keys.add(`c:${o.customer_id}`);
+  for (const p of [o.ship_phone_norm, o.customer?.phone_norm]) if (p) keys.add(`p:${p}`);
+  const em = normEmail(o.customer?.email);
+  if (em) keys.add(`e:${em}`);
+  return [...keys];
+}
+
+/** Redosled oznaka uvek kao u fiksnoj listi. */
+function sortFlags(flags: Iterable<string>): CustomerFlag[] {
+  const set = new Set(flags);
+  return CUSTOMER_FLAGS.map((f) => f.value).filter((v) => set.has(v));
+}
+
+/** Sve oznake (tabela je mala) → ključ → oznake. Jednom po zahtevu. */
+const loadFlagIndex = cache(async (): Promise<Map<string, string[]>> => {
+  const supabase = await createClient();
+  const rows = await selectAll<{ customer_key: string; flag: string }>("kupci: oznake", () =>
+    supabase
+      .from("customer_flags")
+      .select("customer_key, flag")
+      .order("customer_key", { ascending: true })
+      .order("flag", { ascending: true }),
+  );
+  const index = new Map<string, string[]>();
+  for (const r of rows) {
+    const list = index.get(r.customer_key);
+    if (list) list.push(r.flag);
+    else index.set(r.customer_key, [r.flag]);
+  }
+  return index;
+});
+
+function groupFlags(g: CustomerGroup, index: Map<string, string[]>): CustomerFlag[] {
+  if (index.size === 0) return [];
+  return sortFlags(customerCandidateKeys(g).flatMap((k) => index.get(k) ?? []));
+}
+
+/** Oznake jednog kupca (unija preko svih kandidat-ključeva). */
+export async function getCustomerFlags(g: CustomerGroup): Promise<CustomerFlag[]> {
+  const supabase = await createClient();
+  const rows = await selectAllIn<{ flag: string }, string>(
+    "kupac: oznake",
+    customerCandidateKeys(g),
+    (chunk) =>
+      supabase
+        .from("customer_flags")
+        .select("flag")
+        .in("customer_key", chunk)
+        .order("customer_key", { ascending: true })
+        .order("flag", { ascending: true }),
+  );
+  return sortFlags(rows.map((r) => r.flag));
+}
+
+export type CustomerNote = {
+  id: string;
+  body: string;
+  created_by: string | null;
+  authorName: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** Beleške jednog kupca (svi kandidat-ključevi), najnovije prvo. */
+export async function getCustomerNotes(g: CustomerGroup): Promise<CustomerNote[]> {
+  const supabase = await createClient();
+  const [rows, staff] = await Promise.all([
+    selectAllIn<Omit<CustomerNote, "authorName">, string>(
+      "kupac: beleške",
+      customerCandidateKeys(g),
+      (chunk) =>
+        supabase
+          .from("customer_notes")
+          .select("id, body, created_by, created_at, updated_at")
+          .in("customer_key", chunk)
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true }),
+    ),
+    listStaffProfiles(),
+  ]);
+  const names = new Map(staff.map((p) => [p.id, p.full_name]));
+  return rows
+    .sort((a, b) => b.created_at.localeCompare(a.created_at) || a.id.localeCompare(b.id))
+    .map((r) => ({ ...r, authorName: r.created_by ? (names.get(r.created_by) ?? null) : null }));
+}
+
+/**
+ * Za listu porudžbina: koje porudžbine pripadaju kupcu sa oznakom „zvati pre
+ * slanja". Oznaka je upisana pod SVIM ključevima grupe, pa je dovoljno
+ * poklapanje po ključevima same porudžbine — bez učitavanja svih grupa.
+ */
+export async function ordersWithFlag(
+  orders: (Parameters<typeof orderCustomerKeys>[0] & { id: string })[],
+  flag: CustomerFlag,
+): Promise<Set<string>> {
+  const keysByOrder = new Map(orders.map((o) => [o.id, orderCustomerKeys(o)]));
+  const allKeys = [...new Set([...keysByOrder.values()].flat())];
+  if (allKeys.length === 0) return new Set();
+
+  const supabase = await createClient();
+  const rows = await selectAllIn<{ customer_key: string }, string>(
+    "porudžbine: oznaka kupca",
+    allKeys,
+    (chunk) =>
+      supabase
+        .from("customer_flags")
+        .select("customer_key")
+        .eq("flag", flag)
+        .in("customer_key", chunk)
+        .order("customer_key", { ascending: true }),
+  );
+  const flagged = new Set(rows.map((r) => r.customer_key));
+  const out = new Set<string>();
+  for (const [id, keys] of keysByOrder) if (keys.some((k) => flagged.has(k))) out.add(id);
+  return out;
+}
+
+export type OrderCustomerContext = {
+  repId: string;
+  flags: CustomerFlag[];
+  latestNote: CustomerNote | null;
+  noteCount: number;
+};
+
+/** Detalj porudžbine: oznake + poslednja beleška kupca + link na profil (C3). */
+export async function getOrderCustomerContext(
+  customerId: string | null,
+): Promise<OrderCustomerContext | null> {
+  if (!customerId) return null;
+  const group = await findCustomerGroup(customerId);
+  if (!group) return null;
+  // Best-effort: beleške/oznake su pomoć na detalju porudžbine — ako tabele još
+  // nema (migracija nije primenjena), detalj ostaje ceo, samo bez njih.
+  try {
+    const [flags, notes] = await Promise.all([getCustomerFlags(group), getCustomerNotes(group)]);
+    return { repId: group.repId, flags, latestNote: notes[0] ?? null, noteCount: notes.length };
+  } catch (err) {
+    Sentry.captureException(err);
+    return { repId: group.repId, flags: [], latestNote: null, noteCount: 0 };
+  }
 }

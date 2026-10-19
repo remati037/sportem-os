@@ -5,7 +5,13 @@ import { ArrowLeft, Mail, MapPin, Phone, TriangleAlert } from "lucide-react";
 import { requireRole } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { datum, num, rsd } from "@/lib/format";
-import { getCustomerProfile, isRepeatCustomer, isRiskyCustomer } from "@/db/customers";
+import {
+  getCustomerFlags,
+  getCustomerNotes,
+  getCustomerProfile,
+  isRepeatCustomer,
+  isRiskyCustomer,
+} from "@/db/customers";
 import { listTicketsForCustomers } from "@/db/tickets";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -26,6 +32,8 @@ import {
 import { RelatedTickets } from "../../tiketi/related-tickets";
 import { AskAssistantButton } from "../../asistent/ask-button";
 import { StatusPill } from "../../porudzbine/status-pill";
+import { CustomerFlags } from "./flags";
+import { CustomerNotes } from "./notes";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +45,7 @@ export const dynamic = "force-dynamic";
  * broju porudžbina, ali ne u prometu, zaradi ni artiklima.
  */
 export default async function KupacPage({ params }: { params: Promise<{ id: string }> }) {
-  await requireRole("admin", "manager");
+  const { userId } = await requireRole("admin", "manager");
   const { id } = await params;
 
   const profile = await getCustomerProfile(id);
@@ -45,7 +53,11 @@ export default async function KupacPage({ params }: { params: Promise<{ id: stri
   const { group, address, orders, articles, cancellations } = profile;
   if (group.repId !== id) redirect(`/kupci/${group.repId}`);
 
-  const tickets = await listTicketsForCustomers(group.customerIds, group.orderIds);
+  const [tickets, notes, flags] = await Promise.all([
+    listTicketsForCustomers(group.customerIds, group.orderIds),
+    getCustomerNotes(group),
+    getCustomerFlags(group),
+  ]);
 
   const name = group.name ?? "(bez imena)";
   const cancelPct =
@@ -96,6 +108,9 @@ export default async function KupacPage({ params }: { params: Promise<{ id: stri
               </span>
             ) : null}
           </div>
+          <div className="pt-1">
+            <CustomerFlags key={flags.join(",")} customerId={group.repId} initial={flags} />
+          </div>
         </div>
         <AskAssistantButton
           question={`Analiziraj kupca ${name}: šta kupuje, koliko vredi, da li je rizičan.`}
@@ -134,6 +149,9 @@ export default async function KupacPage({ params }: { params: Promise<{ id: stri
         <Kpi label="Prva kupovina" value={datum(group.firstOrderAt)} />
         <Kpi label="Poslednja kupovina" value={datum(group.lastOrderAt)} />
       </div>
+
+      {/* Beleške (C3) — znanje o kupcu ostaje u app-u */}
+      <CustomerNotes customerId={group.repId} notes={notes} currentUserId={userId} />
 
       {/* 3. Porudžbine */}
       <section className="mb-8">

@@ -1,11 +1,14 @@
 import "server-only";
 
+import * as Sentry from "@sentry/nextjs";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/server";
 import { chunked, must, mustRows, selectAll } from "@/lib/supabase/paginate";
 import { buildCancellationIndex, matchCancellations } from "@/db/customer-risk";
 import { CANCELLED_STATUS_NAMES } from "@/lib/woo";
+import { CALL_FIRST_FLAG } from "@/lib/customers";
+import { ordersWithFlag } from "@/db/customers";
 
 /*
  * Upiti porudžbina (Korak 1.2 — minimalna lista + detalj; pun UX u 1.4).
@@ -24,9 +27,18 @@ export type OrderListRow = {
   ship_name: string | null;
   ship_phone: string | null;
   status: { name: string; color: string | null } | null;
-  customer: { name: string | null; phone: string | null; email: string | null } | null;
+  customer: {
+    name: string | null;
+    phone: string | null;
+    email: string | null;
+    phone_norm: string | null;
+  } | null;
+  customer_id: string | null;
+  ship_phone_norm: string | null;
   /** Broj ranijih otkazanih/vraćenih porudžbina istog kupca (tel/e-mail). */
   risky_cancel_count: number;
+  /** Kupac ima oznaku „Pazi — zvati pre slanja" (Kupci C3). */
+  call_first: boolean;
 };
 
 export type OrderItemRow = {
@@ -75,7 +87,7 @@ export type OrderDetail = {
 };
 
 const LIST_COLS =
-  "id, woo_order_id, ordered_at, goods_total, needs_vp, needs_review, ship_name, ship_phone, status:order_statuses(name, color), customer:customers(name, phone, email)";
+  "id, woo_order_id, ordered_at, goods_total, needs_vp, needs_review, ship_name, ship_phone, ship_phone_norm, customer_id, status:order_statuses(name, color), customer:customers(name, phone, email, phone_norm)";
 
 export type OrderFilters = {
   statusId?: string;
@@ -159,6 +171,22 @@ async function cancelledStatusIds(supabase: SupabaseClient): Promise<string[]> {
   return mustRows<{ id: string }>(res, "statusi Otkazano/Vraćeno").map((s) => s.id);
 }
 
+/**
+ * Oznaka „zvati pre slanja" po redu — samo za porudžbine na strani (Kupci C3).
+ * Best-effort: oznaka je pomoć, ne podatak — ako upit padne (npr. migracija
+ * kupaca još nije primenjena), lista se prikazuje bez nje, uz Sentry.
+ */
+async function annotateCallFirst(rows: OrderListRow[]): Promise<OrderListRow[]> {
+  let flagged = new Set<string>();
+  try {
+    flagged = await ordersWithFlag(rows, CALL_FIRST_FLAG);
+  } catch (err) {
+    Sentry.captureException(err);
+  }
+  for (const row of rows) row.call_first = flagged.has(row.id);
+  return rows;
+}
+
 export async function getOrders(filters: OrderFilters = {}): Promise<OrdersResult> {
   const supabase = await createClient();
   const { statusId, deliveryMethod, paymentStatus, needsVp, needsReview, from, to, search } =
@@ -222,11 +250,14 @@ export async function getOrders(filters: OrderFilters = {}): Promise<OrdersResul
       () => orderedQuery,
     );
     const risky = annotateRisk(scanned).filter((r) => r.risky_cancel_count > 0);
-    return { rows: risky.slice(fromIdx, fromIdx + perPage), total: risky.length };
+    const pageRows = await annotateCallFirst(risky.slice(fromIdx, fromIdx + perPage));
+    return { rows: pageRows, total: risky.length };
   }
 
   const res = await orderedQuery.range(fromIdx, fromIdx + perPage - 1);
-  const rows = annotateRisk(mustRows<OrderListRow>(res, "lista porudžbina"));
+  const rows = await annotateCallFirst(
+    annotateRisk(mustRows<OrderListRow>(res, "lista porudžbina")),
+  );
   return { rows, total: res.count ?? 0 };
 }
 
