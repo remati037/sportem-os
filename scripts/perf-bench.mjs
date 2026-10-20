@@ -63,7 +63,7 @@ const ORDER_LIST_COLS =
   "id, woo_order_id, ordered_at, goods_total, needs_vp, needs_review, ship_name, ship_phone, ship_phone_norm, customer_id, status:order_statuses(name, color), customer:customers(name, phone, email, phone_norm)";
 const ORDER_DETAIL_COLS = `id, woo_order_id, customer_id, delivery_method, payment_status, invoice_id, needs_vp, needs_review,
    review_reason, woo_status, ship_name, ship_phone, ship_address, ship_city,
-   ship_postal_code, ship_note, goods_total, shipping_charged, shipping_actual,
+   ship_postal_code, ship_note, gift_text, free_shipping, goods_total, shipping_charged, shipping_actual,
    weight_grams, package_count, cod_amount,
    ordered_at, shipped_at, delivered_at, paid_at, cancelled_at,
    status:order_statuses(name, color),

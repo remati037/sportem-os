@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, TriangleAlert } from "lucide-react";
+import { ArrowLeft, Gift, TriangleAlert } from "lucide-react";
 
 import { requireRole } from "@/lib/auth";
 import {
@@ -148,6 +148,20 @@ export default async function PorudzbinaPage({
                 </li>
               ))}
             </ul>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Pokloni iz paketa (plugin „Sportem Offers") — pakuju se uz porudžbinu. */}
+      {order.gift_text || order.free_shipping ? (
+        <div className="bg-green-soft text-green-deep mb-6 flex items-start gap-2.5 rounded-lg px-4 py-3 text-sm">
+          <Gift className="mt-0.5 size-4 shrink-0" />
+          <div className="min-w-0">
+            <p className="font-semibold">Paket — spakuj poklone</p>
+            {order.gift_text ? (
+              <p className="break-words whitespace-pre-line">{order.gift_text}</p>
+            ) : null}
+            {order.free_shipping ? <p>Besplatna dostava iz paketa.</p> : null}
           </div>
         </div>
       ) : null}

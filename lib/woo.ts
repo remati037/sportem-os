@@ -107,10 +107,56 @@ export const wooOrderSchema = z.looseObject({
   billing: wooAddress,
   shipping: wooAddress,
   line_items: z.array(wooLineItem).optional().default([]),
+  /** Order meta (plugin „Sportem Offers" upisuje poklone iz paketa). */
+  meta_data: z
+    .array(z.looseObject({ key: z.string().nullish(), value: z.unknown() }))
+    .optional()
+    .default([]),
 });
 
 export type WooOrder = z.infer<typeof wooOrderSchema>;
 export type WooLineItem = z.infer<typeof wooLineItem>;
+
+/* ── Paketi (plugin „Sportem Offers") ────────────────────────────────────── */
+
+/** Meta ključevi koje plugin upisuje na porudžbinu sa paketom. */
+export const WOO_META_GIFT_TEXT = "sportem_pokloni_tekst";
+export const WOO_META_FREE_SHIPPING = "sportem_besplatna_dostava";
+
+/** Meta vrednost → tekst. Plugin šalje string; niz/broj se tolerišu (red po stavci). */
+function metaText(value: unknown): string | null {
+  if (value == null) return null;
+  if (Array.isArray(value)) {
+    const lines = value.map(metaText).filter((v): v is string => Boolean(v));
+    return lines.length > 0 ? lines.join("\n") : null;
+  }
+  if (typeof value === "string" || typeof value === "number") {
+    const text = String(value).trim();
+    return text || null;
+  }
+  return null;
+}
+
+function metaFlag(value: unknown): boolean {
+  if (value === true || value === 1) return true;
+  if (typeof value === "string") return ["1", "yes", "da", "true"].includes(value.trim().toLowerCase());
+  return false;
+}
+
+/**
+ * Pokloni iz paketa sa Woo porudžbine (`meta_data`). Bez meta polja → prazno
+ * (`giftText: null`, `freeShipping: false`) — većina porudžbina nema paket.
+ */
+export function wooPackageMeta(order: Pick<WooOrder, "meta_data">): {
+  giftText: string | null;
+  freeShipping: boolean;
+} {
+  const find = (key: string) => order.meta_data.find((m) => m.key === key)?.value;
+  return {
+    giftText: metaText(find(WOO_META_GIFT_TEXT)),
+    freeShipping: metaFlag(find(WOO_META_FREE_SHIPPING)),
+  };
+}
 
 /* ── Mapiranje statusa ───────────────────────────────────────────────────── */
 

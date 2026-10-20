@@ -18,6 +18,7 @@ import {
   parseRsd,
   verifyWooSignature,
   wooOrderSchema,
+  wooPackageMeta,
   type WooOrder,
 } from "@/lib/woo";
 
@@ -69,7 +70,7 @@ export async function POST(request: Request) {
 
     const { data: existing, error: findError } = await supabase
       .from("orders")
-      .select("id, status_id, invoice_id, payment_status, cancelled_at")
+      .select(EXISTING_COLUMNS)
       .eq("woo_order_id", order.id)
       .maybeSingle();
     if (findError) throw findError;
@@ -82,7 +83,7 @@ export async function POST(request: Request) {
       if (!inserted.ok) {
         const { data: raced } = await supabase
           .from("orders")
-          .select("id, status_id, invoice_id, payment_status, cancelled_at")
+          .select(EXISTING_COLUMNS)
           .eq("woo_order_id", order.id)
           .maybeSingle();
         if (raced) await syncExistingOrder(supabase, order, raced);
@@ -98,12 +99,15 @@ export async function POST(request: Request) {
   }
 }
 
+const EXISTING_COLUMNS = "id, status_id, invoice_id, payment_status, cancelled_at, gift_text";
+
 type ExistingOrder = {
   id: string;
   status_id: string;
   invoice_id: string | null;
   payment_status: string;
   cancelled_at: string | null;
+  gift_text: string | null;
 };
 
 /** ID statusa iz lookup tabele po imenu (nikad hardkodovan UUID). */
@@ -206,6 +210,8 @@ async function insertOrder(
   const goodsTotal = items.reduce((sum, i) => sum + i.mp_at_sale * i.quantity, 0);
   const total = parseRsd(order.total);
   const isCod = (order.payment_method ?? "").toLowerCase() === "cod";
+  // Pokloni iz paketa (plugin „Sportem Offers") — snapshot za pakovanje.
+  const pkg = wooPackageMeta(order);
 
   const { data: created, error: orderError } = await supabase
     .from("orders")
@@ -220,6 +226,8 @@ async function insertOrder(
       ship_city: (shipping?.city || billing?.city || "").trim() || null,
       ship_postal_code: (shipping?.postcode || billing?.postcode || "").trim() || null,
       ship_note: order.customer_note?.trim() || null,
+      gift_text: pkg.giftText,
+      free_shipping: pkg.freeShipping,
       goods_total: goodsTotal,
       shipping_charged: parseRsd(order.shipping_total),
       cod_amount: isCod ? total : null,
@@ -252,7 +260,7 @@ async function insertOrder(
   if (isWooCancelled(order.status)) {
     const { data: fresh } = await supabase
       .from("orders")
-      .select("id, status_id, invoice_id, payment_status, cancelled_at")
+      .select(EXISTING_COLUMNS)
       .eq("id", created.id)
       .single();
     if (fresh) await syncExistingOrder(supabase, order, fresh);
@@ -303,7 +311,8 @@ async function insertOrder(
 }
 
 /**
- * `order.updated` nad postojećom porudžbinom: samo `woo_status` + otkazivanje.
+ * `order.updated` nad postojećom porudžbinom: samo `woo_status` + otkazivanje
+ * (+ pokloni iz paketa SAMO ako ih porudžbina još nema — nikad se ne prepisuju).
  * Guard: fakturisana/uplaćena porudžbina se NE otkazuje automatski — dobija
  * `needs_review` za ručnu odluku admina.
  */
@@ -313,6 +322,16 @@ async function syncExistingOrder(
   existing: ExistingOrder,
 ): Promise<void> {
   const patch: Record<string, unknown> = { woo_status: order.status };
+
+  // Pokloni su snapshot sa prvog prijema; update ih samo DOPUNJUJE kad su prazni
+  // (plugin ponekad upiše meta tek posle `order.created`).
+  if (existing.gift_text == null) {
+    const pkg = wooPackageMeta(order);
+    if (pkg.giftText || pkg.freeShipping) {
+      patch.gift_text = pkg.giftText;
+      patch.free_shipping = pkg.freeShipping;
+    }
+  }
   // Otkazano/vraćeno u Woo-u → roba se vraća na stanje (posle uspešnog update-a).
   let releaseStock = false;
 

@@ -79,6 +79,16 @@ const styles = StyleSheet.create({
   codNone: { fontSize: 9, color: "#6B7280" },
   packages: { fontSize: 9, color: "#374151" },
   note: { fontSize: 8, color: "#92400E", marginTop: 3 },
+  gift: {
+    marginTop: 4,
+    paddingVertical: 3,
+    paddingHorizontal: 5,
+    backgroundColor: "#E8F3EC",
+    borderLeftWidth: 2,
+    borderLeftColor: "#1B7A45",
+  },
+  giftLabel: { fontSize: 7, fontWeight: "bold", color: "#1B7A45" },
+  giftText: { fontSize: 9, fontWeight: "bold" },
   pageNo: {
     position: "absolute",
     bottom: 14,
@@ -145,6 +155,14 @@ export function ShippingListDocument({
               ) : (
                 <Text style={styles.itemName}>—</Text>
               )}
+
+              {/* Pokloni iz paketa (plugin „Sportem Offers") — ne sme da se zaboravi. */}
+              {o.gift_text ? (
+                <View style={styles.gift}>
+                  <Text style={styles.giftLabel}>POKLONI IZ PAKETA</Text>
+                  <Text style={styles.giftText}>{o.gift_text}</Text>
+                </View>
+              ) : null}
 
               <View style={styles.footer}>
                 <Text style={styles.packages}>

@@ -68,6 +68,8 @@ export type OrderDetail = {
   ship_city: string | null;
   ship_postal_code: string | null;
   ship_note: string | null;
+  gift_text: string | null;
+  free_shipping: boolean;
   goods_total: number | null;
   shipping_charged: number | null;
   shipping_actual: number | null;
@@ -431,7 +433,7 @@ export async function getOrderDetail(param: string): Promise<OrderDetail | null>
   const query = supabase.from("orders").select(
     `id, woo_order_id, customer_id, delivery_method, payment_status, invoice_id, needs_vp, needs_review,
        review_reason, woo_status, ship_name, ship_phone, ship_address, ship_city,
-       ship_postal_code, ship_note, goods_total, shipping_charged, shipping_actual,
+       ship_postal_code, ship_note, gift_text, free_shipping, goods_total, shipping_charged, shipping_actual,
        weight_grams, package_count, cod_amount,
        ordered_at, shipped_at, delivered_at, paid_at, cancelled_at,
        status:order_statuses(name, color),
@@ -463,6 +465,7 @@ export type ShippingOrder = {
   ship_city: string | null;
   ship_postal_code: string | null;
   ship_note: string | null;
+  gift_text: string | null;
   cod_amount: number | null;
   goods_total: number | null;
   shipping_charged: number | null;
@@ -489,7 +492,7 @@ export async function getOrdersForShipping(ids: string[]): Promise<ShippingOrder
           .from("orders")
           .select(
             `id, woo_order_id, ship_name, ship_phone, ship_address, ship_city, ship_postal_code,
-       ship_note, cod_amount, goods_total, shipping_charged, delivery_method, payment_status,
+       ship_note, gift_text, cod_amount, goods_total, shipping_charged, delivery_method, payment_status,
        package_count, weight_grams, items:order_items(sku, product_name, quantity)`,
           )
           .in("id", chunk)

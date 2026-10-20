@@ -9,6 +9,10 @@
 // otkazivanje +količina, bez duplog skidanja na Woo retry). Stanje test
 // varijante se na kraju vraća na polaznu cifru.
 //
+// Pokriva i poklone iz paketa (plugin „Sportem Offers", Woo meta
+// `sportem_pokloni_tekst` / `sportem_besplatna_dostava`): snimaju se na prvom
+// prijemu, `order.updated` ih ne prepisuje, a prazne samo dopunjuje.
+//
 // Preduslovi:
 //   • `npm run dev` radi na http://localhost:3000
 //   • WOO_WEBHOOK_SECRET + SUPABASE_SERVICE_ROLE_KEY u .env.local
@@ -37,7 +41,11 @@ const db = createClient(URL, SERVICE, { auth: { persistSession: false } });
 const WOO_ID_A = 990001; // poznat SKU
 const WOO_ID_B = 990002; // nepoznat SKU
 const WOO_ID_C = 990003; // otkazivanje na plaćenoj
+const WOO_ID_D = 990004; // paket sa poklonima na prvom prijemu
+const WOO_ID_E = 990005; // pokloni stigli tek sa order.updated
 const TEST_PHONE = "0699990001";
+// Drugi kupac za poklone — da ga ne poveže „rizičan kupac" sa otkazanom A.
+const GIFT_PHONE = "0699990002";
 
 let failures = 0;
 function check(label, pass, detail = "") {
@@ -65,8 +73,9 @@ async function post(payload, { badSignature = false, noSignature = false } = {})
   return res.status;
 }
 
-function makeOrder({ id, sku, phone = "+381 69/999-0001", status = "processing" }) {
+function makeOrder({ id, sku, phone = "+381 69/999-0001", status = "processing", meta }) {
   return {
+    ...(meta ? { meta_data: meta } : {}),
     id,
     status,
     date_created_gmt: "2026-07-09T10:00:00",
@@ -98,7 +107,7 @@ async function getOrder(wooId) {
   const { data } = await db
     .from("orders")
     .select(
-      "id, needs_vp, needs_review, review_reason, woo_status, cancelled_at, goods_total, shipping_charged, cod_amount, customer_id, payment_status, stock_applied, order_statuses(name), order_items(sku, quantity, mp_at_sale, vp_at_sale, profit_at_sale, variant_id)",
+      "id, needs_vp, needs_review, review_reason, woo_status, cancelled_at, gift_text, free_shipping, goods_total, shipping_charged, cod_amount, customer_id, payment_status, stock_applied, order_statuses(name), order_items(sku, quantity, mp_at_sale, vp_at_sale, profit_at_sale, variant_id)",
     )
     .eq("woo_order_id", wooId)
     .maybeSingle();
@@ -116,8 +125,11 @@ async function stockOf(variantId) {
 }
 
 async function cleanup() {
-  await db.from("orders").delete().in("woo_order_id", [WOO_ID_A, WOO_ID_B, WOO_ID_C]);
-  await db.from("customers").delete().eq("phone", TEST_PHONE);
+  await db
+    .from("orders")
+    .delete()
+    .in("woo_order_id", [WOO_ID_A, WOO_ID_B, WOO_ID_C, WOO_ID_D, WOO_ID_E]);
+  await db.from("customers").delete().in("phone", [TEST_PHONE, GIFT_PHONE]);
 }
 
 async function main() {
@@ -240,6 +252,63 @@ async function main() {
     .select("id", { count: "exact", head: true })
     .eq("phone", TEST_PHONE);
   check("jedan kupac za sve tri porudžbine", custCount === 1, `count=${custCount}`);
+
+  console.log("\n9) Pokloni iz paketa (Woo meta) — snapshot");
+  check("porudžbina bez paketa → gift_text null", a?.gift_text === null);
+  check("porudžbina bez paketa → free_shipping false", a?.free_shipping === false);
+
+  const GIFT = "Poklon: Šejker 500 ml\nPoklon: Peškir";
+  const giftMeta = [
+    { id: 1, key: "_metorik_source_type", value: "organic" },
+    { id: 2, key: "sportem_pokloni_tekst", value: GIFT },
+    { id: 3, key: "sportem_besplatna_dostava", value: "1" },
+  ];
+  const gPhone = "+381 69/999-0002";
+  check(
+    "HTTP 200 (paket)",
+    (await post(makeOrder({ id: WOO_ID_D, sku: "NE-POSTOJI-XYZ", phone: gPhone, meta: giftMeta }))) ===
+      200,
+  );
+  let d = await getOrder(WOO_ID_D);
+  check("gift_text snimljen", d?.gift_text === GIFT, JSON.stringify(d?.gift_text));
+  check("free_shipping = true", d?.free_shipping === true);
+
+  check(
+    "HTTP 200 (update sa drugim poklonom)",
+    (await post(
+      makeOrder({
+        id: WOO_ID_D,
+        sku: "NE-POSTOJI-XYZ",
+        phone: gPhone,
+        status: "completed",
+        meta: [{ key: "sportem_pokloni_tekst", value: "PREPISANO" }],
+      }),
+    )) === 200,
+  );
+  d = await getOrder(WOO_ID_D);
+  check("order.updated NE prepisuje poklon", d?.gift_text === GIFT);
+  check("woo_status ipak osvežen", d?.woo_status === "completed");
+
+  check(
+    "HTTP 200 (bez meta)",
+    (await post(makeOrder({ id: WOO_ID_E, sku: "NE-POSTOJI-XYZ", phone: gPhone }))) === 200,
+  );
+  check("bez meta → gift_text null", (await getOrder(WOO_ID_E))?.gift_text === null);
+  check(
+    "HTTP 200 (meta stigla sa update-om)",
+    (await post(
+      makeOrder({
+        id: WOO_ID_E,
+        sku: "NE-POSTOJI-XYZ",
+        phone: gPhone,
+        meta: [{ key: "sportem_pokloni_tekst", value: ["Poklon: Čarape", "Poklon: Flašica"] }],
+      }),
+    )) === 200,
+  );
+  check(
+    "prazan poklon dopunjen na update-u (niz → redovi)",
+    (await getOrder(WOO_ID_E))?.gift_text === "Poklon: Čarape\nPoklon: Flašica",
+  );
 
   await cleanup();
   // Test porudžbina C je ostala „skinuta sa stanja" (needs_review) — brisanje reda
