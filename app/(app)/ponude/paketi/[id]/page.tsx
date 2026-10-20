@@ -10,7 +10,7 @@ import { resolveOfferPeriod } from "@/lib/offers/period";
 import { Badge } from "@/components/ui/badge";
 
 import { PeriodTabs } from "../../period-tabs";
-import { statusBadge } from "../packages-table";
+import { statusBadge } from "../status-badge";
 
 export const dynamic = "force-dynamic";
 

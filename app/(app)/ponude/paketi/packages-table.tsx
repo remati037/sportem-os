@@ -7,7 +7,6 @@ import { ArrowDown, ArrowUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { num, rsd } from "@/lib/format";
 import { rate } from "@/lib/offers/labels";
-import { Badge } from "@/components/ui/badge";
 import {
   MobileCard,
   MobileCardField,
@@ -22,6 +21,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+
+import { statusBadge } from "./status-badge";
 
 /*
  * Tabela paketa sa sortiranjem (podrazumevano redosled sa sajta: objavljeni
@@ -55,13 +56,6 @@ const COLUMNS: { key: SortKey; label: string; numeric: boolean }[] = [
   { key: "revenue", label: "Prihod", numeric: true },
   { key: "aov", label: "Prosečna porudžbina", numeric: true },
 ];
-
-export function statusBadge(status: string | null) {
-  if (status === null) return <Badge variant="danger">Nema ga na sajtu</Badge>;
-  if (status === "publish") return <Badge variant="success">Objavljen</Badge>;
-  if (status === "draft") return <Badge variant="warning">Nacrt</Badge>;
-  return <Badge variant="info">{status}</Badge>;
-}
 
 export function PackagesTable({ rows, days }: { rows: PackageRow[]; days: number }) {
   // null = redosled kakav je stigao sa servera (objavljeni prvo, pa redosled sa sajta).
