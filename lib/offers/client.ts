@@ -145,3 +145,143 @@ export async function fetchEvents(afterId: number, limit = 1000): Promise<OfferE
 export async function fetchStats(days = 30): Promise<OfferStatsApi> {
   return get<OfferStatsApi>("/stats", { days });
 }
+
+/* ── Paketi (setovi) ──────────────────────────────────────────────────────────
+ * Isti plugin, isti ključ. Paketi se NE sinhronizuju u Supabase — stranica
+ * `/ponude/paketi` čita `/packages` i `/packages/stats` uživo (12-ak paketa,
+ * dva poziva). Statistika je pluginova (sesije, AOV sa/bez paketa) i ne može
+ * se pošteno rekonstruisati iz sirovih događaja bez id-ja sesije.
+ */
+
+export type PackageProductApi = {
+  id: number;
+  parent?: number;
+  sku?: string;
+  name?: string;
+  price?: number;
+  in_stock?: boolean;
+  /** Proizvod iz paketa je obrisan/nedostupan na sajtu. */
+  missing?: boolean;
+};
+
+export type PackageItemApi = {
+  id: string;
+  label: string;
+  product: PackageProductApi | null;
+  qty: number;
+  option?: number;
+  price_rule?: string;
+  min_price: number | null;
+};
+
+export type PackageGroupApi = {
+  id: string;
+  title: string;
+  /** all = sve stavke ulaze · any = kupac bira · upsell = opciona dopuna */
+  mode: string;
+  items: PackageItemApi[];
+};
+
+export type PackageGiftApi = {
+  id: string;
+  /** ebook | product | shipping */
+  type: string;
+  title: string;
+  product: PackageProductApi | null;
+  qty: number;
+  value: number;
+  file?: string;
+};
+
+export type PackageApi = {
+  id: number;
+  feed_id?: string;
+  title: string;
+  slug?: string;
+  /** publish | draft | … (WordPress status) */
+  status: string;
+  order?: number;
+  url?: string;
+  image?: string;
+  excerpt?: string;
+  from_price: number | null;
+  required?: number;
+  gifts_from?: string | null;
+  gifts_to?: string | null;
+  gifts_active?: boolean;
+  groups: PackageGroupApi[];
+  gifts: PackageGiftApi[];
+  /** ISO UTC ili `false` kad paket nikad nije menjan. */
+  modified?: string | false;
+};
+
+export type PackagesApi = {
+  mode?: string;
+  archive?: string;
+  packages: PackageApi[];
+};
+
+/** Brojači jednog paketa iz `/packages/stats` (sve cifre su brojevi). */
+export type PackageStatsApi = {
+  package_id: number;
+  title: string;
+} & Partial<
+  Record<
+    | "archive_view"
+    | "card_click"
+    | "view"
+    | "select"
+    | "add_item"
+    | "add_all"
+    | "add_all_blocked"
+    | "optional_add"
+    | "upsell_view"
+    | "upsell_add"
+    | "unlock"
+    | "gift_choice"
+    | "cartbox_click"
+    | "order"
+    | "order_partial"
+    | "upsell_order"
+    | "ebook_sent"
+    | "view_sessions"
+    | "add_sessions"
+    | "unlock_sessions"
+    | "orders"
+    | "times"
+    | "revenue"
+    | "order_total"
+    | "partial_orders"
+    | "partial_revenue"
+    | "upsell_revenue"
+    | "upsell_orders"
+    | "add_value",
+    number
+  >
+>;
+
+export type PackagesStatsApi = {
+  days: number;
+  archive?: { views?: number };
+  /** Prosečna porudžbina sa paketom i bez njega u istom periodu. */
+  aov?: { with_orders?: number; with_aov?: number; without_orders?: number; without_aov?: number };
+  packages: PackageStatsApi[];
+};
+
+/** Svi paketi sa sastavom, cenama i poklonima. */
+export async function fetchPackages(): Promise<PackagesApi> {
+  const data = await get<PackagesApi>("/packages");
+  if (!data || !Array.isArray(data.packages)) {
+    throw new Error("Odgovor /packages nema niz „packages“.");
+  }
+  return data;
+}
+
+/** Zbirna statistika po paketu za poslednjih `days` dana. */
+export async function fetchPackageStats(days: number): Promise<PackagesStatsApi> {
+  const data = await get<PackagesStatsApi>("/packages/stats", { days });
+  if (!data || !Array.isArray(data.packages)) {
+    throw new Error("Odgovor /packages/stats nema niz „packages“.");
+  }
+  return data;
+}

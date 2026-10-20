@@ -8,6 +8,7 @@ import { getOffersOverview, getOfferSyncState, hasOfferEvents } from "@/db/offer
 import { EmptyState } from "@/components/patterns/empty-state";
 
 import { OffersChart } from "./offers-chart";
+import { OffersTabs } from "./offers-tabs";
 import { PeriodTabs } from "./period-tabs";
 import { RulesTable, type RuleRow } from "./rules-table";
 import { SyncButton } from "./sync-button";
@@ -77,6 +78,8 @@ export default async function PonudePage({
           <SyncButton />
         </div>
       </div>
+
+      <OffersTabs days={period.days} />
 
       <p className="text-ink-faint mb-4 text-xs">
         {syncState?.last_synced_at

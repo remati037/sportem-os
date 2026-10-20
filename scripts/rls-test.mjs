@@ -398,6 +398,8 @@ async function testRouteGuards() {
     "app/(app)/ponude/page.tsx",
     "app/(app)/ponude/[id]/page.tsx",
     "app/(app)/ponude/actions.ts",
+    "app/(app)/ponude/paketi/page.tsx",
+    "app/(app)/ponude/paketi/[id]/page.tsx",
     "app/(app)/asistent/page.tsx",
     "app/(app)/asistent/[id]/page.tsx",
     "app/(app)/asistent/actions.ts",
