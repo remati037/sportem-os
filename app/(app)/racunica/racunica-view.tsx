@@ -22,7 +22,9 @@ import {
   DEAD_DAYS_OPTIONS,
   QUADRANTS,
   VIEW_KEYS,
+  SOON_DAYS,
   classifyAbc,
+  rowDaysToZero,
   isQuadrant,
   medianQty,
   quadrantOf,
@@ -60,7 +62,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { EmptyState } from "@/components/patterns/empty-state";
+import { daysToZero, forecastQty, trendOf } from "@/lib/sales-velocity";
 
+import { DaysToZero, MonthForecastCard, TrendValue, forecastLabel } from "./prognoza";
 import { ABC_VARIANT, AbcCard, DeadStockCard, MatrixCard, ViewToggles } from "./razvrstavanje";
 
 /*
@@ -69,11 +73,13 @@ import { ABC_VARIANT, AbcCard, DeadStockCard, MatrixCard, ViewToggles } from "./
  * history.replaceState (deljiv link, bez ponovnog učitavanja podataka).
  * URL: ?q=&kategorija=&brend=&cilj=30&ispod=1&prodaja=sa|bez&arhiva=1&sort=&smer=
  *      &pogledi=abc,matrica,mrtva&abc=A|B|C&kvadrant=…&mrtva=60|90   (P2)
+ *      &trend=raste|pada|nestaje                                        (P3)
  * Pogledi (ABC / Matrica / Mrtva roba): URL ima prednost, pa izbor sa ovog
  * uređaja (localStorage), pa svi uključeni.
  */
 
 type SalesFilter = "" | "sa" | "bez";
+type TrendFilter = "" | "raste" | "pada" | "nestaje";
 type Dir = "asc" | "desc";
 
 type State = {
@@ -83,6 +89,7 @@ type State = {
   cilj: number;
   ispod: boolean;
   prodaja: SalesFilter;
+  trend: TrendFilter;
   arhiva: boolean;
   sort: RacunicaSort;
   smer: Dir;
@@ -132,6 +139,7 @@ function readState(params: URLSearchParams): State {
     cilj: Number.isFinite(cilj) && cilj > 0 && cilj < 100 ? cilj : DEFAULT_TARGET_PCT,
     ispod: params.get("ispod") === "1",
     prodaja: prodaja === "sa" || prodaja === "bez" ? prodaja : "",
+    trend: (["raste", "pada", "nestaje"] as const).find((t) => t === params.get("trend")) ?? "",
     arhiva: params.get("arhiva") === "1",
     sort: isRacunicaSort(sort) ? sort : DEFAULT_SORT,
     smer: params.get("smer") === "asc" ? "asc" : "desc",
@@ -157,6 +165,7 @@ function writeState(pathname: string, current: URLSearchParams, s: State) {
   if (s.cilj !== DEFAULT_TARGET_PCT) sp.set("cilj", String(s.cilj));
   if (s.ispod) sp.set("ispod", "1");
   if (s.prodaja) sp.set("prodaja", s.prodaja);
+  if (s.trend) sp.set("trend", s.trend);
   if (s.arhiva) sp.set("arhiva", "1");
   if (s.sort !== DEFAULT_SORT) sp.set("sort", s.sort);
   if (s.smer !== "desc") sp.set("smer", s.smer);
@@ -238,6 +247,15 @@ export function RacunicaView({ data, periodLabel }: { data: RacunicaData; period
       if (state.brend && r.brand !== state.brend) return false;
       if (state.prodaja === "sa" && r.stats.qty === 0) return false;
       if (state.prodaja === "bez" && r.stats.qty > 0) return false;
+      if (state.trend === "raste" || state.trend === "pada") {
+        const t = trendOf(r.vel);
+        const want = state.trend === "raste" ? "up" : "down";
+        if (t.dir !== want && !(want === "up" && t.dir === "new")) return false;
+      }
+      if (state.trend === "nestaje") {
+        const d = rowDaysToZero(r);
+        if (d == null || d >= SOON_DAYS) return false;
+      }
       if (state.ispod) {
         const m = effectiveMarginPct(r);
         if (m == null || m >= state.cilj) return false;
@@ -286,7 +304,7 @@ export function RacunicaView({ data, periodLabel }: { data: RacunicaData; period
     update(
       state.sort === key
         ? { smer: state.smer === "desc" ? "asc" : "desc" }
-        : { sort: key, smer: key === "naziv" ? "asc" : "desc" },
+        : { sort: key, smer: key === "naziv" || key === "do_nule" ? "asc" : "desc" },
     );
 
   function exportCsv() {
@@ -317,6 +335,28 @@ export function RacunicaView({ data, periodLabel }: { data: RacunicaData; period
       { header: "Stvarna marža %", value: ({ v }) => realMarginPct(v.stats), kind: "pct" },
       { header: "Zarada po komadu", value: ({ v }) => profitPerUnit(v.stats), kind: "rsd" },
       { header: "Komada bez VP", value: ({ v }) => v.stats.qty - v.stats.knownQty, kind: "int" },
+      { header: "Prodato 30 d (od danas)", value: ({ v }) => v.vel.q30, kind: "int" },
+      { header: "Prodato prethodnih 30 d", value: ({ v }) => v.vel.qPrev30, kind: "int" },
+      {
+        header: "Trend %",
+        value: ({ v }) => {
+          const t = trendOf(v.vel);
+          return t.dir === "few" ? "malo podataka" : t.dir === "new" ? "novo" : t.pct;
+        },
+        kind: "pct",
+      },
+      {
+        header: "Prognoza 30 d kom",
+        value: ({ v }) => forecastQty(v.vel).toFixed(1).replace(".", ","),
+      },
+      {
+        header: "Dana do nule",
+        value: ({ v }) => {
+          const d = daysToZero(v.stock, v.counted, v.vel);
+          return d == null ? null : Math.round(d);
+        },
+        kind: "int",
+      },
       { header: "Stanje", value: ({ v }) => v.stock, kind: "int" },
       { header: "Popisano", value: ({ r, v }) => (r.outOfCatalog ? "" : v.counted ? "da" : "ne") },
       {
@@ -372,6 +412,8 @@ export function RacunicaView({ data, periodLabel }: { data: RacunicaData; period
         />
         <Stat label="Stanje po VP" value={rsd(t.stockValueVp)} hint="roba u magacinu (popisano × VP)" />
       </div>
+
+      <MonthForecastCard month={data.month} />
 
       <ViewToggles views={views} onToggle={toggleView} />
 
@@ -633,6 +675,21 @@ function Toolbar({
             <SelectItem value="bez">Bez prodaje</SelectItem>
           </SelectContent>
         </Select>
+
+        <Select
+          value={state.trend || ALL}
+          onValueChange={(v) => update({ trend: v === ALL ? "" : (v as TrendFilter) })}
+        >
+          <SelectTrigger className="h-10 w-48" aria-label="Trend">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL}>Svaki trend</SelectItem>
+            <SelectItem value="raste">Raste (30 vs 30 d)</SelectItem>
+            <SelectItem value="pada">Pada (30 vs 30 d)</SelectItem>
+            <SelectItem value="nestaje">Nestaje za &lt; {SOON_DAYS} dana</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -786,6 +843,8 @@ const HEADERS: { key: RacunicaSort; label: string; sub?: string; right?: boolean
   { key: "popust", label: "Popust", sub: "vs katalog", right: true },
   { key: "zarada", label: "Zarada", sub: "po komadu", right: true },
   { key: "marza", label: "Marža", sub: "stvarna", right: true },
+  { key: "trend", label: "Trend", sub: "30/30 d", right: true },
+  { key: "prognoza", label: "Prognoza", sub: "30 d · nula", right: true },
   { key: "stanje", label: "Stanje", sub: "vrednost po VP", right: true },
 ];
 
@@ -816,7 +875,12 @@ function DesktopTable({
                   key={h.key}
                   scope="col"
                   aria-sort={active ? (state.smer === "asc" ? "ascending" : "descending") : undefined}
-                  className={cn("px-3 py-2 align-bottom font-medium", h.right ? "text-right" : "text-left")}
+                  className={cn(
+                    "px-2.5 py-2 align-bottom font-medium",
+                    h.right ? "text-right" : "text-left",
+                    // Naziv ostaje vidljiv kad se tabela skroluje vodoravno.
+                    h.key === "naziv" && "bg-surface sticky left-0 z-[1]",
+                  )}
                 >
                   <button
                     type="button"
@@ -852,7 +916,7 @@ function DesktopTable({
             return (
               <Fragment key={r.key}>
                 <tr className={cn("border-border border-b", isOpen && "bg-surface-2/60")}>
-                  <td className="min-w-56 px-3 py-2.5">
+                  <td className="bg-surface sticky left-0 z-[1] min-w-48 px-2.5 py-2.5">
                     <div className="flex items-start gap-1.5">
                       {expandable ? (
                         <button
@@ -898,16 +962,19 @@ function DesktopTable({
                       </div>
                     </div>
                   </td>
-                  <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                  <td className="px-2.5 py-2.5 text-right whitespace-nowrap">
                     <div className="num">{rangeRsd(r.mpMin, r.mpMax)}</div>
                     <Sub>
                       {r.outOfCatalog
                         ? "—"
-                        : `${rangeRsd(r.catalogProfitMin, r.catalogProfitMax)} · ${pct(r.catalogMarginPct)}`}
+                        : r.catalogProfitMin === r.catalogProfitMax
+                          ? `${rangeRsd(r.catalogProfitMin, r.catalogProfitMax)} · ${pct(r.catalogMarginPct)}`
+                          : `prosek ${pct(r.catalogMarginPct)}`}
                     </Sub>
                   </td>
                   <SalesCells stats={r.stats} target={state.cilj} />
-                  <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                  <VelocityCells vel={r.vel} days={r.outOfCatalog ? null : rowDaysToZero(r)} />
+                  <td className="px-2.5 py-2.5 text-right whitespace-nowrap">
                     <StockValue stock={r.stock} uncounted={r.uncounted} outOfCatalog={r.outOfCatalog} />
                     <Sub>{r.outOfCatalog || r.stockValueVp === 0 ? "—" : rsd(r.stockValueVp)}</Sub>
                   </td>
@@ -915,14 +982,14 @@ function DesktopTable({
                 {isOpen
                   ? variants.map((v) => (
                       <tr key={v.sku} className="border-border bg-surface-2/40 border-b">
-                        <td className="py-2 pr-3 pl-10">
+                        <td className="bg-surface-2 sticky left-0 z-[1] py-2 pr-3 pl-10">
                           <div className="text-ink flex flex-wrap items-center gap-1.5 text-sm break-words">
                             {v.label}
                             {v.archived ? <Badge variant="warning">Arhivirana</Badge> : null}
                           </div>
                           <div className="text-ink-faint font-mono text-xs">{v.sku}</div>
                         </td>
-                        <td className="px-3 py-2 text-right whitespace-nowrap">
+                        <td className="px-2.5 py-2 text-right whitespace-nowrap">
                           <div className="num">{v.mp != null ? rsd(v.mp) : "—"}</div>
                           <Sub>
                             {v.mp != null && v.vp != null
@@ -931,7 +998,11 @@ function DesktopTable({
                           </Sub>
                         </td>
                         <SalesCells stats={v.stats} target={state.cilj} />
-                        <td className="px-3 py-2 text-right whitespace-nowrap">
+                        <VelocityCells
+                          vel={v.vel}
+                          days={v.archived ? null : daysToZero(v.stock, v.counted, v.vel)}
+                        />
+                        <td className="px-2.5 py-2 text-right whitespace-nowrap">
                           <StockValue stock={v.stock} outOfCatalog={v.variantId == null} />
                           <Sub>
                             {v.variantId == null
@@ -955,6 +1026,23 @@ function DesktopTable({
   );
 }
 
+/** Trend i prognoza (od danas, ne zavise od perioda). */
+function VelocityCells({ vel, days }: { vel: RacunicaRow["vel"]; days: number | null }) {
+  return (
+    <>
+      <td className="px-2.5 py-2.5 text-right whitespace-nowrap">
+        <TrendValue vel={vel} />
+      </td>
+      <td className="px-2.5 py-2.5 text-right whitespace-nowrap">
+        <div className="num">{forecastLabel(vel)}</div>
+        <Sub>
+          <DaysToZero days={days} />
+        </Sub>
+      </td>
+    </>
+  );
+}
+
 /** Ćelije prodaje (iste za proizvod i varijantu). */
 function SalesCells({ stats, target }: { stats: RacunicaRow["stats"]; target: number }) {
   const active = hasActivity(stats);
@@ -964,7 +1052,7 @@ function SalesCells({ stats, target }: { stats: RacunicaRow["stats"]; target: nu
   const ppu = profitPerUnit(stats);
   return (
     <>
-      <td className="px-3 py-2.5 text-right whitespace-nowrap">
+      <td className="px-2.5 py-2.5 text-right whitespace-nowrap">
         <div className="num">{active ? num(stats.qty) : <span className="text-ink-faint">—</span>}</div>
         <Sub>
           {stats.cancelledQty > 0 ? (
@@ -976,20 +1064,20 @@ function SalesCells({ stats, target }: { stats: RacunicaRow["stats"]; target: nu
           )}
         </Sub>
       </td>
-      <td className="px-3 py-2.5 text-right whitespace-nowrap">
+      <td className="px-2.5 py-2.5 text-right whitespace-nowrap">
         <div className="num">{active ? rsd(stats.revenue) : <span className="text-ink-faint">—</span>}</div>
         <Sub>{avg != null ? rsd(Math.round(avg)) : "—"}</Sub>
       </td>
-      <td className="px-3 py-2.5 text-right whitespace-nowrap">
+      <td className="px-2.5 py-2.5 text-right whitespace-nowrap">
         <span className={cn("num", disc != null && disc >= 0.5 && "text-warning")}>{pct(disc)}</span>
       </td>
-      <td className="px-3 py-2.5 text-right whitespace-nowrap">
+      <td className="px-2.5 py-2.5 text-right whitespace-nowrap">
         <div className="text-ink font-semibold">
           <ProfitValue stats={stats} />
         </div>
         <Sub>{ppu != null ? rsd(Math.round(ppu)) : "—"}</Sub>
       </td>
-      <td className="px-3 py-2.5 text-right whitespace-nowrap">
+      <td className="px-2.5 py-2.5 text-right whitespace-nowrap">
         <MarginValue value={realMarginPct(stats)} target={target} />
       </td>
     </>
@@ -1065,6 +1153,15 @@ function MobileCards({
               </Field>
               <Field label="Stanje">
                 <StockValue stock={r.stock} uncounted={r.uncounted} outOfCatalog={r.outOfCatalog} />
+              </Field>
+              <Field label="Trend (30 vs 30 d)">
+                <TrendValue vel={r.vel} />
+              </Field>
+              <Field label="Prognoza 30 d">
+                <span className="num">{forecastLabel(r.vel)}</span>
+                <span className="text-ink-faint block text-xs">
+                  <DaysToZero days={r.outOfCatalog ? null : rowDaysToZero(r)} />
+                </span>
               </Field>
             </dl>
 

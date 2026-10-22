@@ -26,7 +26,7 @@ magacinu** (zajednički — drug ima i druge kupce), šalje se direktno odatle, 
 |---|---|---|
 | **N-0** | **Da li Sportem ikad sam plaća robu unapred** (sopstvena nabavka, uvoz, roba koja je Sportem-ova)? | Plan pretpostavlja **NE**. Ako je odgovor DA, modul dobija nabavnu cenu, dobavljača, trošak i vezu sa finansijama — to je **drugi plan**, ne ovaj. Pitati prvo. |
 | D1 | Novac u modulu | **Nijedna cifra novca za Logistiku.** Admin/Menadžer vide „vrednost zahteva po VP" (informativno: koliko robe će se uzimati) — kolona se za Logistiku **ne renderuje**, a izvor joj je `product_variants_public` |
-| D2 | Predlog količine | `ceil(prodato_u_30_dana × dani_pokrivanja / 30) − stanje`, min 0; **dani pokrivanja = 30** (podesivo u filteru) |
+| D2 | Predlog količine | `ceil(dnevni_tempo × dani_pokrivanja) − stanje`, min 0; **dani pokrivanja = 30** (podesivo u filteru). **Tempo i „dana do nule" OBAVEZNO iz `lib/sales-velocity.ts`** (`dailyRate`, `daysToZero` — Računica P3, 22.10.2026), da Nabavka i Računica nikad ne daju različit tempo. |
 | D3 | Prodaja po varijanti | iz zamrznutih `order_items` **po `sku`** (`variant_id` je null na ~93% istorije), bez Otkazano/Vraćeno |
 | D4 | Nepopisane varijante | ne ulaze u predlog kao „treba dopuniti" nego u zasebnu grupu **„Prvo popiši"** — stanje 0 bez popisa je nepoznato (pravilo iz „Popis zaliha") |
 | D5 | Zahtev za dopunu | dokument sa stavkama i statusom **Nacrt → Poslat → Delimično stiglo → Stiglo / Otkazan** (`text` + `CHECK`, ne enum — §10 Korak 0.4) |

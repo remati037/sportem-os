@@ -60,4 +60,13 @@ Mrtva roba (90 dana)
   ✓ sve su popisane, aktivne, stanje > 0
     221 varijanti · 38.635.940 RSD po VP
 
+Tempo i mesec (P3)
+  ✓ komadi 30 d = referenca — 320 vs 320
+  ✓ komadi 31–60 d = referenca — 240 vs 240
+  ✓ komadi 31–90 d = referenca — 405 vs 405
+  ✓ ostvareno u mesecu = Dashboard — 237.808 vs 237.808 RSD
+  ✓ 28 punih dana = referenca — 349.669 vs 349.669 RSD
+  ✓ raspon obuhvata procenu
+    procena 350.202 RSD (raspon 298.576–398.881), tempo 12.488 RSD/dan, još 9 dana
+
 ✅ PASS — 0 RSD razlike.

@@ -654,3 +654,9 @@ npm run icons          # regeneriši PWA ikonice
 - **ABC/kvadrant nad svim redovima perioda, ne nad filtriranim.** ABC: red je A dok je kumulativ PRE njega < 80 %, B < 95 %, ostalo C (bez zarade → C). Kvadrant: „mnogo" = komadi > medijane, „visoka" = stvarna marža ≥ cilj; bez prodaje → van grafikona.
 - **`getRacunica` čita prodaju JEDNOM od `DATA_START`** i deli je na period + `lastSoldDay` po SKU (mrtva roba gleda unazad od danas, 60/90 dana, samo popisane aktivne varijante sa stanjem > 0). `RacunicaData.today` dodat.
 - `npm run provera:racunica` proširen ABC i mrtva roba proverama (PASS).
+
+**Korak P3 — Računica: prognoze i trend (potvrđeno sa korisnikom 22.10.2026):**
+- **Bez migracije, bez nove zavisnosti.** `lib/sales-velocity.ts` (bez `server-only`) je **jedini izvor tempa prodaje**: `dailyRate` = (2·q30 + q31–90)/120, `forecastQty`, `daysToZero` (null bez prodaje 90 dana ili bez popisa; 0 = nema na stanju a traži se), `trendOf` (30 vs 30 dana, < 5 kom → „malo podataka", ±10 % = bez promene), `projectMonth`. **Nabavka N1 mora da ga koristi** (upisano u njen plan, D2).
+- Sve prognoze gledaju **unazad od danas**, nezavisno od izabranog perioda. `getRacunica` računa prozore po SKU i podatke meseca (`RacunicaData.month`: ostvareno od 1. do danas + zarada po danu za 28 punih dana) iz istog učitavanja cele istorije.
+- **UI:** kartica „Zarada do kraja meseca" (procena + raspon najslabija/najjača nedelja + tempo) iznad prekidača pogleda; kolone **Trend** i **Prognoza** (30 d · „nula za N d", na proizvodu prva varijanta koja nestaje); filter `?trend=raste|pada|nestaje`; sort trend/prognoza/do_nule; CSV kolone. Prva kolona tabele je zaključana (`sticky`) jer je tabela šira od 1280 px.
+- `npm run provera:racunica` proširen (prozori komada, ostvareno = Dashboard, raspon) — PASS.

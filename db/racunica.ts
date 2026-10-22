@@ -4,13 +4,15 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/server";
 import { todayBelgrade } from "@/lib/date-belgrade";
-import { DATA_START } from "@/lib/period";
+import { DATA_START, presetBounds } from "@/lib/period";
+import { addVelocity, emptyVelocity, type Velocity } from "@/lib/sales-velocity";
 import { selectAll } from "@/lib/supabase/paginate";
 import { loadSales } from "@/db/sales";
 import {
   OUT_OF_CATALOG_KEY,
   addStats,
   emptyStats,
+  shiftDay,
   marginPct,
   type RacunicaData,
   type RacunicaRow,
@@ -87,16 +89,47 @@ export async function getRacunica(
     loadSales(supabase, from < DATA_START ? from : DATA_START, to > today ? to : today),
   ]);
 
-  // Poslednja REALIZOVANA prodaja po SKU iz cele istorije (nezavisno od perioda).
+  // Iz cele istorije, nezavisno od perioda (gleda unazad od danas):
+  //  - poslednja REALIZOVANA prodaja po SKU (P2, mrtva roba);
+  //  - komadi po prozorima 30 / 31–60 / 31–90 dana (P3, tempo i trend);
+  //  - zarada tekućeg meseca i po danu za 28 punih dana pre danas (P3).
+  const d30 = shiftDay(today, -29);
+  const d60 = shiftDay(today, -59);
+  const d90 = shiftDay(today, -89);
+  const d28 = shiftDay(today, -28);
+  const month = presetBounds("mesec", today);
   const lastSold = new Map<string, string>();
+  const velBySku = new Map<string, Velocity>();
+  const dailyProfit = new Map<string, number>();
+  let mtdProfit = 0;
+  let mtdRevenue = 0;
   for (const order of sales.orders) {
     if (order.cancelled) continue;
     for (const it of order.items) {
       const key = skuKey(it.sku);
       const prev = lastSold.get(key);
       if (!prev || order.day > prev) lastSold.set(key, order.day);
+
+      if (order.day >= d90 && order.day <= today) {
+        let v = velBySku.get(key);
+        if (!v) velBySku.set(key, (v = emptyVelocity()));
+        if (order.day >= d30) v.q30 += it.quantity;
+        else {
+          v.q31to90 += it.quantity;
+          if (order.day >= d60) v.qPrev30 += it.quantity;
+        }
+      }
+      const profit = it.profit_at_sale ?? 0;
+      if (order.day >= month.from && order.day <= today) {
+        mtdProfit += profit;
+        mtdRevenue += it.mp_at_sale * it.quantity;
+      }
+      if (order.day >= d28 && order.day < today) {
+        dailyProfit.set(order.day, (dailyProfit.get(order.day) ?? 0) + profit);
+      }
     }
   }
+  const last28Profit = Array.from({ length: 28 }, (_, i) => dailyProfit.get(shiftDay(d28, i)) ?? 0);
 
   // Prodaja po SKU (stavke su hronološki — poslednji snapshot naziv je najnoviji).
   const bySku = new Map<string, { stats: SalesStats; name: string }>();
@@ -158,6 +191,7 @@ export async function getRacunica(
         counted: v.stock_counted_at != null,
         archived: productArchived || v.archived_at != null,
         lastSoldDay: lastSold.get(skuKey(v.sku)) ?? null,
+        vel: { ...(velBySku.get(skuKey(v.sku)) ?? emptyVelocity()) },
         stats,
       };
     });
@@ -166,7 +200,11 @@ export async function getRacunica(
     const active = vRows.filter((v) => !v.archived);
     const priced = active.length > 0 ? active : vRows;
     const stats = emptyStats();
-    for (const v of vRows) addStats(stats, v.stats);
+    const vel = emptyVelocity();
+    for (const v of vRows) {
+      addStats(stats, v.stats);
+      addVelocity(vel, v.vel);
+    }
 
     const mps = priced.map((v) => v.mp ?? 0);
     const vps = priced.map((v) => v.vp ?? 0);
@@ -194,6 +232,7 @@ export async function getRacunica(
       outOfCatalog: false,
       variants: vRows,
       stats,
+      vel,
       mpMin: Math.min(...mps),
       mpMax: Math.max(...mps),
       vpMin: Math.min(...vps),
@@ -221,13 +260,18 @@ export async function getRacunica(
       counted: false,
       archived: false,
       lastSoldDay: lastSold.get(sku) ?? null,
+      vel: { ...(velBySku.get(sku) ?? emptyVelocity()) },
       stats,
     });
   }
   if (outVariants.length > 0) {
     outVariants.sort((a, b) => b.stats.profit - a.stats.profit);
     const stats = emptyStats();
-    for (const v of outVariants) addStats(stats, v.stats);
+    const vel = emptyVelocity();
+    for (const v of outVariants) {
+      addStats(stats, v.stats);
+      addVelocity(vel, v.vel);
+    }
     rows.push({
       key: OUT_OF_CATALOG_KEY,
       productId: null,
@@ -239,6 +283,7 @@ export async function getRacunica(
       outOfCatalog: true,
       variants: outVariants,
       stats,
+      vel,
       mpMin: null,
       mpMax: null,
       vpMin: null,
@@ -281,6 +326,14 @@ export async function getRacunica(
     from,
     to,
     today,
+    month: {
+      monthFrom: month.from,
+      monthTo: month.to,
+      today,
+      mtdProfit,
+      mtdRevenue,
+      last28Profit,
+    },
     rows,
     totals,
     categories: categories.map(({ id, name }) => ({ id, name })),

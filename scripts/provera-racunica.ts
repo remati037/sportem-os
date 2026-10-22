@@ -20,6 +20,7 @@ import { RANGE_PRESETS, rangePresetBounds } from "@/lib/period";
 import { CANCELLED_STATUS_NAMES } from "@/lib/woo";
 import { getRacunica } from "@/db/racunica";
 import { classifyAbc, deadStock, shiftDay } from "@/lib/racunica";
+import { projectMonth } from "@/lib/sales-velocity";
 
 const URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -160,6 +161,40 @@ async function main() {
     );
     console.log(
       `    ${fmt(dead.length)} varijanti · ${fmt(dead.reduce((s, d) => s + d.value, 0))} RSD po VP`,
+    );
+  }
+
+  // P3: prozori tempa i zarada meseca (od danas, nezavisno od perioda).
+  {
+    const data = await getRacunica({ from: rangePresetBounds("sve", today).from, to: today }, supabase);
+    console.log("\nTempo i mesec (P3)");
+    const sum = { q30: 0, qPrev30: 0, q31to90: 0 };
+    for (const r of data.rows) {
+      sum.q30 += r.vel.q30;
+      sum.qPrev30 += r.vel.qPrev30;
+      sum.q31to90 += r.vel.q31to90;
+    }
+    const [r30, rPrev, r31, rMonth, r28] = await Promise.all([
+      reference(supabase, shiftDay(today, -29), today),
+      reference(supabase, shiftDay(today, -59), shiftDay(today, -30)),
+      reference(supabase, shiftDay(today, -89), shiftDay(today, -30)),
+      reference(supabase, data.month.monthFrom, today),
+      reference(supabase, shiftDay(today, -28), shiftDay(today, -1)),
+    ]);
+    check("komadi 30 d = referenca", sum.q30 === r30.komada, `${fmt(sum.q30)} vs ${fmt(r30.komada)}`);
+    check("komadi 31–60 d = referenca", sum.qPrev30 === rPrev.komada, `${fmt(sum.qPrev30)} vs ${fmt(rPrev.komada)}`);
+    check("komadi 31–90 d = referenca", sum.q31to90 === r31.komada, `${fmt(sum.q31to90)} vs ${fmt(r31.komada)}`);
+    check(
+      "ostvareno u mesecu = Dashboard",
+      data.month.mtdProfit === rMonth.zarada && data.month.mtdRevenue === rMonth.promet,
+      `${fmt(data.month.mtdProfit)} vs ${fmt(rMonth.zarada)} RSD`,
+    );
+    const last28 = data.month.last28Profit.reduce((s, x) => s + x, 0);
+    check("28 punih dana = referenca", data.month.last28Profit.length === 28 && last28 === r28.zarada, `${fmt(last28)} vs ${fmt(r28.zarada)} RSD`);
+    const p = projectMonth(data.month);
+    check("raspon obuhvata procenu", p.low <= p.projected && p.projected <= p.high);
+    console.log(
+      `    procena ${fmt(p.projected)} RSD (raspon ${fmt(p.low)}–${fmt(p.high)}), tempo ${fmt(p.dailyAvg)} RSD/dan, još ${p.remainingDays} dana`,
     );
   }
 

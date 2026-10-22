@@ -1,6 +1,6 @@
 # Sportem — Plan implementacije: Računica (isplativost artikala)
 
-> Verzija 1.1 · 22.10.2026 · status: **P1 i P2 urađeni (22.10.2026)**, sledeće P3
+> Verzija 1.1 · 22.10.2026 · status: **P1–P3 urađeni (22.10.2026)**, sledeće P4
 > Prati pravila iz `CLAUDE.md` (zaključane odluke, migracije, RLS, srpski UI, zamrznute cene).
 > **Jedan korak = jedna sesija.** Za svaku sesiju: `CLAUDE.md` + tekst tog koraka + „PROMPT ZA SESIJU".
 
@@ -171,6 +171,14 @@ Deljiv link = deljiv pogled. Podrazumevani sort je **stvarna zarada ↓**.
 - **Granica iskrenosti** (piše se na strani): istorija počinje 02.02.2026, pa **sezona nije uračunata**. Kad prođe godina dana, P3 se dopunjuje upoređivanjem sa istim mesecom prošle godine (van v1).
 
 **Rezultat:** prognoza 30 dana za SKU = tempo iz `lib/sales-velocity.ts`; kartica „ostvareno" = Dashboard za tekući mesec, 0 RSD.
+
+> **✅ URAĐENO 22.10.2026 — odstupanja i detalji:**
+> - Tempo = `(2·q30 + q31–90) / 120`. Prozori (`Velocity`: `q30`, `qPrev30`, `q31to90`) se računaju u `getRacunica` iz istog učitavanja cele istorije (P2), po SKU; red proizvoda je zbir varijanti.
+> - **Dana do nule je null kad artikal nije prodavan 90 dana** (nula na stanju bez potražnje nije „nestaje"); 0 = nema na stanju, a traži se. Na redu proizvoda se prikazuje **prva varijanta koja nestaje** (`rowDaysToZero`), ne zbirno stanje — kod veličina/težina zbir laže.
+> - Trend: `few` (< 5 kom u oba prozora → „—" uz opis), `new` (prethodnih 30 dana 0 → „novo"), inače ±% sa pragom ±10 % za „bez promene". Filter `?trend=raste|pada|nestaje` (nestaje = < 30 dana); sort `trend`, `prognoza`, `do_nule` (rastuće).
+> - Kartica „Zarada do kraja meseca" stoji iznad prekidača pogleda (nije pogled koji se gasi). Tempo = prosek 28 **punih** dana pre danas; raspon = najslabija/najjača od 4 nedelje × preostali dani.
+> - Tabela je sa P3 šira od 1280 px ekrana → **prva kolona (naziv) je zaključana** pri vodoravnom skrolu.
+> - Provera: komadi 30 / 31–60 / 31–90 dana = nezavisan račun, ostvareno u mesecu = Dashboard, 28 dana = referenca, raspon obuhvata procenu — PASS.
 
 ---
 

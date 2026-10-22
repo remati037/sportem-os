@@ -1,3 +1,12 @@
+import {
+  daysToZero,
+  forecastQty,
+  trendOf,
+  trendSortValue,
+  type MonthInput,
+  type Velocity,
+} from "@/lib/sales-velocity";
+
 /*
  * Računica — isplativost artikala (P1, docs/Sportem-Plan-Racunica.md §1).
  * Tipovi + čiste funkcije, BEZ `server-only`: UI ih koristi za kolone, sortiranje,
@@ -59,6 +68,8 @@ export type RacunicaVariant = {
   archived: boolean;
   /** Poslednja realizovana prodaja (Beograd dan) iz CELE istorije; null = nikad. */
   lastSoldDay: string | null;
+  /** Komadi po prozorima unazad od danas (P3) — ne zavisi od perioda. */
+  vel: Velocity;
   stats: SalesStats;
 };
 
@@ -73,6 +84,7 @@ export type RacunicaRow = {
   outOfCatalog: boolean;
   variants: RacunicaVariant[];
   stats: SalesStats;
+  vel: Velocity; // zbir varijanti
   /** Raspon trenutnih cena aktivnih varijanti (sve, ako nijedna nije aktivna). */
   mpMin: number | null;
   mpMax: number | null;
@@ -102,6 +114,8 @@ export type RacunicaData = {
   from: string;
   to: string;
   today: string;
+  /** Sirovi podaci za „zarada do kraja meseca" (projectMonth u lib/sales-velocity). */
+  month: MonthInput;
   rows: RacunicaRow[];
   totals: RacunicaTotals;
   categories: { id: string; name: string }[];
@@ -143,6 +157,23 @@ export function effectiveMarginPct(row: RacunicaRow): number | null {
 
 export const hasActivity = (s: SalesStats) => s.qty > 0 || s.cancelledQty > 0;
 
+/**
+ * Za koliko dana nestaje PRVA aktivna varijanta proizvoda (za veličine/težine
+ * zbirno stanje laže — 10 kg može da nestane dok 2 kg ima na bacanje).
+ */
+export function rowDaysToZero(row: RacunicaRow): number | null {
+  let min: number | null = null;
+  for (const v of row.variants) {
+    if (v.archived) continue;
+    const d = daysToZero(v.stock, v.counted, v.vel);
+    if (d != null && (min == null || d < min)) min = d;
+  }
+  return min;
+}
+
+/** Granica za „nestaje uskoro" (filter trenda). */
+export const SOON_DAYS = 30;
+
 /* ---------- sortiranje ---------- */
 
 export const RACUNICA_SORTS = [
@@ -154,6 +185,9 @@ export const RACUNICA_SORTS = [
   { key: "po_komadu", label: "Zarada po komadu" },
   { key: "popust", label: "Popust vs katalog" },
   { key: "otkazano", label: "Otkazano %" },
+  { key: "trend", label: "Trend (30 vs 30 dana)" },
+  { key: "prognoza", label: "Prognoza 30 dana" },
+  { key: "do_nule", label: "Dana do nule" },
   { key: "stanje", label: "Stanje" },
   { key: "vezano", label: "Stanje po VP" },
   { key: "naziv", label: "Naziv" },
@@ -186,6 +220,12 @@ export function sortValue(row: RacunicaRow, key: RacunicaSort): number | string 
       return discountPct(row.stats);
     case "otkazano":
       return cancelRatePct(row.stats);
+    case "trend":
+      return trendSortValue(trendOf(row.vel));
+    case "prognoza":
+      return forecastQty(row.vel);
+    case "do_nule":
+      return rowDaysToZero(row);
     case "stanje":
       return row.outOfCatalog ? null : row.stock;
     case "vezano":
