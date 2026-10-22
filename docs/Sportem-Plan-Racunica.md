@@ -1,6 +1,6 @@
 # Sportem — Plan implementacije: Računica (isplativost artikala)
 
-> Verzija 1.1 · 22.10.2026 · status: **P1–P4 urađeni (22.10.2026)**, sledeće P5
+> Verzija 1.1 · 22.10.2026 · status: **P1–P5 urađeni (22.10.2026)**, sledeće P6
 > Prati pravila iz `CLAUDE.md` (zaključane odluke, migracije, RLS, srpski UI, zamrznute cene).
 > **Jedan korak = jedna sesija.** Za svaku sesiju: `CLAUDE.md` + tekst tog koraka + „PROMPT ZA SESIJU".
 
@@ -213,6 +213,13 @@ Otvara se iz reda (proizvod ili varijanta) kao `Sheet` (desno na desktopu, odozd
   - **Zašto razgovor, a ne poseban upis:** cena ide u `ai_messages.cost_micro_usd`, pa **važi mesečni limit** (A5) i potrošnja se vidi u Asistentu, a korisnik može da nastavi pitanja. Nema nove tabele.
   - Model: **Sonnet 5.5** (sažetak ne traži Opus), poziv kroz isti put kao chat ruta (izdvojiti zajedničko jezgro iz `app/api/asistent/chat/route.ts` u `lib/ai/run.ts`, ne kopirati). Na klik, nikad automatski. Limit dostignut → dugme onemogućeno sa porukom.
 - **`npm run ai:check`** dopunjen: alat `isplativost_artikala` za 3 perioda = `getRacunica` = Dashboard zarada, 0 RSD.
+
+> **✅ URAĐENO 22.10.2026 — odstupanja i detalji:**
+> - **„Analiziraj" zove POSTOJEĆU rutu `/api/asistent/chat`** (nov razgovor, Sonnet 5.5, bez weba) i čita isti NDJSON tok — **nije pravljen `lib/ai/run.ts`**. Isti efekat (razgovor u Asistentu, `cost_micro_usd`, mesečni limit, auto-naslov), nula dupliranja rute. Komponenta `app/(app)/racunica/analiza.tsx`; strana na serveru računa `AiState` (ključ + `getAiBudget`), a ruta ionako proverava ponovo.
+> - Ne-NDJSON odgovor (istekla sesija → proxy vrati `/prijava`) i odgovor bez teksta prikazuju srpsku poruku umesto prazne kartice.
+> - Alat `isplativost_artikala` (`samo`: ispod_cilja / zvezde / obim / nisa / kandidati / raste / pada / nestaje; `sort`, `smer`, `limit` ≤ 40) vraća i zbirove, ABC, kvadrante, procenu meseca i top 5 mrtve robe. `ai:check` ga poredi u svih 5 perioda (zarada i promet = Dashboard = `getRacunica`, A+B+C = zarada) — PASS.
+> - „Pitaj asistenta" u kalkulatoru nosi artikal, SKU, sadašnju i novu MP/VP, cilj i period (samo pred-popuni).
+> - **Nije provereno uživo:** prava analiza do kraja (trošila bi AI kredit; probna strana nema sesiju). Provereni su prikaz, greška i 360 px.
 
 ---
 

@@ -1,10 +1,16 @@
+import * as Sentry from "@sentry/nextjs";
+
 import { requireRole } from "@/lib/auth";
+import { aiConfigured } from "@/lib/ai/client";
+import { usd } from "@/lib/ai/models";
+import { getAiBudget } from "@/lib/ai/usage";
 import { todayBelgrade } from "@/lib/date-belgrade";
 import { resolveRange } from "@/lib/period";
 import { getRacunica } from "@/db/racunica";
 
 import { RangeFilter } from "./range-filter";
 import { RacunicaView } from "./racunica-view";
+import type { AiState } from "./analiza";
 
 export const dynamic = "force-dynamic";
 
@@ -18,11 +24,11 @@ export const dynamic = "force-dynamic";
 type Sp = Record<string, string | string[] | undefined>;
 
 export default async function RacunicaPage({ searchParams }: { searchParams: Promise<Sp> }) {
-  await requireRole("admin", "manager");
+  const session = await requireRole("admin", "manager");
 
   const sp = await searchParams;
   const period = resolveRange(sp, "90d");
-  const data = await getRacunica(period);
+  const [data, ai] = await Promise.all([getRacunica(period), aiState(session.userId)]);
 
   return (
     <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6 sm:py-10">
@@ -37,7 +43,24 @@ export default async function RacunicaPage({ searchParams }: { searchParams: Pro
 
       <RangeFilter period={period} today={todayBelgrade()} />
 
-      <RacunicaView data={data} periodLabel={period.label} />
+      <RacunicaView data={data} periodLabel={period.label} ai={ai} />
     </main>
   );
+}
+
+/** Da li „Analiziraj" sme da se ponudi (ključ + mesečni limit; ruta proverava ponovo). */
+async function aiState(userId: string): Promise<AiState> {
+  if (!aiConfigured()) return { ready: false, reason: "AI asistent nije podešen (nedostaje ključ na serveru)." };
+  try {
+    const b = await getAiBudget(userId);
+    if (b.blocked && b.limitMicro != null) {
+      return {
+        ready: false,
+        reason: `Mesečni AI limit je potrošen (${usd(b.totalMicro)} od ${usd(b.limitMicro)}).`,
+      };
+    }
+  } catch (err) {
+    Sentry.captureException(err, { tags: { area: "ai-budget" } });
+  }
+  return { ready: true };
 }

@@ -65,6 +65,7 @@ import { EmptyState } from "@/components/patterns/empty-state";
 import { daysToZero, forecastQty, trendOf } from "@/lib/sales-velocity";
 
 import { PriceCalculator, canSimulate, type CalcTarget } from "./kalkulator";
+import { RacunicaAi, type AiState } from "./analiza";
 import { DaysToZero, MonthForecastCard, TrendValue, forecastLabel } from "./prognoza";
 import { ABC_VARIANT, AbcCard, DeadStockCard, MatrixCard, ViewToggles } from "./razvrstavanje";
 
@@ -184,7 +185,15 @@ function writeState(pathname: string, current: URLSearchParams, s: State) {
 const variantVisible = (v: RacunicaVariant, arhiva: boolean) =>
   arhiva || !v.archived || hasActivity(v.stats);
 
-export function RacunicaView({ data, periodLabel }: { data: RacunicaData; periodLabel: string }) {
+export function RacunicaView({
+  data,
+  periodLabel,
+  ai,
+}: {
+  data: RacunicaData;
+  periodLabel: string;
+  ai: AiState;
+}) {
   const pathname = usePathname();
   const params = useSearchParams();
   const [state, setState] = useState<State>(() => readState(new URLSearchParams(params.toString())));
@@ -417,6 +426,8 @@ export function RacunicaView({ data, periodLabel }: { data: RacunicaData; period
 
       <MonthForecastCard month={data.month} />
 
+      <RacunicaAi from={data.from} to={data.to} periodLabel={periodLabel} goal={state.cilj} ai={ai} />
+
       <ViewToggles views={views} onToggle={toggleView} />
 
       {abcOn || matrixOn ? (
@@ -516,7 +527,13 @@ export function RacunicaView({ data, periodLabel }: { data: RacunicaData; period
         </>
       )}
 
-      <PriceCalculator target={calc} onClose={() => setCalc(null)} goal={state.cilj} />
+      <PriceCalculator
+        target={calc}
+        onClose={() => setCalc(null)}
+        goal={state.cilj}
+        period={{ from: data.from, to: data.to }}
+        askEnabled={ai.ready}
+      />
 
       {deadOn ? (
         <DeadStockCard

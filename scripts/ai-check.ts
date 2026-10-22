@@ -19,6 +19,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import { belgradeDate, todayBelgrade } from "@/lib/date-belgrade";
 import { createAiTools } from "@/lib/ai/tools";
+import { getRacunica } from "@/db/racunica";
 import { CANCELLED_STATUS_NAMES } from "@/lib/woo";
 
 const URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -280,6 +281,22 @@ async function main() {
 
     const kupci = await runTool("kupci_top", { od: p.od, do: p.do, limit: 50 });
     check("kupci_top vraća listu", Array.isArray(kupci.kupci), `${kupci.kupaca_ukupno} kupaca`);
+
+    // Računica P5: alat = strana (getRacunica) = Dashboard pravila.
+    const rac = await runTool("isplativost_artikala", { od: p.od, do: p.do, limit: 40 });
+    const page = await getRacunica({ from: p.od, to: p.do }, supabase);
+    check(
+      "isplativost_artikala: zarada = Dashboard = /racunica",
+      rac.ukupno.zarada_rsd === ref.zarada && page.totals.profit === ref.zarada,
+      `${rsd(rac.ukupno.zarada_rsd)} vs ${rsd(ref.zarada)}`,
+    );
+    check(
+      "isplativost_artikala: promet = Dashboard",
+      rac.ukupno.promet_rsd === ref.promet,
+      `${rsd(rac.ukupno.promet_rsd)} vs ${rsd(ref.promet)}`,
+    );
+    const abcSum = rac.abc.A.zarada + rac.abc.B.zarada + rac.abc.C.zarada;
+    check("isplativost_artikala: A+B+C = zarada", abcSum === ref.zarada, `${rsd(abcSum)}`);
     console.log("");
   }
 

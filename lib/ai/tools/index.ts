@@ -33,6 +33,24 @@ import { chunked, mustOne, mustRows, selectAll } from "@/lib/supabase/paginate";
 import { AI_TOOL_LABELS } from "@/lib/ai/tool-labels";
 
 import { bucketOf, loadSales, norm, sumItems, type Sales } from "@/db/sales";
+import { getRacunica } from "@/db/racunica";
+import {
+  DEFAULT_TARGET_PCT,
+  catalogMarginOf,
+  classifyAbc,
+  compareRows,
+  deadStock,
+  discountPct,
+  effectiveMarginPct,
+  hasActivity,
+  medianQty,
+  normText,
+  quadrantOf,
+  realMarginPct,
+  rowDaysToZero,
+  type RacunicaSort,
+} from "@/lib/racunica";
+import { forecastQty, projectMonth, trendOf } from "@/lib/sales-velocity";
 
 /*
  * Alati AI asistenta (Korak A3). SVI samo čitaju — nijedan ne piše u bazu.
@@ -72,6 +90,7 @@ function checkPeriod(od: string, doDate: string) {
 }
 
 const round = (n: number) => Math.round(n);
+const one = (n: number | null) => (n == null ? null : Math.round(n * 10) / 10);
 const pct = (part: number, whole: number) =>
   whole > 0 ? Math.round((part / whole) * 1000) / 10 : 0;
 
@@ -754,6 +773,141 @@ export function createAiTools(
           razlozi: reasons.slice(0, 40),
           napomena:
             "Razlozi postoje samo za ručne promene statusa u aplikaciji; automatska otkazivanja sa sajta nemaju razlog.",
+        };
+      },
+    ),
+
+    tool(
+      "isplativost_artikala",
+      "Računica: isplativost artikala za period — iste cifre kao strana /racunica. Po proizvodu: kataloška MP i marža (TRENUTNE cene), stvarno prodato/promet/zarada/marža iz zamrznutih cena, popust u odnosu na katalog, otkazano, ABC klasa (A = prvih 80 % zarade), kvadrant (zvezde / obim / niša / kandidati za izbacivanje — granice: medijana komada i ciljna marža), trend (30 vs 30 dana), prognoza 30 dana, dana do nule. Uz to: zbirovi, procena zarade do kraja meseca i mrtva roba (popisano stanje bez prodaje 90 dana). Koristi za pitanja o marži, šta se isplati, šta poskupeti/izbaciti, šta raste/pada.",
+      z.object({
+        ...period,
+        cilj: z.number().min(1).max(99).default(DEFAULT_TARGET_PCT).describe("Ciljna marža u % (od MP)"),
+        pretraga: z.string().max(100).optional().describe("Deo naziva, brenda ili SKU"),
+        samo: z
+          .enum(["sve", "ispod_cilja", "zvezde", "obim", "nisa", "kandidati", "raste", "pada", "nestaje"])
+          .default("sve")
+          .describe("Suzi listu artikala"),
+        sort: z
+          .enum(["zarada", "marza", "katalog", "promet", "prodato", "popust", "otkazano", "trend", "prognoza", "do_nule"])
+          .default("zarada"),
+        smer: z.enum(["opadajuce", "rastuce"]).default("opadajuce"),
+        limit: z.number().int().min(1).max(40).default(20),
+      }),
+      async ({ od, do: doDate, cilj, pretraga, samo, sort, smer, limit }) => {
+        checkPeriod(od, doDate);
+        const data = await getRacunica({ from: od, to: doDate }, supabase);
+        const base = data.rows.filter((r) => !r.archived || hasActivity(r.stats));
+        const abc = classifyAbc(base);
+        const median = medianQty(base);
+        const quadrant = (r: (typeof base)[number]) => quadrantOf(r, median, cilj);
+
+        const q = pretraga ? normText(pretraga.trim()) : "";
+        const rows = base
+          .filter((r) => {
+            if (q) {
+              const hay = [r.name, r.brand ?? "", ...r.variants.map((v) => v.sku)];
+              if (!hay.some((h) => normText(h).includes(q))) return false;
+            }
+            if (samo === "ispod_cilja") {
+              const m = effectiveMarginPct(r);
+              return m != null && m < cilj;
+            }
+            if (samo === "zvezde" || samo === "obim" || samo === "nisa" || samo === "kandidati")
+              return quadrant(r) === samo;
+            if (samo === "raste") return ["up", "new"].includes(trendOf(r.vel).dir);
+            if (samo === "pada") return trendOf(r.vel).dir === "down";
+            if (samo === "nestaje") {
+              const d = rowDaysToZero(r);
+              return d != null && d < 30;
+            }
+            return true;
+          })
+          .sort((a, b) =>
+            compareRows(a, b, sort as RacunicaSort, smer === "rastuce" ? "asc" : "desc"),
+          );
+
+        const t = data.totals;
+        const abcSum = { A: { artikala: 0, zarada: 0 }, B: { artikala: 0, zarada: 0 }, C: { artikala: 0, zarada: 0 } };
+        for (const r of base) {
+          const c = abc.get(r.key) ?? "C";
+          abcSum[c].artikala += 1;
+          abcSum[c].zarada += r.stats.profit;
+        }
+        const kvadranti = { zvezde: 0, obim: 0, nisa: 0, kandidati: 0 };
+        for (const r of base) {
+          const k = quadrant(r);
+          if (k) kvadranti[k] += 1;
+        }
+        const month = projectMonth(data.month);
+        const dead = deadStock(data.rows, data.today, 90);
+
+        return {
+          period: { od, do: doDate },
+          ciljna_marza_procenat: cilj,
+          ukupno: {
+            zarada_rsd: t.profit,
+            promet_rsd: t.revenue,
+            marza_procenat: one(t.knownRevenue > 0 ? (t.knownProfit / t.knownRevenue) * 100 : null),
+            prodato_komada: t.qty,
+            otkazano_komada: t.cancelledQty,
+          },
+          abc: abcSum,
+          kvadranti: { ...kvadranti, medijana_komada: median },
+          zarada_do_kraja_meseca: {
+            ostvareno_rsd: month.mtdProfit,
+            procena_rsd: month.projected,
+            raspon_rsd: [month.low, month.high],
+            tempo_rsd_dan: month.dailyAvg,
+            preostalo_dana: month.remainingDays,
+          },
+          mrtva_roba_90_dana: {
+            varijanti: dead.length,
+            vrednost_po_vp_rsd: dead.reduce((s, d) => s + d.value, 0),
+            najvece: dead.slice(0, 5).map((d) => ({
+              artikal: d.variant.label === "—" ? d.productName : `${d.productName} · ${d.variant.label}`,
+              sku: d.variant.sku,
+              stanje: d.variant.stock,
+              vrednost_po_vp_rsd: d.value,
+              poslednja_prodaja: d.variant.lastSoldDay ?? "nikad od 2026-02-02",
+            })),
+          },
+          artikala_ukupno: rows.length,
+          artikli: rows.slice(0, limit).map((r) => {
+            const tr = trendOf(r.vel);
+            const days = rowDaysToZero(r);
+            const single = r.variants.length === 1 ? r.variants[0] : null;
+            return {
+              naziv: r.name,
+              sku: single?.sku ?? null,
+              varijanti: r.variants.length,
+              brend: r.brand,
+              van_kataloga: r.outOfCatalog || undefined,
+              arhiviran: r.archived || undefined,
+              katalog_mp_rsd: r.mpMin == null ? null : r.mpMin === r.mpMax ? r.mpMin : [r.mpMin, r.mpMax],
+              katalog_marza_procenat: one(single ? catalogMarginOf(single.mp, single.vp) : r.catalogMarginPct),
+              prodato: r.stats.qty,
+              otkazano: r.stats.cancelledQty,
+              promet_rsd: r.stats.revenue,
+              zarada_rsd: r.stats.profit,
+              marza_procenat: one(realMarginPct(r.stats)),
+              popust_vs_katalog_procenat: one(discountPct(r.stats)),
+              abc: abc.get(r.key),
+              kvadrant: quadrant(r),
+              trend:
+                tr.dir === "few" ? "malo podataka" : tr.dir === "new" ? "novo" : `${tr.pct > 0 ? "+" : ""}${Math.round(tr.pct)} %`,
+              prognoza_30d_komada: one(forecastQty(r.vel)),
+              dana_do_nule: days == null ? null : Math.round(days),
+              stanje: r.outOfCatalog ? null : r.stock,
+            };
+          }),
+          napomena: [
+            "Kataloška marža je po TRENUTNIM cenama; stvarna je iz zamrznutih cena u periodu (posle popusta), bez otkazanih i vraćenih.",
+            "Trend, prognoza, dana do nule i mrtva roba gledaju unazad od danas, ne zavise od perioda. Sezona nije uračunata (podaci od 2026-02-02).",
+            t.unknownQty > 0
+              ? `${t.unknownQty} kom bez unete VP — zarada nepotpuna, marža % ih ne računa.`
+              : null,
+          ].filter(Boolean),
         };
       },
     ),

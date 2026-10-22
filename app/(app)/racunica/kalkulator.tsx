@@ -15,6 +15,7 @@ import {
   type RacunicaVariant,
 } from "@/lib/racunica";
 import { Button } from "@/components/ui/button";
+import { AskAssistantButton } from "@/app/(app)/asistent/ask-button";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -49,25 +50,43 @@ export function canSimulate(row: RacunicaRow): boolean {
   return priceableVariants(row).length > 0;
 }
 
+type Period = { from: string; to: string };
+
 export function PriceCalculator({
   target,
   onClose,
   goal,
+  period,
+  askEnabled,
 }: {
   target: CalcTarget | null;
   onClose: () => void;
   goal: number;
+  period: Period;
+  askEnabled: boolean;
 }) {
   return (
     <Sheet open={target != null} onOpenChange={(o) => (o ? null : onClose())}>
       <SheetContent side="responsive" className="max-h-[92dvh] overflow-y-auto md:max-h-none">
-        {target ? <CalculatorBody target={target} goal={goal} /> : null}
+        {target ? (
+          <CalculatorBody target={target} goal={goal} period={period} askEnabled={askEnabled} />
+        ) : null}
       </SheetContent>
     </Sheet>
   );
 }
 
-function CalculatorBody({ target, goal }: { target: CalcTarget; goal: number }) {
+function CalculatorBody({
+  target,
+  goal,
+  period,
+  askEnabled,
+}: {
+  target: CalcTarget;
+  goal: number;
+  period: Period;
+  askEnabled: boolean;
+}) {
   const variants = priceableVariants(target.row);
   const initial =
     variants.find((v) => v.sku === target.sku) ??
@@ -101,7 +120,15 @@ function CalculatorBody({ target, goal }: { target: CalcTarget; goal: number }) 
 
       {/* Ključ po SKU: promena varijante vraća polja na njene cene. */}
       {variant ? (
-        <Form key={variant.sku} variant={variant} productId={target.row.productId} goal={goal} />
+        <Form
+          key={variant.sku}
+          variant={variant}
+          productName={target.row.name}
+          productId={target.row.productId}
+          goal={goal}
+          period={period}
+          askEnabled={askEnabled}
+        />
       ) : null}
     </>
   );
@@ -117,12 +144,18 @@ function parseRsd(s: string): number | null {
 
 function Form({
   variant,
+  productName,
   productId,
   goal,
+  period,
+  askEnabled,
 }: {
   variant: RacunicaVariant;
+  productName: string;
   productId: string | null;
   goal: number;
+  period: Period;
+  askEnabled: boolean;
 }) {
   const mp = variant.mp ?? 0;
   const vp = variant.vp ?? 0;
@@ -259,17 +292,52 @@ function Form({
         </section>
       ) : null}
 
-      {productId ? (
-        <div className="border-border flex justify-end border-t pt-3">
+      <div className="border-border flex flex-wrap justify-end gap-2 border-t pt-3">
+        {askEnabled ? (
+          <AskAssistantButton
+            question={askQuestion({ productName, variant, newMp, newVp, goal, period })}
+          />
+        ) : null}
+        {productId ? (
           <Button asChild variant="ghost" size="sm">
             <Link href={`/katalog/${productId}`}>
               <ExternalLink /> Otvori u Katalogu
             </Link>
           </Button>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
     </div>
   );
+}
+
+/** Pitanje za Asistenta sa svim brojevima iz kalkulatora (samo se pred-popuni). */
+function askQuestion({
+  productName,
+  variant,
+  newMp,
+  newVp,
+  goal,
+  period,
+}: {
+  productName: string;
+  variant: RacunicaVariant;
+  newMp: number;
+  newVp: number;
+  goal: number;
+  period: Period;
+}): string {
+  const name = variant.label === "—" ? productName : `${productName} · ${variant.label}`;
+  const changed = newMp !== variant.mp || newVp !== variant.vp;
+  return [
+    `Artikal ${name} (SKU ${variant.sku}): sada MP ${num(variant.mp ?? 0)} RSD, VP ${num(variant.vp ?? 0)} RSD.`,
+    changed ? `Razmišljam o MP ${num(newMp)} RSD i VP ${num(newVp)} RSD.` : null,
+    `Ciljna marža ${goal} %, period ${period.from} – ${period.to}.`,
+    changed
+      ? "Da li se ta promena isplati, s obzirom na prodaju, trend i ostale artikle iz Računice?"
+      : "Da li treba menjati cenu, s obzirom na prodaju, trend i ostale artikle iz Računice?",
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 function formatDisc(d: number): string {

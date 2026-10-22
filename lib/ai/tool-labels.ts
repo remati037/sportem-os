@@ -16,6 +16,7 @@ export const AI_TOOL_LABELS: Record<string, string> = {
   troskovi: "Troškovi",
   otkazivanja: "Otkazivanja i vraćanja",
   ponude_statistika: "Ponude na sajtu",
+  isplativost_artikala: "Računica (isplativost)",
   web_search: "Web pretraga",
 };
 
