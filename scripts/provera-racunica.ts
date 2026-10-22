@@ -19,6 +19,7 @@ import { belgradeDate, todayBelgrade } from "@/lib/date-belgrade";
 import { RANGE_PRESETS, rangePresetBounds } from "@/lib/period";
 import { CANCELLED_STATUS_NAMES } from "@/lib/woo";
 import { getRacunica } from "@/db/racunica";
+import { classifyAbc, deadStock, shiftDay } from "@/lib/racunica";
 
 const URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -125,8 +126,40 @@ async function main() {
     check("komadi = referenca", komada === ref.komada, `${fmt(komada)} vs ${fmt(ref.komada)}`);
     check("zbir kartica = zbir redova", data.totals.profit === zarada && data.totals.revenue === promet);
     check("svaki SKU u tačno jednom redu", dupes.length === 0, dupes.slice(0, 5).join(", "));
+    // P2: ABC — svaki red ima klasu, A+B+C = ukupna zarada, A nosi ≥ 80 % pozitivne zarade.
+    const abc = classifyAbc(data.rows);
+    const byClass = { A: 0, B: 0, C: 0 };
+    for (const r of data.rows) byClass[abc.get(r.key) ?? "C"] += r.stats.profit;
+    const positive = data.rows.reduce((s, r) => s + Math.max(r.stats.profit, 0), 0);
+    check("ABC: svaki red ima klasu", data.rows.every((r) => abc.has(r.key)));
+    check("ABC: A+B+C = ukupna zarada", byClass.A + byClass.B + byClass.C === zarada);
+    check(
+      "ABC: A nosi ≥ 80 % pozitivne zarade",
+      positive === 0 || byClass.A / positive >= 0.8,
+      `A ${fmt(byClass.A)} / B ${fmt(byClass.B)} / C ${fmt(byClass.C)} RSD`,
+    );
+
     console.log(
       `    redova ${fmt(data.rows.length)} · van kataloga ${fmt(out?.variants.length ?? 0)} SKU / ${fmt(out?.stats.profit ?? 0)} RSD · bez VP ${fmt(data.totals.unknownQty)} kom`,
+    );
+  }
+
+  // P2: mrtva roba ne zavisi od perioda — proverava se jednom, nad „sve".
+  {
+    const data = await getRacunica({ from: rangePresetBounds("sve", today).from, to: today }, supabase);
+    console.log("\nMrtva roba (90 dana)");
+    const dead = deadStock(data.rows, today, 90);
+    const cutoff = shiftDay(today, -90);
+    check(
+      "nijedna nema prodaju posle granice",
+      dead.every((d) => !d.variant.lastSoldDay || d.variant.lastSoldDay <= cutoff),
+    );
+    check(
+      "sve su popisane, aktivne, stanje > 0",
+      dead.every((d) => d.variant.counted && !d.variant.archived && (d.variant.stock ?? 0) > 0),
+    );
+    console.log(
+      `    ${fmt(dead.length)} varijanti · ${fmt(dead.reduce((s, d) => s + d.value, 0))} RSD po VP`,
     );
   }
 

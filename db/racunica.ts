@@ -3,6 +3,8 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/server";
+import { todayBelgrade } from "@/lib/date-belgrade";
+import { DATA_START } from "@/lib/period";
 import { selectAll } from "@/lib/supabase/paginate";
 import { loadSales } from "@/db/sales";
 import {
@@ -22,6 +24,10 @@ import {
  * `sku` — `order_items.variant_id` je null na ~93 % istorije. SKU koga nema u
  * katalogu ide u red „Van kataloga" (naziv iz `product_name` snapshot-a), pa
  * Σ zarade svih redova = Dashboard „Zarada" za isti period.
+ *
+ * Prodaja se čita JEDNOM za celu istoriju (od `DATA_START`) i u memoriji se
+ * deli na period i na „poslednju prodaju po SKU" (P2, mrtva roba) — istorija je
+ * mala (~1.500 porudžbina), a drugi upit bi čitao iste redove.
  *
  * Čita RLS klijentom (Admin/Menadžer čitaju base `product_variants` sa cenama);
  * opcioni `client` je za AI alat i skripte (obrazac iz db/customers.ts).
@@ -54,6 +60,7 @@ export async function getRacunica(
   client?: SupabaseClient,
 ): Promise<RacunicaData> {
   const supabase = client ?? (await createClient());
+  const today = todayBelgrade();
 
   const [products, variants, categories, sales] = await Promise.all([
     selectAll<ProductRow>("računica: proizvodi", () =>
@@ -77,12 +84,24 @@ export async function getRacunica(
         .order("sort_order", { ascending: true })
         .order("id", { ascending: true }),
     ),
-    loadSales(supabase, from, to),
+    loadSales(supabase, from < DATA_START ? from : DATA_START, to > today ? to : today),
   ]);
+
+  // Poslednja REALIZOVANA prodaja po SKU iz cele istorije (nezavisno od perioda).
+  const lastSold = new Map<string, string>();
+  for (const order of sales.orders) {
+    if (order.cancelled) continue;
+    for (const it of order.items) {
+      const key = skuKey(it.sku);
+      const prev = lastSold.get(key);
+      if (!prev || order.day > prev) lastSold.set(key, order.day);
+    }
+  }
 
   // Prodaja po SKU (stavke su hronološki — poslednji snapshot naziv je najnoviji).
   const bySku = new Map<string, { stats: SalesStats; name: string }>();
   for (const order of sales.orders) {
+    if (order.day < from || order.day > to) continue;
     for (const it of order.items) {
       const key = skuKey(it.sku);
       let entry = bySku.get(key);
@@ -138,6 +157,7 @@ export async function getRacunica(
         stock: v.stock_quantity,
         counted: v.stock_counted_at != null,
         archived: productArchived || v.archived_at != null,
+        lastSoldDay: lastSold.get(skuKey(v.sku)) ?? null,
         stats,
       };
     });
@@ -200,6 +220,7 @@ export async function getRacunica(
       stock: null,
       counted: false,
       archived: false,
+      lastSoldDay: lastSold.get(sku) ?? null,
       stats,
     });
   }
@@ -259,6 +280,7 @@ export async function getRacunica(
   return {
     from,
     to,
+    today,
     rows,
     totals,
     categories: categories.map(({ id, name }) => ({ id, name })),

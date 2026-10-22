@@ -6,7 +6,10 @@ Računica vs Dashboard pravila (danas 2026-10-22)
   ✓ komadi = referenca — 320 vs 320
   ✓ zbir kartica = zbir redova
   ✓ svaki SKU u tačno jednom redu
-    redova 243 · van kataloga 1 SKU / 21.693 RSD · bez VP 0 kom
+  ✓ ABC: svaki red ima klasu
+  ✓ ABC: A+B+C = ukupna zarada
+  ✓ ABC: A nosi ≥ 80 % pozitivne zarade — A 314.687 / B 52.794 / C 18.144 RSD
+    redova 242 · van kataloga 0 SKU / 0 RSD · bez VP 0 kom
 
 90 dana (2026-07-25 – 2026-10-22)
   ✓ zarada = referenca — 759.505 vs 759.505 RSD
@@ -14,7 +17,10 @@ Računica vs Dashboard pravila (danas 2026-10-22)
   ✓ komadi = referenca — 725 vs 725
   ✓ zbir kartica = zbir redova
   ✓ svaki SKU u tačno jednom redu
-    redova 243 · van kataloga 1 SKU / 34.089 RSD · bez VP 0 kom
+  ✓ ABC: svaki red ima klasu
+  ✓ ABC: A+B+C = ukupna zarada
+  ✓ ABC: A nosi ≥ 80 % pozitivne zarade — A 615.497 / B 106.654 / C 37.354 RSD
+    redova 242 · van kataloga 0 SKU / 0 RSD · bez VP 0 kom
 
 Ovaj mesec (2026-10-01 – 2026-10-31)
   ✓ zarada = referenca — 237.808 vs 237.808 RSD
@@ -22,7 +28,10 @@ Ovaj mesec (2026-10-01 – 2026-10-31)
   ✓ komadi = referenca — 207 vs 207
   ✓ zbir kartica = zbir redova
   ✓ svaki SKU u tačno jednom redu
-    redova 243 · van kataloga 1 SKU / 15.495 RSD · bez VP 0 kom
+  ✓ ABC: svaki red ima klasu
+  ✓ ABC: A+B+C = ukupna zarada
+  ✓ ABC: A nosi ≥ 80 % pozitivne zarade — A 196.244 / B 29.770 / C 11.794 RSD
+    redova 242 · van kataloga 0 SKU / 0 RSD · bez VP 0 kom
 
 Ova godina (2026-01-01 – 2026-10-22)
   ✓ zarada = referenca — 1.753.288 vs 1.753.288 RSD
@@ -30,7 +39,10 @@ Ova godina (2026-01-01 – 2026-10-22)
   ✓ komadi = referenca — 2.515 vs 2.515
   ✓ zbir kartica = zbir redova
   ✓ svaki SKU u tačno jednom redu
-    redova 243 · van kataloga 1 SKU / 115.289 RSD · bez VP 0 kom
+  ✓ ABC: svaki red ima klasu
+  ✓ ABC: A+B+C = ukupna zarada
+  ✓ ABC: A nosi ≥ 80 % pozitivne zarade — A 1.411.915 / B 253.830 / C 87.543 RSD
+    redova 242 · van kataloga 0 SKU / 0 RSD · bez VP 0 kom
 
 Sve (2026-02-02 – 2026-10-22)
   ✓ zarada = referenca — 1.753.288 vs 1.753.288 RSD
@@ -38,6 +50,14 @@ Sve (2026-02-02 – 2026-10-22)
   ✓ komadi = referenca — 2.515 vs 2.515
   ✓ zbir kartica = zbir redova
   ✓ svaki SKU u tačno jednom redu
-    redova 243 · van kataloga 1 SKU / 115.289 RSD · bez VP 0 kom
+  ✓ ABC: svaki red ima klasu
+  ✓ ABC: A+B+C = ukupna zarada
+  ✓ ABC: A nosi ≥ 80 % pozitivne zarade — A 1.411.915 / B 253.830 / C 87.543 RSD
+    redova 242 · van kataloga 0 SKU / 0 RSD · bez VP 0 kom
+
+Mrtva roba (90 dana)
+  ✓ nijedna nema prodaju posle granice
+  ✓ sve su popisane, aktivne, stanje > 0
+    221 varijanti · 38.635.940 RSD po VP
 
 ✅ PASS — 0 RSD razlike.

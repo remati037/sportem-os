@@ -1,6 +1,6 @@
 # Sportem — Plan implementacije: Računica (isplativost artikala)
 
-> Verzija 1.1 · 22.10.2026 · status: **P1 urađen (22.10.2026)**, sledeće P2
+> Verzija 1.1 · 22.10.2026 · status: **P1 i P2 urađeni (22.10.2026)**, sledeće P3
 > Prati pravila iz `CLAUDE.md` (zaključane odluke, migracije, RLS, srpski UI, zamrznute cene).
 > **Jedan korak = jedna sesija.** Za svaku sesiju: `CLAUDE.md` + tekst tog koraka + „PROMPT ZA SESIJU".
 
@@ -150,6 +150,14 @@ Deljiv link = deljiv pogled. Podrazumevani sort je **stvarna zarada ↓**.
 - **Prekidači** iznad tabele: „ABC · Matrica · Mrtva roba". Isključen pogled se ne renderuje (ni kolona ABC, ni grafikon, ni sekcija). Stanje je u **`localStorage`** (`sportem.racunica.pogledi`, try/catch, bez njega su svi uključeni) i u URL-u (`?pogledi=abc,matrica`), da deljen link pokaže isto.
 
 **Rezultat:** Σ zarade A+B+C = ukupna zarada; isključivanje svakog pogleda uklanja ga bez praznih mesta; prag matrice prati polje „cilj %".
+
+> **✅ URAĐENO 22.10.2026 — odstupanja i detalji:**
+> - ABC i matrica se računaju nad **svim redovima perioda** (pravilo vidljivosti arhiviranih), ne nad filtriranom tabelom — klasa se ne menja kad se suzi pretraga. „Van kataloga" red dobija klasu kao i ostali.
+> - „Mnogo" = **više od medijane** komada (danas medijana = 2), pa je linija granice na `medijana + 0,5`. Tačke sa istim brojem komada su razmaknute (`jitter` 6 px, stalan po ključu). Klik na tačku traži taj artikal u tabeli; klik na kvadrant u legendi filtrira (`?kvadrant=`).
+> - Mrtva roba je **po varijanti**, gleda unazad od danas (60/90 dana, `?mrtva=`), nezavisno od perioda. Poslednja prodaja dolazi iz **cele istorije**: `getRacunica` sada čita `loadSales` jednom od `DATA_START` i u memoriji deli na period i na `lastSoldDay` po SKU (bez drugog upita).
+> - Prekidači: URL `?pogledi=` ima prednost, pa `localStorage` (`sportem.racunica.pogledi`), pa svi uključeni. Gašenje pogleda briše i njegov filter.
+> - CSV dobija kolone ABC / Kvadrant / Poslednja prodaja samo kad je pogled uključen.
+> - Provera (`npm run provera:racunica`): ABC — svaki red ima klasu, A+B+C = ukupna zarada, A ≥ 80 %; mrtva roba — nijedna nema prodaju posle granice. Danas: **221 varijanta / 38,6 mil. RSD po VP** bez prodaje 90 dana.
 
 ---
 

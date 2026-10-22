@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
   AlertTriangle,
   ArrowDown,
@@ -11,12 +11,24 @@ import {
   ChevronDown,
   ChevronRight,
   Download,
+  X,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { num, rsd } from "@/lib/format";
 import { downloadCsv, toCsv, type CsvColumn } from "@/lib/csv";
 import {
+  DEFAULT_DEAD_DAYS,
+  DEAD_DAYS_OPTIONS,
+  QUADRANTS,
+  VIEW_KEYS,
+  classifyAbc,
+  isQuadrant,
+  medianQty,
+  quadrantOf,
+  type AbcClass,
+  type Quadrant,
+  type ViewKey,
   DEFAULT_SORT,
   DEFAULT_TARGET_PCT,
   RACUNICA_SORTS,
@@ -49,11 +61,16 @@ import {
 } from "@/components/ui/select";
 import { EmptyState } from "@/components/patterns/empty-state";
 
+import { ABC_VARIANT, AbcCard, DeadStockCard, MatrixCard, ViewToggles } from "./razvrstavanje";
+
 /*
  * Računica — prikaz (P1). Podaci za ceo period stižu jednom sa servera; pretraga,
  * filteri, sortiranje i otvorene varijante rade se ovde i upisuju u URL kroz
  * history.replaceState (deljiv link, bez ponovnog učitavanja podataka).
  * URL: ?q=&kategorija=&brend=&cilj=30&ispod=1&prodaja=sa|bez&arhiva=1&sort=&smer=
+ *      &pogledi=abc,matrica,mrtva&abc=A|B|C&kvadrant=…&mrtva=60|90   (P2)
+ * Pogledi (ABC / Matrica / Mrtva roba): URL ima prednost, pa izbor sa ovog
+ * uređaja (localStorage), pa svi uključeni.
  */
 
 type SalesFilter = "" | "sa" | "bez";
@@ -69,7 +86,38 @@ type State = {
   arhiva: boolean;
   sort: RacunicaSort;
   smer: Dir;
+  /** null = nije zadato u URL-u (važi izbor sa uređaja ili svi). */
+  views: ViewKey[] | null;
+  abc: AbcClass | "";
+  kvadrant: Quadrant | "";
+  mrtva: number;
 };
+
+const VIEWS_STORAGE_KEY = "sportem.racunica.pogledi";
+const NO_VIEWS = "-";
+
+function parseViews(raw: string | null): ViewKey[] | null {
+  if (raw == null) return null;
+  if (raw === NO_VIEWS) return [];
+  const list = raw.split(",").filter((v): v is ViewKey => (VIEW_KEYS as string[]).includes(v));
+  return list.length > 0 ? list : null;
+}
+
+const serializeViews = (v: ViewKey[]) =>
+  v.length === 0 ? NO_VIEWS : VIEW_KEYS.filter((k) => v.includes(k)).join(",");
+
+function readStoredViews(): string | null {
+  try {
+    return window.localStorage.getItem(VIEWS_STORAGE_KEY);
+  } catch {
+    return null; // privatni prozor / blokiran storage — svi pogledi
+  }
+}
+
+function subscribeStorage(cb: () => void) {
+  window.addEventListener("storage", cb);
+  return () => window.removeEventListener("storage", cb);
+}
 
 const ALL = "__sve";
 
@@ -87,6 +135,12 @@ function readState(params: URLSearchParams): State {
     arhiva: params.get("arhiva") === "1",
     sort: isRacunicaSort(sort) ? sort : DEFAULT_SORT,
     smer: params.get("smer") === "asc" ? "asc" : "desc",
+    views: parseViews(params.get("pogledi")),
+    abc: (["A", "B", "C"] as const).find((c) => c === params.get("abc")) ?? "",
+    kvadrant: isQuadrant(params.get("kvadrant")) ? (params.get("kvadrant") as Quadrant) : "",
+    mrtva: (DEAD_DAYS_OPTIONS as readonly number[]).includes(Number(params.get("mrtva")))
+      ? Number(params.get("mrtva"))
+      : DEFAULT_DEAD_DAYS,
   };
 }
 
@@ -106,6 +160,10 @@ function writeState(pathname: string, current: URLSearchParams, s: State) {
   if (s.arhiva) sp.set("arhiva", "1");
   if (s.sort !== DEFAULT_SORT) sp.set("sort", s.sort);
   if (s.smer !== "desc") sp.set("smer", s.smer);
+  if (s.views && s.views.length !== VIEW_KEYS.length) sp.set("pogledi", serializeViews(s.views));
+  if (s.abc) sp.set("abc", s.abc);
+  if (s.kvadrant) sp.set("kvadrant", s.kvadrant);
+  if (s.mrtva !== DEFAULT_DEAD_DAYS) sp.set("mrtva", String(s.mrtva));
   const query = sp.toString();
   const url = query ? `${pathname}?${query}` : pathname;
   if (url !== `${window.location.pathname}${window.location.search}`) {
@@ -123,7 +181,42 @@ export function RacunicaView({ data, periodLabel }: { data: RacunicaData; period
   const [search, setSearch] = useState(state.q);
   const [open, setOpen] = useState<Set<string>>(() => new Set());
 
-  const update = (next: Partial<State>) => setState((s) => ({ ...s, ...next }));
+  const update = useCallback((next: Partial<State>) => setState((s) => ({ ...s, ...next })), []);
+
+  // Pogledi: URL → izbor sa uređaja → svi.
+  const storedViews = useSyncExternalStore(subscribeStorage, readStoredViews, () => null);
+  const views: ViewKey[] = state.views ?? parseViews(storedViews) ?? VIEW_KEYS;
+  const abcOn = views.includes("abc");
+  const matrixOn = views.includes("matrica");
+  const deadOn = views.includes("mrtva");
+
+  function toggleView(key: ViewKey) {
+    const next = views.includes(key) ? views.filter((v) => v !== key) : [...views, key];
+    update({
+      views: next,
+      ...(key === "abc" && !next.includes("abc") ? { abc: "" as const } : {}),
+      ...(key === "matrica" && !next.includes("matrica") ? { kvadrant: "" as const } : {}),
+    });
+    try {
+      window.localStorage.setItem(VIEWS_STORAGE_KEY, serializeViews(next));
+    } catch {
+      /* nije bitno — izbor ostaje u URL-u */
+    }
+  }
+
+  // Osnovni skup za razvrstavanje: svi redovi perioda po pravilu vidljivosti
+  // (arhivirano bez prodaje se ne računa), BEZ filtera tabele — klasa i
+  // kvadrant artikla ne smeju da se menjaju kad se suzi pretraga.
+  const baseRows = useMemo(
+    () => data.rows.filter((r) => !r.archived || hasActivity(r.stats)),
+    [data.rows],
+  );
+  const abcMap = useMemo(() => classifyAbc(baseRows), [baseRows]);
+  const median = useMemo(() => medianQty(baseRows), [baseRows]);
+  const quadrantFor = useCallback(
+    (r: RacunicaRow) => quadrantOf(r, median, state.cilj),
+    [median, state.cilj],
+  );
 
   useEffect(() => {
     writeState(pathname, new URLSearchParams(window.location.search), state);
@@ -149,6 +242,8 @@ export function RacunicaView({ data, periodLabel }: { data: RacunicaData; period
         const m = effectiveMarginPct(r);
         if (m == null || m >= state.cilj) return false;
       }
+      if (abcOn && state.abc && abcMap.get(r.key) !== state.abc) return false;
+      if (matrixOn && state.kvadrant && quadrantFor(r) !== state.kvadrant) return false;
       if (q) {
         const hay = [r.name, r.brand ?? "", ...r.variants.flatMap((v) => [v.sku, v.label])];
         if (!hay.some((h) => normText(h).includes(q))) return false;
@@ -157,7 +252,7 @@ export function RacunicaView({ data, periodLabel }: { data: RacunicaData; period
     });
     out.sort((a, b) => compareRows(a, b, state.sort, state.smer));
     return out;
-  }, [data.rows, state]);
+  }, [data.rows, state, abcOn, matrixOn, abcMap, quadrantFor]);
 
   const below = useMemo(
     () =>
@@ -231,6 +326,19 @@ export function RacunicaView({ data, periodLabel }: { data: RacunicaData; period
       },
       { header: "Arhivirano", value: ({ v }) => (v.archived ? "da" : "") },
     ];
+    if (abcOn) columns.push({ header: "ABC (proizvod)", value: ({ r }) => abcMap.get(r.key) ?? "" });
+    if (matrixOn) {
+      columns.push({
+        header: "Kvadrant (proizvod)",
+        value: ({ r }) => {
+          const q = quadrantFor(r);
+          return q ? (QUADRANTS.find((x) => x.key === q)?.label ?? "") : "";
+        },
+      });
+    }
+    if (deadOn) {
+      columns.push({ header: "Poslednja prodaja", value: ({ v }) => v.lastSoldDay, kind: "date" });
+    }
     downloadCsv(`racunica-${data.from}-${data.to}.csv`, toCsv(columns, flat));
   }
 
@@ -265,6 +373,41 @@ export function RacunicaView({ data, periodLabel }: { data: RacunicaData; period
         <Stat label="Stanje po VP" value={rsd(t.stockValueVp)} hint="roba u magacinu (popisano × VP)" />
       </div>
 
+      <ViewToggles views={views} onToggle={toggleView} />
+
+      {abcOn || matrixOn ? (
+        <div
+          className={cn(
+            "mb-6 grid gap-4",
+            abcOn && matrixOn && "lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]",
+          )}
+        >
+          {matrixOn ? (
+            <MatrixCard
+              rows={baseRows}
+              quadrantOf={quadrantFor}
+              median={median}
+              target={state.cilj}
+              selected={state.kvadrant}
+              onSelect={(kvadrant) => update({ kvadrant })}
+              onPick={(r) => {
+                setSearch(r.name);
+                update({ q: r.name, kvadrant: "", abc: "" });
+                document.getElementById("racunica-tabela")?.scrollIntoView({ behavior: "smooth" });
+              }}
+            />
+          ) : null}
+          {abcOn ? (
+            <AbcCard
+              rows={baseRows}
+              abc={abcMap}
+              selected={state.abc}
+              onSelect={(abc) => update({ abc })}
+            />
+          ) : null}
+        </div>
+      ) : null}
+
       <Toolbar
         state={state}
         search={search}
@@ -276,7 +419,10 @@ export function RacunicaView({ data, periodLabel }: { data: RacunicaData; period
         canExport={rows.length > 0}
       />
 
-      <div className="text-ink-soft mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+      <div
+        id="racunica-tabela"
+        className="text-ink-soft mb-3 flex scroll-mt-4 flex-wrap items-center gap-x-4 gap-y-1 text-sm"
+      >
         <span>
           <span className="num text-ink font-medium">{num(rows.length)}</span> artikala
         </span>
@@ -284,6 +430,14 @@ export function RacunicaView({ data, periodLabel }: { data: RacunicaData; period
           Za ovaj filter: zarada <span className="num text-ink font-medium">{rsd(filtered.profit)}</span>{" "}
           · promet <span className="num">{rsd(filtered.revenue)}</span>
         </span>
+        {abcOn && state.abc ? (
+          <FilterChip onClear={() => update({ abc: "" })}>ABC: {state.abc}</FilterChip>
+        ) : null}
+        {matrixOn && state.kvadrant ? (
+          <FilterChip onClear={() => update({ kvadrant: "" })}>
+            {QUADRANTS.find((q) => q.key === state.kvadrant)?.label}
+          </FilterChip>
+        ) : null}
       </div>
 
       {rows.length === 0 ? (
@@ -300,14 +454,30 @@ export function RacunicaView({ data, periodLabel }: { data: RacunicaData; period
         <>
           <DesktopTable
             rows={rows}
+            abcOf={abcOn ? (key) => abcMap.get(key) : undefined}
             state={state}
             open={open}
             toggle={toggle}
             sortBy={sortBy}
           />
-          <MobileCards rows={rows} state={state} open={open} toggle={toggle} />
+          <MobileCards
+            rows={rows}
+            abcOf={abcOn ? (key) => abcMap.get(key) : undefined}
+            state={state}
+            open={open}
+            toggle={toggle}
+          />
         </>
       )}
+
+      {deadOn ? (
+        <DeadStockCard
+          rows={data.rows}
+          today={data.today}
+          days={state.mrtva}
+          onDays={(mrtva) => update({ mrtva })}
+        />
+      ) : null}
 
       <div className="text-ink-faint mt-4 space-y-1 text-xs">
         <p>
@@ -324,6 +494,31 @@ export function RacunicaView({ data, periodLabel }: { data: RacunicaData; period
 }
 
 /* ───────────────────────── delovi ───────────────────────── */
+
+function FilterChip({ children, onClear }: { children: React.ReactNode; onClear: () => void }) {
+  return (
+    <span className="border-green/30 bg-green-soft text-green-deep inline-flex h-7 items-center gap-1 rounded-pill border pr-1 pl-2.5 text-xs font-medium">
+      {children}
+      <button
+        type="button"
+        onClick={onClear}
+        aria-label="Ukloni filter"
+        className="hover:bg-green/10 rounded-full p-0.5"
+      >
+        <X className="size-3.5" />
+      </button>
+    </span>
+  );
+}
+
+function AbcBadge({ cls }: { cls: AbcClass | undefined }) {
+  if (!cls) return null;
+  return (
+    <Badge variant={ABC_VARIANT[cls]} title={`ABC klasa ${cls}`}>
+      {cls}
+    </Badge>
+  );
+}
 
 function Stat({
   label,
@@ -596,12 +791,14 @@ const HEADERS: { key: RacunicaSort; label: string; sub?: string; right?: boolean
 
 function DesktopTable({
   rows,
+  abcOf,
   state,
   open,
   toggle,
   sortBy,
 }: {
   rows: RacunicaRow[];
+  abcOf?: (key: string) => AbcClass | undefined;
   state: State;
   open: Set<string>;
   toggle: (key: string) => void;
@@ -682,6 +879,7 @@ function DesktopTable({
                           ) : (
                             <span className="text-ink font-medium">{r.name}</span>
                           )}
+                          {abcOf ? <AbcBadge cls={abcOf(r.key)} /> : null}
                           {r.archived ? <Badge variant="warning">Arhiviran</Badge> : null}
                         </div>
                         <div className="text-ink-faint text-xs">
@@ -802,11 +1000,13 @@ function SalesCells({ stats, target }: { stats: RacunicaRow["stats"]; target: nu
 
 function MobileCards({
   rows,
+  abcOf,
   state,
   open,
   toggle,
 }: {
   rows: RacunicaRow[];
+  abcOf?: (key: string) => AbcClass | undefined;
   state: State;
   open: Set<string>;
   toggle: (key: string) => void;
@@ -834,7 +1034,10 @@ function MobileCards({
                   {[r.brand, r.categoryName].filter(Boolean).join(" · ") || " "}
                 </div>
               </div>
-              {r.archived ? <Badge variant="warning">Arhiviran</Badge> : null}
+              <span className="flex shrink-0 gap-1">
+                {abcOf ? <AbcBadge cls={abcOf(r.key)} /> : null}
+                {r.archived ? <Badge variant="warning">Arhiviran</Badge> : null}
+              </span>
             </div>
 
             <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-sm">

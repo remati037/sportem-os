@@ -57,6 +57,8 @@ export type RacunicaVariant = {
   stock: number | null;
   counted: boolean; // stanje popisano (stock_counted_at)
   archived: boolean;
+  /** Poslednja realizovana prodaja (Beograd dan) iz CELE istorije; null = nikad. */
+  lastSoldDay: string | null;
   stats: SalesStats;
 };
 
@@ -99,6 +101,7 @@ export type RacunicaTotals = {
 export type RacunicaData = {
   from: string;
   to: string;
+  today: string;
   rows: RacunicaRow[];
   totals: RacunicaTotals;
   categories: { id: string; name: string }[];
@@ -224,4 +227,117 @@ export function normText(s: string): string {
     .replace(/đ/g, "dj")
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "");
+}
+
+/* ---------- razvrstavanje (P2) ---------- */
+
+export type ViewKey = "abc" | "matrica" | "mrtva";
+export const VIEW_KEYS: ViewKey[] = ["abc", "matrica", "mrtva"];
+export const VIEW_LABELS: Record<ViewKey, string> = {
+  abc: "ABC",
+  matrica: "Matrica",
+  mrtva: "Mrtva roba",
+};
+
+export type AbcClass = "A" | "B" | "C";
+export const ABC_A_PCT = 80;
+export const ABC_B_PCT = 95;
+
+/**
+ * ABC (Pareto) po stvarnoj zaradi u periodu. Redovi sa zaradom > 0 idu ↓; red je
+ * A dok je kumulativ PRE njega < 80 %, B dok je < 95 %, ostalo C. Tako je red
+ * koji prelazi granicu još u višoj klasi (najveći artikal je uvek A).
+ * Bez prodaje ili sa zaradom ≤ 0 → C. Računa se nad SVIM redovima perioda, ne
+ * nad filtriranim — klasa se ne menja kad se suzi pretraga.
+ */
+export function classifyAbc(rows: RacunicaRow[]): Map<string, AbcClass> {
+  const out = new Map<string, AbcClass>();
+  const positive = rows.filter((r) => r.stats.profit > 0).sort((a, b) => b.stats.profit - a.stats.profit);
+  const total = positive.reduce((s, r) => s + r.stats.profit, 0);
+  let cum = 0;
+  for (const r of positive) {
+    const before = total > 0 ? (cum / total) * 100 : 100;
+    out.set(r.key, before < ABC_A_PCT ? "A" : before < ABC_B_PCT ? "B" : "C");
+    cum += r.stats.profit;
+  }
+  for (const r of rows) if (!out.has(r.key)) out.set(r.key, "C");
+  return out;
+}
+
+export type Quadrant = "zvezde" | "obim" | "nisa" | "kandidati";
+export const QUADRANTS: { key: Quadrant; label: string; hint: string }[] = [
+  { key: "zvezde", label: "Zvezde", hint: "mnogo komada, marža iznad cilja" },
+  { key: "obim", label: "Obim", hint: "mnogo komada, marža ispod cilja" },
+  { key: "nisa", label: "Niša", hint: "malo komada, marža iznad cilja" },
+  { key: "kandidati", label: "Kandidati za izbacivanje", hint: "malo komada, marža ispod cilja" },
+];
+
+export function isQuadrant(v: string | null | undefined): v is Quadrant {
+  return QUADRANTS.some((q) => q.key === v);
+}
+
+/** Medijana prodatih komada među redovima koji su prodavani (granica „mnogo"). */
+export function medianQty(rows: RacunicaRow[]): number {
+  const q = rows
+    .filter((r) => r.stats.qty > 0)
+    .map((r) => r.stats.qty)
+    .sort((a, b) => a - b);
+  if (q.length === 0) return 0;
+  const mid = Math.floor(q.length / 2);
+  return q.length % 2 ? q[mid] : (q[mid - 1] + q[mid]) / 2;
+}
+
+/**
+ * Kvadrant matrice obim × marža: „mnogo" = više od medijane komada, „visoka" =
+ * stvarna marža ≥ cilj. Bez prodaje ili bez poznate marže → null (van grafikona).
+ */
+export function quadrantOf(row: RacunicaRow, median: number, target: number): Quadrant | null {
+  const m = realMarginPct(row.stats);
+  if (row.stats.qty === 0 || m == null) return null;
+  const many = row.stats.qty > median;
+  const high = m >= target;
+  return many ? (high ? "zvezde" : "obim") : high ? "nisa" : "kandidati";
+}
+
+export const DEAD_DAYS_OPTIONS = [60, 90] as const;
+export const DEFAULT_DEAD_DAYS = 90;
+
+export type DeadStockItem = {
+  rowKey: string;
+  productId: string;
+  productName: string;
+  variant: RacunicaVariant;
+  value: number; // stanje × VP
+};
+
+/** Kalendarski dan „YYYY-MM-DD" pomeren za n dana. */
+export function shiftDay(day: string, n: number): string {
+  const d = new Date(`${day}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Mrtva roba: aktivna, POPISANA varijanta sa stanjem > 0 bez realizovane prodaje
+ * u poslednjih `days` dana (ili nikad od početka podataka). Ne zavisi od
+ * izabranog perioda — gleda unazad od danas. Najveća vrednost po VP prva.
+ */
+export function deadStock(rows: RacunicaRow[], today: string, days: number): DeadStockItem[] {
+  const cutoff = shiftDay(today, -days);
+  const out: DeadStockItem[] = [];
+  for (const r of rows) {
+    if (!r.productId) continue;
+    for (const v of r.variants) {
+      if (v.archived || !v.counted || (v.stock ?? 0) <= 0) continue;
+      if (v.lastSoldDay && v.lastSoldDay > cutoff) continue;
+      out.push({
+        rowKey: r.key,
+        productId: r.productId,
+        productName: r.name,
+        variant: v,
+        value: (v.stock ?? 0) * (v.vp ?? 0),
+      });
+    }
+  }
+  return out.sort((a, b) => b.value - a.value || a.productName.localeCompare(b.productName, "sr"));
 }
