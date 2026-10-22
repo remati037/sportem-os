@@ -5,7 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { mustRows } from "@/lib/supabase/paginate";
 import { todayBelgrade } from "@/lib/date-belgrade";
-import { loadSales, norm, sumItems } from "@/lib/ai/tools/sales";
+import { loadSales, norm, sumItems } from "@/db/sales";
 
 /*
  * Podaci za grafikone na Dashboardu. ISTA pravila kao kartice

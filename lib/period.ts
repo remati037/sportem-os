@@ -167,3 +167,72 @@ export function comparisonRange(
     label: period.preset === "dan" ? "juče" : period.preset === "nedelja" ? "prošla nedelja" : "prethodni period",
   };
 }
+
+/*
+ * Preseti za stranice koje gledaju „klizni" period unazad (Računica, P1 —
+ * docs/Sportem-Plan-Racunica.md). Odvojeni od `PresetKey` da Dashboard filter i
+ * njegovo poređenje ostanu netaknuti. Svi završavaju „danas" (osim „mesec",
+ * koji je ceo kalendarski mesec kao na Dashboardu).
+ */
+
+export type RangePresetKey = "30d" | "90d" | "mesec" | "godina" | "sve";
+
+/** Prvi dan podataka u app-u (backfill istorije, Korak 1.3). */
+export const DATA_START = "2026-02-02";
+
+export const RANGE_PRESETS: { key: RangePresetKey; label: string }[] = [
+  { key: "30d", label: "30 dana" },
+  { key: "90d", label: "90 dana" },
+  { key: "mesec", label: "Ovaj mesec" },
+  { key: "godina", label: "Ova godina" },
+  { key: "sve", label: "Sve" },
+];
+
+export type RangePeriod = {
+  from: string;
+  to: string;
+  preset: RangePresetKey | null;
+  label: string;
+};
+
+export function rangePresetBounds(key: RangePresetKey, today: string): { from: string; to: string } {
+  if (key === "30d") return { from: addDays(today, -29), to: today };
+  if (key === "90d") return { from: addDays(today, -89), to: today };
+  if (key === "mesec") return presetBounds("mesec", today);
+  if (key === "godina") return { from: `${today.slice(0, 4)}-01-01`, to: today };
+  return { from: DATA_START, to: today };
+}
+
+function rangeLabel(preset: RangePresetKey | null, from: string, to: string): string {
+  if (preset === "30d") return "Poslednjih 30 dana";
+  if (preset === "90d") return "Poslednjih 90 dana";
+  if (preset === "mesec") return monthLabel(from);
+  if (preset === "godina") return `Godina ${from.slice(0, 4)}`;
+  if (preset === "sve") return "Od početka";
+  return from === to ? dayLabel(from) : `${dayLabel(from)} – ${dayLabel(to)}`;
+}
+
+/** Pročitaj ?od&do; bez validnog raspona → `fallback` preset (računat za „danas"). */
+export function resolveRange(
+  sp: Record<string, string | string[] | undefined>,
+  fallback: RangePresetKey,
+): RangePeriod {
+  const today = todayBelgrade();
+  const od = typeof sp.od === "string" ? sp.od : "";
+  const dor = typeof sp.do === "string" ? sp.do : "";
+
+  let from: string;
+  let to: string;
+  if (DATE_RE.test(od) && DATE_RE.test(dor) && od <= dor) {
+    from = od;
+    to = dor;
+  } else {
+    ({ from, to } = rangePresetBounds(fallback, today));
+  }
+  const preset =
+    RANGE_PRESETS.map((p) => p.key).find((k) => {
+      const b = rangePresetBounds(k, today);
+      return b.from === from && b.to === to;
+    }) ?? null;
+  return { from, to, preset, label: rangeLabel(preset, from, to) };
+}

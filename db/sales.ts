@@ -8,7 +8,8 @@ import { chunked, mustRows, selectAll } from "@/lib/supabase/paginate";
 import { isCancelStatusName } from "@/lib/woo";
 
 /*
- * Zajednički učitavač prodaje za AI alate (Korak A3). ISTA pravila kao
+ * Zajednički učitavač prodaje (Korak A3; premešten iz lib/ai/tools/ u P1 Računice
+ * jer ga koriste i AI alati, i Dashboard grafikoni, i /racunica). ISTA pravila kao
  * `computePeriodMetrics` (db/metrics.ts), da se cifre poklapaju sa Dashboardom:
  *   - period po datumu KREIRANJA (`ordered_at`), celi beogradski dani;
  *   - Otkazano/Vraćeno se prepoznaju po IMENU (`isCancelStatusName`);

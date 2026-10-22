@@ -1,5 +1,6 @@
 import {
   Bell,
+  Calculator,
   Contact,
   FileChartColumn,
   LayoutDashboard,
@@ -133,6 +134,14 @@ export const NAV_ITEMS: NavItem[] = [
     href: "/troskovi",
     label: "Troškovi",
     icon: Receipt,
+    section: "novac",
+    roles: STAFF,
+    primaryRoles: [],
+  },
+  {
+    href: "/racunica",
+    label: "Računica",
+    icon: Calculator,
     section: "novac",
     roles: STAFF,
     primaryRoles: [],

@@ -32,7 +32,7 @@ import { chunked, mustOne, mustRows, selectAll } from "@/lib/supabase/paginate";
 
 import { AI_TOOL_LABELS } from "@/lib/ai/tool-labels";
 
-import { bucketOf, loadSales, norm, sumItems, type Sales } from "./sales";
+import { bucketOf, loadSales, norm, sumItems, type Sales } from "@/db/sales";
 
 /*
  * Alati AI asistenta (Korak A3). SVI samo čitaju — nijedan ne piše u bazu.
