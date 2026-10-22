@@ -1,0 +1,16 @@
+ZBIRNO (medijana od 3 pokretanja)
+════════════════════════════════════════════════════════════════════════════════
+  stranica                       RLS (a)  service (b)  RLS overhead  round-trip   ⚠
+  ──────────────────────────────────────────────────────────────────────────────────────────────
+  dashboard                            —       414 ms             —          16   0
+  racunica                             —       228 ms             —          12   0
+  ──────────────────────────────────────────────────────────────────────────────────────────────
+  UKUPNO                               —       642 ms             —          28   0
+
+⚠ Kolona „RLS overhead" je prazna — nema Admin kredencijala. Kad se dodaju u
+  .env.test.local (RLS_TEST_ADMIN_EMAIL / _PASSWORD), isto merenje daje i pravu cenu RLS-a.
+
+UPOZORENJA
+  ──────────────────────────────────────────────────────────────────────────────────────────────
+  nijedno
+

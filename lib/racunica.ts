@@ -8,7 +8,7 @@ import {
 } from "@/lib/sales-velocity";
 
 /*
- * Računica — isplativost artikala (P1, docs/Sportem-Plan-Racunica.md §1).
+ * Računica — isplativost artikala (P1, docs/arhiva/2026-10-22-Plan-Racunica.md §1).
  * Tipovi + čiste funkcije, BEZ `server-only`: UI ih koristi za kolone, sortiranje,
  * filtere i CSV; server (db/racunica.ts) puni redove.
  *

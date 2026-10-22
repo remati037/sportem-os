@@ -1,6 +1,6 @@
 # Sportem — Plan implementacije: Računica (isplativost artikala)
 
-> Verzija 1.1 · 22.10.2026 · status: **P1–P5 urađeni (22.10.2026)**, sledeće P6
+> Verzija 1.2 · 22.10.2026 · status: **URAĐEN (P1–P6, 22.10.2026)** — arhiva; važeće odluke su u `CLAUDE.md` §3 („Računica — zaključane odluke")
 > Prati pravila iz `CLAUDE.md` (zaključane odluke, migracije, RLS, srpski UI, zamrznute cene).
 > **Jedan korak = jedna sesija.** Za svaku sesiju: `CLAUDE.md` + tekst tog koraka + „PROMPT ZA SESIJU".
 
@@ -230,6 +230,11 @@ Otvara se iz reda (proizvod ili varijanta) kao `Sheet` (desno na desktopu, odozd
 - Prazna stanja: „Nema prodaje u ovom periodu", „Nema artikala za ove filtere", „Nema mrtve robe", „Malo podataka za trend".
 - 360 px, tastatura (sort, prekidači, sheet), boje ispod/iznad cilja čitljive i bez boje (ikona + tekst).
 - `CLAUDE.md`: §3 podsekcija „Računica — zaključane odluke" + beleške P1–P6 u §10; §1 lista planova; plan u `docs/arhiva/`.
+
+> **✅ URAĐENO 22.10.2026:**
+> - **Brzina:** `/racunica` je merena na 1.696 ms (8 uzastopnih `.in(200)` upita za stavke cele istorije). Dve izmene: `loadSales` čita parčad **paralelno** (koristi i AI i Dashboard grafikoni, pravila nedirana), a Računica koristi novi **`loadSalesWide`** — statusi, porudžbine i stavke cele tabele kroz `selectAllByIdShards` istovremeno (obrazac `/kupci`). Rezultat: **228–289 ms** medijana (service-role), 12 round-tripova. `provera:racunica` i `ai:check` posle izmene i dalje PASS (0 RSD). Snimak: `docs/perf/2026-10-22-perf-racunica.txt`.
+> - Sonda `racunica` dodata u `npm run perf`; sonda `dashboard` usklađena sa paralelnim parčadima.
+> - Prazna stanja, pristup (Logistika → redirect, nema stavke u meniju), 360 px i tastatura provereni kroz P1–P5; nije bilo novih nalaza.
 
 ---
 

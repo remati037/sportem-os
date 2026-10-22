@@ -16,8 +16,7 @@ Vlasnici: **korisnik (Admin)** i **brat (Menadžer)**. **Drug (Logistika)** je d
   za važeće odluke gleda se §3 ovog fajla, ne plan (plan još tvrdi „Email nije u Fazi 1", što više ne važi).
 - `docs/Sportem-Dizajn-Sistem.md` — dizajn tokeni, boje, tipografija, komponente. Izvor istine za UI (Korak 0.2/0.3).
 - `docs/Sportem-Plan-Izvestaji.md` — **živi plan**: modul Izveštaji / Izvoz, faze R0–R8. Bez migracije.
-- `docs/Sportem-Plan-Racunica.md` — **živi plan**: modul Računica (isplativost artikala), faze P1–P6, odluke potvrđene 22.10.2026. Bez migracije.
-- `docs/Sportem-Plan-Nabavka.md` (N1–N4), `docs/Sportem-Plan-Reklame.md` (M0–M5) — **nacrti** za „Uskoro" stavke iz navigacije (Kupci je urađen — plan u `docs/arhiva/2026-10-18-Plan-Kupci.md`); odluke u njihovom §0 su PREDLOG i potvrđuju se na početku prvog koraka.
+- `docs/Sportem-Plan-Nabavka.md` (N1–N4), `docs/Sportem-Plan-Reklame.md` (M0–M5) — **nacrti** za „Uskoro" stavke iz navigacije (Kupci je urađen — plan u `docs/arhiva/2026-10-18-Plan-Kupci.md`; Računica je urađena — plan u `docs/arhiva/2026-10-22-Plan-Racunica.md`); odluke u njihovom §0 su PREDLOG i potvrđuju se na početku prvog koraka.
 - `docs/backlog.md` — šta je još otvoreno (P0/P1/P2), provereno nad kodom 22.09.2026.
 
 ---
@@ -104,6 +103,23 @@ Vlasnici: **korisnik (Admin)** i **brat (Menadžer)**. **Drug (Logistika)** je d
 - **Van opsega v1:** ručno spajanje kupaca, izmena kontakta, slanje SMS/mejla iz app-a, segmenti za Meta publiku, lojalnost/popusti, blokiranje kupca, pristup za Logistiku.
 - **Modul NE dira:** zamrznute cene i `order_items`, `customers` šemu, webhook i `upsertCustomer`, tok statusa, finansije, RLS postojećih tabela, pravilo rizika (`db/customer-risk.ts`).
 
+### Računica (`/racunica`) — zaključane odluke
+
+> Modul „Računica" (`docs/arhiva/2026-10-22-Plan-Racunica.md`, faze P1–P6 — **sve urađeno**). Implementacione
+> beleške po koracima su u §10 („Korak P1"…„Korak P6").
+
+- **Pristup: SAMO Admin i Menadžer** (zarada). Logistika nema stavku menija ni rutu (`requireRole`); modul nema nijednu tabelu ni migraciju.
+- **Dve marže jedna pored druge:** „Katalog" = TRENUTNA `mp_price − vp_price` (nikad ne ulazi u zbir zarade), „Stvarno" = zamrznuti `order_items` u periodu (§4). **Marža % je uvek od MP.** Stvarna marža % broji samo stavke sa VP; zarada u RSD `profit ?? 0` kao Dashboard. Otkazano/Vraćeno po imenu — u broju otkazanih, ne u prometu/zaradi.
+- **Samo MP − VP** — poštarina, reklame i ostali troškovi NE ulaze u računicu po artiklu.
+- **Prodaja po `sku`**, katalog → red proizvoda sa varijantama; SKU kog nema u katalogu → red „Van kataloga". **Σ zarade svih redova = Dashboard za isti period** (dokaz `npm run provera:racunica`, 0 RSD).
+- **Period** podrazumevano 90 dana (`resolveRange`); filteri, sort i pogledi su u URL-u; **ciljna marža** jedan prag (podrazumevano 30 %, `?cilj=`), bez migracije.
+- **Razvrstavanje (ABC / Matrica / Mrtva roba) — svaki pogled se može ugasiti** (`?pogledi=` → `localStorage` → svi). ABC i kvadranti se računaju nad SVIM redovima perioda, ne nad filtriranim.
+- **Prognoze gledaju unazad od danas, ne zavise od perioda; sezona nije uračunata.** Tempo prodaje ima JEDAN izvor: `lib/sales-velocity.ts` (Nabavka N1 mora da ga koristi).
+- **Kalkulator „šta ako" NIŠTA ne upisuje** — cena se menja u Katalogu, a na sajtu ručno.
+- **AI:** alat `isplativost_artikala` (samo čita, iste cifre kao strana) + „Pitaj asistenta" (samo pred-popuni) + „Analiziraj" na klik (nikad automatski) kroz postojeću chat rutu — razgovor ostaje u Asistentu i ulazi u mesečni limit.
+- **Van opsega v1:** troškovi/poštarina/reklame po artiklu, upis cene iz kalkulatora, prag po kategoriji, sezonska prognoza, cenovna elastičnost, chat panel u strani, automatski AI sažeci, pristup za Logistiku.
+- **Modul NE dira:** zamrznute cene i `order_items`, katalog (cene, stanje), finansije, RLS, tok statusa, webhook, `syncOrderStock`.
+
 ## 4. Centralni princip: zamrznute cene (snapshot) — NE DIRATI bez potvrde
 
 Razlog: u Sheetsu se desio bag — promena cene je retroaktivno promenila zaradu starih porudžbina.
@@ -177,6 +193,7 @@ npm run provera:k4     # dokaz za K4: norm_phone (baza vs TS) + order_profit sta
 npm run woo:test       # test webhook rute (traži pokrenut `npm run dev`)
 npm run ai:check       # alati AI asistenta vs Dashboard za 5 perioda — 0 RSD razlike (samo čita)
 npm run provera:c1     # spajanje kupaca vs ručni izvoz ponovnih kupaca (CSV van repoa; samo čita)
+npm run provera:racunica # Računica vs Dashboard (5 perioda) + ABC, mrtva roba, tempo — 0 RSD (samo čita)
 npm run icons          # regeneriši PWA ikonice
 ```
 
@@ -639,7 +656,7 @@ npm run icons          # regeneriši PWA ikonice
 - **Popuna starih porudžbina nije rađena — nije bilo šta da se popuni:** na dan uvođenja `/packages/orders?after=0` vraća prazno, a nijedna od poslednjih 20 Woo porudžbina nema `sportem_*` meta. Ako zatreba, popuna ide kroz Woo REST (`meta_data`, poznat format), samo gde je `gift_text` prazan.
 - **Test:** `npm run woo:test` sekcija 9 — snimanje na prvom prijemu, update ne prepisuje, prazan se dopunjuje (niz → redovi), porudžbina bez paketa ostaje `null`/`false`. Perf sonda detalja porudžbine usklađena (nove kolone u select-u).
 
-**Korak P1 — Računica: tabela isplativosti (plan `docs/Sportem-Plan-Racunica.md`, potvrđeno sa korisnikom 22.10.2026):**
+**Korak P1 — Računica: tabela isplativosti (plan `docs/arhiva/2026-10-22-Plan-Racunica.md`, potvrđeno sa korisnikom 22.10.2026):**
 - **Bez migracije, bez nove zavisnosti.** Odluke D1–D12 su u §0.1 plana (obe marže katalog/stvarno, marža % od MP, samo MP − VP, Admin+Menadžer, podrazumevano 90 dana, cilj 30 % u URL-u, „šta ako" ne piše).
 - **`loadSales` premešten u `db/sales.ts`** (bio `lib/ai/tools/sales.ts`) — koriste ga AI alati, Dashboard grafikoni i Računica; ponašanje nedirano.
 - **`db/racunica.ts` → `getRacunica({from,to}, client?)`:** ceo katalog (uklj. arhivirano, radi mapiranja istorije) + `loadSales`, spojeno **po `sku`** (trim). SKU koga nema u katalogu → red **„Van kataloga"** (naziv iz snapshot-a). Stvarna marža % broji **samo stavke sa VP**; zarada u RSD `profit ?? 0` kao Dashboard. Kataloška marža proizvoda = Σ(MP−VP)/ΣMP aktivnih varijanti. Arhiviran proizvod/varijanta se vidi samo kad ima prodaje u periodu ili uz „Prikaži arhivirane".
@@ -669,3 +686,8 @@ npm run icons          # regeneriši PWA ikonice
 - **Bez migracije, bez nove zavisnosti.** Nov AI alat **`isplativost_artikala`** (`lib/ai/tools/index.ts`, samo čita, RLS klijent) zove `getRacunica` + iste funkcije kao strana (`classifyAbc`, `quadrantOf`, `trendOf`, `forecastQty`, `rowDaysToZero`, `projectMonth`, `deadStock`) → iste cifre kao `/racunica`. Labela „Računica (isplativost)", system prompt dopunjen (kataloška vs stvarna marža, prognoza nije obećanje). `npm run ai:check` dopunjen — PASS.
 - **„Analiziraj"** (`app/(app)/racunica/analiza.tsx`) zove **postojeću** rutu `/api/asistent/chat` (nov razgovor, Sonnet 5.5, bez weba) — razgovor ostaje u Asistentu, važi mesečni limit, bez nove AI rute (odstupanje od plana: nema `lib/ai/run.ts`). Na klik, nikad automatski; dugme ugašeno bez ključa ili kad je limit potrošen (`AiState` računa strana).
 - **„Pitaj asistenta"** na kartici AI analize (period + cilj) i u kalkulatoru (artikal, SKU, MP/VP sada i nove, cilj, period) — samo pred-popuni.
+
+**Korak P6 — Računica: QA, brzina i dokumentacija (zatvara modul, 22.10.2026):**
+- **Bez migracije i bez nove zavisnosti.** Zaključane odluke su u §3 („Računica — zaključane odluke"); plan je premešten u `docs/arhiva/2026-10-22-Plan-Racunica.md` i označen kao urađen (P1–P6).
+- **Brzina `/racunica`: 1.696 ms → 228–289 ms** (medijana, service-role). (1) `loadSales` (`db/sales.ts`) čita `.in(200)` parčad **paralelno** (dobijaju i AI alati i Dashboard grafikoni; pravila nedirana). (2) Nov **`loadSalesWide`** za celu istoriju: statusi + porudžbine + stavke cele tabele kroz `selectAllByIdShards` istovremeno; zajednička pravila (`toOrders`: Beograd dan, Otkazano/Vraćeno po imenu) su u jednoj funkciji. `getRacunica` koristi `loadSalesWide`. Posle izmene `provera:racunica` i `ai:check` PASS.
+- `npm run perf`: nova sonda `racunica`, sonda `dashboard` usklađena sa paralelnim parčadima. Snimak `docs/perf/2026-10-22-perf-racunica.txt`.

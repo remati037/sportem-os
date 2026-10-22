@@ -7,7 +7,7 @@ import { todayBelgrade } from "@/lib/date-belgrade";
 import { DATA_START, presetBounds } from "@/lib/period";
 import { addVelocity, emptyVelocity, type Velocity } from "@/lib/sales-velocity";
 import { selectAll } from "@/lib/supabase/paginate";
-import { loadSales } from "@/db/sales";
+import { loadSalesWide } from "@/db/sales";
 import {
   OUT_OF_CATALOG_KEY,
   addStats,
@@ -21,13 +21,14 @@ import {
 } from "@/lib/racunica";
 
 /*
- * Računica (P1, docs/Sportem-Plan-Racunica.md). Katalog (trenutne cene i stanje)
+ * Računica (P1, docs/arhiva/2026-10-22-Plan-Racunica.md). Katalog (trenutne cene i stanje)
  * + prodaja u periodu iz `loadSales` (ista pravila kao Dashboard), spojeni po
  * `sku` — `order_items.variant_id` je null na ~93 % istorije. SKU koga nema u
  * katalogu ide u red „Van kataloga" (naziv iz `product_name` snapshot-a), pa
  * Σ zarade svih redova = Dashboard „Zarada" za isti period.
  *
- * Prodaja se čita JEDNOM za celu istoriju (od `DATA_START`) i u memoriji se
+ * Prodaja se čita JEDNOM za celu istoriju (od `DATA_START`, `loadSalesWide` —
+ * porudžbine i stavke paralelno, P6) i u memoriji se
  * deli na period i na „poslednju prodaju po SKU" (P2, mrtva roba) — istorija je
  * mala (~1.500 porudžbina), a drugi upit bi čitao iste redove.
  *
@@ -86,7 +87,7 @@ export async function getRacunica(
         .order("sort_order", { ascending: true })
         .order("id", { ascending: true }),
     ),
-    loadSales(supabase, from < DATA_START ? from : DATA_START, to > today ? to : today),
+    loadSalesWide(supabase, from < DATA_START ? from : DATA_START, to > today ? to : today),
   ]);
 
   // Iz cele istorije, nezavisno od perioda (gleda unazad od danas):

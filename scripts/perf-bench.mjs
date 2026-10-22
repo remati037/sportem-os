@@ -197,6 +197,17 @@ async function paginatedIn(rec, label, ids, build) {
   return rows;
 }
 
+/** db/sales.ts → loadSales (P6 Računice): parčad po IN_CHUNK PARALELNO. */
+async function paginatedInParallel(rec, label, ids, build) {
+  const parts = chunks(ids);
+  const res = await Promise.all(
+    parts.map((part, i) =>
+      paginated(rec, `${label} .in(${part.length}) [${i + 1}/${parts.length}]`, () => build(part)),
+    ),
+  );
+  return res.flat();
+}
+
 /* ── Sonde: tačan niz upita po stranici ──────────────────────────────────── */
 
 /**
@@ -419,7 +430,7 @@ const PROBES = [
               return d >= period.from && d <= period.to;
             })
             .map((o) => o.id);
-          await paginatedIn(rec, "grafikoni: order_items", ids, (chunk) =>
+          await paginatedInParallel(rec, "grafikoni: order_items", ids, (chunk) =>
             c
               .from("order_items")
               .select("order_id, sku, product_name, quantity, mp_at_sale, profit_at_sale")
@@ -810,6 +821,78 @@ const PROBES = [
             .gte("id", lo);
           return (hi ? q.lt("id", hi) : q).order("id", { ascending: true });
         }),
+      ]);
+    },
+  },
+  {
+    key: "racunica",
+    name: "Računica  (app/(app)/racunica/page.tsx)",
+    async run(ctx) {
+      const { rec, c } = ctx;
+      await getProfileQuery(ctx);
+
+      // db/racunica.ts → getRacunica: katalog (3 upita) + db/sales.ts → loadSales
+      // nad CELOM istorijom (od DATA_START do danas), sve paralelno.
+      const DATA_START = "2026-02-02";
+      const gte = new Date(new Date(`${DATA_START}T00:00:00Z`).getTime() - 86_400_000).toISOString();
+      const lt = new Date(Date.now() + 2 * 86_400_000).toISOString();
+      // db/sales.ts → loadSalesWide: statusi + porudžbine i stavke cele tabele
+      // u 4 UUID opsega, sve istovremeno (P6).
+      const bounds = [
+        "00000000-0000-0000-0000-000000000000",
+        "40000000-0000-0000-0000-000000000000",
+        "80000000-0000-0000-0000-000000000000",
+        "c0000000-0000-0000-0000-000000000000",
+      ];
+      const shards = (label, build) =>
+        Promise.all(
+          bounds.map((lo, i) =>
+            paginated(rec, `${label} [deo ${i + 1}/4]`, () => build(lo, bounds[i + 1] ?? null)),
+          ),
+        );
+      const loadSales = () =>
+        Promise.all([
+          rec.run("računica: order_statuses", () => c.from("order_statuses").select("id, name")),
+          shards("računica: orders (istorija)", (lo, hi) => {
+            const q = c
+              .from("orders")
+              .select(
+                "id, woo_order_id, ordered_at, status_id, delivery_method, payment_status, customer_id, ship_name, ship_city, needs_vp, goods_total",
+              )
+              .not("ordered_at", "is", null)
+              .gte("ordered_at", gte)
+              .lt("ordered_at", lt)
+              .gte("id", lo);
+            return (hi ? q.lt("id", hi) : q).order("id", { ascending: true });
+          }),
+          shards("računica: order_items", (lo, hi) => {
+            const q = c
+              .from("order_items")
+              .select("id, order_id, sku, product_name, quantity, mp_at_sale, profit_at_sale")
+              .gte("id", lo);
+            return (hi ? q.lt("id", hi) : q).order("id", { ascending: true });
+          }),
+        ]);
+      await Promise.all([
+        paginated(rec, "računica: products", () =>
+          c.from("products").select("id, name, brand, category_id, archived_at").order("id", { ascending: true }),
+        ),
+        paginated(rec, "računica: product_variants", () =>
+          c
+            .from("product_variants")
+            .select(
+              "id, product_id, sku, variant_name, mp_price, vp_price, stock_quantity, stock_counted_at, archived_at",
+            )
+            .order("id", { ascending: true }),
+        ),
+        paginated(rec, "računica: categories", () =>
+          c
+            .from("categories")
+            .select("id, name, sort_order")
+            .order("sort_order", { ascending: true })
+            .order("id", { ascending: true }),
+        ),
+        loadSales(),
       ]);
     },
   },

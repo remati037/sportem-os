@@ -170,7 +170,7 @@ export function comparisonRange(
 
 /*
  * Preseti za stranice koje gledaju „klizni" period unazad (Računica, P1 —
- * docs/Sportem-Plan-Racunica.md). Odvojeni od `PresetKey` da Dashboard filter i
+ * docs/arhiva/2026-10-22-Plan-Racunica.md). Odvojeni od `PresetKey` da Dashboard filter i
  * njegovo poređenje ostanu netaknuti. Svi završavaju „danas" (osim „mesec",
  * koji je ceo kalendarski mesec kao na Dashboardu).
  */

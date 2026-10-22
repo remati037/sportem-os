@@ -1,5 +1,5 @@
 /*
- * Brzina prodaje i prognoze (Računica P3, docs/Sportem-Plan-Racunica.md).
+ * Brzina prodaje i prognoze (Računica P3, docs/arhiva/2026-10-22-Plan-Racunica.md).
  * Čiste funkcije, bez `server-only` — deli ih Računica, a Nabavka N1 treba da
  * ih koristi umesto svoje formule (da dva ekrana nikad ne daju različit tempo).
  *

@@ -15,7 +15,7 @@ import type { AiState } from "./analiza";
 export const dynamic = "force-dynamic";
 
 /*
- * Računica — isplativost artikala (P1, docs/Sportem-Plan-Racunica.md).
+ * Računica — isplativost artikala (P1, docs/arhiva/2026-10-22-Plan-Racunica.md).
  * Pristup: Admin i Menadžer (zarada). Period je na serveru (?od&do, podrazumevano
  * 90 dana); filteri, sortiranje i otvorene varijante su na klijentu i u URL-u
  * (history.replaceState — bez ponovnog učitavanja podataka).

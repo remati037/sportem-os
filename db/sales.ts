@@ -4,7 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { belgradeDate } from "@/lib/date-belgrade";
 import { rangeToUtcPrefilter } from "@/lib/period";
-import { chunked, mustRows, selectAll } from "@/lib/supabase/paginate";
+import { chunked, mustRows, selectAll, selectAllByIdShards } from "@/lib/supabase/paginate";
 import { isCancelStatusName } from "@/lib/woo";
 
 /*
@@ -59,43 +59,34 @@ export function sumItems(items: SaleItem[]) {
   return { revenue, profit, quantity };
 }
 
-export async function loadSales(
-  supabase: SupabaseClient,
-  from: string,
-  to: string,
-): Promise<Sales> {
-  const statusRows = mustRows<{ id: string; name: string }>(
+type OrderRow = {
+  id: string;
+  woo_order_id: number | null;
+  ordered_at: string;
+  status_id: string;
+  delivery_method: string;
+  payment_status: string;
+  customer_id: string | null;
+  ship_name: string | null;
+  ship_city: string | null;
+  needs_vp: boolean;
+  goods_total: number | null;
+};
+
+const ORDER_COLS =
+  "id, woo_order_id, ordered_at, status_id, delivery_method, payment_status, customer_id, ship_name, ship_city, needs_vp, goods_total";
+const ITEM_COLS = "order_id, sku, product_name, quantity, mp_at_sale, profit_at_sale";
+
+async function statusNames(supabase: SupabaseClient): Promise<Map<string, string>> {
+  const rows = mustRows<{ id: string; name: string }>(
     await supabase.from("order_statuses").select("id, name"),
     "AI: statusi",
   );
-  const statusName = new Map(statusRows.map((s) => [s.id, s.name]));
+  return new Map(rows.map((s) => [s.id, s.name]));
+}
 
-  const { gteUtc, ltUtc } = rangeToUtcPrefilter(from, to);
-  const rows = await selectAll<{
-    id: string;
-    woo_order_id: number | null;
-    ordered_at: string;
-    status_id: string;
-    delivery_method: string;
-    payment_status: string;
-    customer_id: string | null;
-    ship_name: string | null;
-    ship_city: string | null;
-    needs_vp: boolean;
-    goods_total: number | null;
-  }>("AI: porudžbine", () =>
-    supabase
-      .from("orders")
-      .select(
-        "id, woo_order_id, ordered_at, status_id, delivery_method, payment_status, customer_id, ship_name, ship_city, needs_vp, goods_total",
-      )
-      .not("ordered_at", "is", null)
-      .gte("ordered_at", gteUtc)
-      .lt("ordered_at", ltUtc)
-      .order("ordered_at", { ascending: true })
-      .order("id", { ascending: true }),
-  );
-
+/** Zajednička pravila: celi beogradski dani + Otkazano/Vraćeno po IMENU. */
+function toOrders(rows: OrderRow[], statusName: Map<string, string>, from: string, to: string) {
   const orders: SaleOrder[] = [];
   for (const r of rows) {
     const day = belgradeDate(r.ordered_at);
@@ -103,17 +94,100 @@ export async function loadSales(
     const status = statusName.get(r.status_id) ?? "Nepoznat";
     orders.push({ ...r, day, status, cancelled: isCancelStatusName(status), items: [] });
   }
+  return orders;
+}
 
+export async function loadSales(
+  supabase: SupabaseClient,
+  from: string,
+  to: string,
+): Promise<Sales> {
+  const statusName = await statusNames(supabase);
+
+  const { gteUtc, ltUtc } = rangeToUtcPrefilter(from, to);
+  const rows = await selectAll<OrderRow>("AI: porudžbine", () =>
+    supabase
+      .from("orders")
+      .select(ORDER_COLS)
+      .not("ordered_at", "is", null)
+      .gte("ordered_at", gteUtc)
+      .lt("ordered_at", ltUtc)
+      .order("ordered_at", { ascending: true })
+      .order("id", { ascending: true }),
+  );
+
+  const orders = toOrders(rows, statusName, from, to);
   const byId = new Map(orders.map((o) => [o.id, o]));
-  for (const chunk of chunked(orders.map((o) => o.id))) {
-    const items = await selectAll<SaleItem & { order_id: string }>("AI: stavke", () =>
-      supabase
-        .from("order_items")
-        .select("order_id, sku, product_name, quantity, mp_at_sale, profit_at_sale")
-        .in("order_id", chunk)
-        .order("id", { ascending: true }),
-    );
+  // Parčad se čitaju PARALELNO (Računica P6). Svako parče je svoj skup
+  // porudžbina, pa redosled stavki unutar porudžbine (po `id`) ostaje isti.
+  const parts = await Promise.all(
+    chunked(orders.map((o) => o.id)).map((chunk) =>
+      selectAll<SaleItem & { order_id: string }>("AI: stavke", () =>
+        supabase
+          .from("order_items")
+          .select(ITEM_COLS)
+          .in("order_id", chunk)
+          .order("id", { ascending: true }),
+      ),
+    ),
+  );
+  for (const items of parts) {
     for (const { order_id, ...it } of items) byId.get(order_id)?.items.push(it);
+  }
+
+  return { from, to, orders };
+}
+
+/**
+ * Isto što i `loadSales`, ali za ŠIROK raspon (cela istorija — Računica):
+ * statusi, porudžbine i stavke se čitaju ISTOVREMENO, porudžbine i stavke
+ * cele tabele kroz 4 UUID opsega (`selectAllByIdShards`, obrazac `/kupci`),
+ * umesto „porudžbine pa stavke po 200". Za uzak period (AI alat za jedan
+ * mesec) `loadSales` je jeftiniji jer ne čita stavke koje mu ne trebaju.
+ * Rezultat je isti kao `loadSales(from, to)`: isti filteri, porudžbine po
+ * `ordered_at` pa `id`, stavke unutar porudžbine po `id`.
+ */
+export async function loadSalesWide(
+  supabase: SupabaseClient,
+  from: string,
+  to: string,
+): Promise<Sales> {
+  const { gteUtc, ltUtc } = rangeToUtcPrefilter(from, to);
+  const [statusName, rows, items] = await Promise.all([
+    statusNames(supabase),
+    selectAllByIdShards<OrderRow>("AI: porudžbine (široko)", (lo, hi) => {
+      const q = supabase
+        .from("orders")
+        .select(ORDER_COLS)
+        .not("ordered_at", "is", null)
+        .gte("ordered_at", gteUtc)
+        .lt("ordered_at", ltUtc)
+        .gte("id", lo);
+      return (hi ? q.lt("id", hi) : q).order("id", { ascending: true });
+    }),
+    selectAllByIdShards<SaleItem & { id: string; order_id: string }>(
+      "AI: stavke (široko)",
+      (lo, hi) => {
+        const q = supabase.from("order_items").select(`id, ${ITEM_COLS}`).gte("id", lo);
+        return (hi ? q.lt("id", hi) : q).order("id", { ascending: true });
+      },
+    ),
+  ]);
+
+  rows.sort((a, b) =>
+    a.ordered_at === b.ordered_at ? (a.id < b.id ? -1 : 1) : a.ordered_at < b.ordered_at ? -1 : 1,
+  );
+  const orders = toOrders(rows, statusName, from, to);
+  const byId = new Map(orders.map((o) => [o.id, o]));
+  items.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  for (const it of items) {
+    byId.get(it.order_id)?.items.push({
+      sku: it.sku,
+      product_name: it.product_name,
+      quantity: it.quantity,
+      mp_at_sale: it.mp_at_sale,
+      profit_at_sale: it.profit_at_sale,
+    });
   }
 
   return { from, to, orders };
