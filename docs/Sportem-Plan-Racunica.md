@@ -1,6 +1,6 @@
 # Sportem — Plan implementacije: Računica (isplativost artikala)
 
-> Verzija 1.1 · 22.10.2026 · status: **P1–P3 urađeni (22.10.2026)**, sledeće P4
+> Verzija 1.1 · 22.10.2026 · status: **P1–P4 urađeni (22.10.2026)**, sledeće P5
 > Prati pravila iz `CLAUDE.md` (zaključane odluke, migracije, RLS, srpski UI, zamrznute cene).
 > **Jedan korak = jedna sesija.** Za svaku sesiju: `CLAUDE.md` + tekst tog koraka + „PROMPT ZA SESIJU".
 
@@ -194,6 +194,12 @@ Otvara se iz reda (proizvod ili varijanta) kao `Sheet` (desno na desktopu, odozd
 - Dugme „Otvori u Katalogu" vodi na `/katalog/{productId}`. Upis cene ostaje tamo (D11).
 
 **Rezultat:** popust 0 % daje tačno sadašnje cifre; MP za cilj 30 % sa VP 3.000 → 4.286 RSD (prikazano 4.290).
+
+> **✅ URAĐENO 22.10.2026 — odstupanja i detalji:**
+> - Kalkulator radi **po varijanti** (cena živi tamo). Sa reda proizvoda bira se varijanta, a podrazumevana je najprodavanija u periodu. Dugme sa ikonom kalkulatora stoji na redu proizvoda, na svakoj aktivnoj varijanti i na mobilnoj kartici. Za red „Van kataloga" ga nema, jer nema kataloške cene.
+> - „Za istu zaradu iz perioda N kom" je zamenjeno sa **„na M kom iz perioda: zarada sada X → posle Y"**. Obe cifre su iz kataloga, jer je stara verzija i bez promene cene pisala „65 umesto 66" (stvarna zarada je sa popustima). Prag isplativosti u % komada ostaje.
+> - Zaokruživanje „kao na sajtu" (`shopPrice`): ispod 10.000 RSD na …90, od 10.000 na …990 (9.995 → 10.990). Dugme „Isprobaj" upisuje tu cenu u polje — **samo u kalkulator**.
+> - Popust i MP su vezani u oba smera; negativan popust je poskupljenje. Funkcije `simulate`, `mpForTarget` i `shopPrice` su u `lib/racunica.ts`, provereno skriptom (−10 % → 1.500/kom, +33,3 % komada; gubitak → null).
 
 ---
 

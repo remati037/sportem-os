@@ -64,6 +64,7 @@ import {
 import { EmptyState } from "@/components/patterns/empty-state";
 import { daysToZero, forecastQty, trendOf } from "@/lib/sales-velocity";
 
+import { PriceCalculator, canSimulate, type CalcTarget } from "./kalkulator";
 import { DaysToZero, MonthForecastCard, TrendValue, forecastLabel } from "./prognoza";
 import { ABC_VARIANT, AbcCard, DeadStockCard, MatrixCard, ViewToggles } from "./razvrstavanje";
 
@@ -189,6 +190,7 @@ export function RacunicaView({ data, periodLabel }: { data: RacunicaData; period
   const [state, setState] = useState<State>(() => readState(new URLSearchParams(params.toString())));
   const [search, setSearch] = useState(state.q);
   const [open, setOpen] = useState<Set<string>>(() => new Set());
+  const [calc, setCalc] = useState<CalcTarget | null>(null);
 
   const update = useCallback((next: Partial<State>) => setState((s) => ({ ...s, ...next })), []);
 
@@ -501,6 +503,7 @@ export function RacunicaView({ data, periodLabel }: { data: RacunicaData; period
             open={open}
             toggle={toggle}
             sortBy={sortBy}
+            onCalc={setCalc}
           />
           <MobileCards
             rows={rows}
@@ -508,9 +511,12 @@ export function RacunicaView({ data, periodLabel }: { data: RacunicaData; period
             state={state}
             open={open}
             toggle={toggle}
+            onCalc={setCalc}
           />
         </>
       )}
+
+      <PriceCalculator target={calc} onClose={() => setCalc(null)} goal={state.cilj} />
 
       {deadOn ? (
         <DeadStockCard
@@ -550,6 +556,20 @@ function FilterChip({ children, onClear }: { children: React.ReactNode; onClear:
         <X className="size-3.5" />
       </button>
     </span>
+  );
+}
+
+function CalcButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title="Šta ako — kalkulator cene"
+      aria-label="Šta ako — kalkulator cene"
+      className="text-ink-faint hover:text-green hover:bg-green-soft rounded p-1 transition-colors"
+    >
+      <Calculator className="size-3.5" />
+    </button>
   );
 }
 
@@ -855,6 +875,7 @@ function DesktopTable({
   open,
   toggle,
   sortBy,
+  onCalc,
 }: {
   rows: RacunicaRow[];
   abcOf?: (key: string) => AbcClass | undefined;
@@ -862,6 +883,7 @@ function DesktopTable({
   open: Set<string>;
   toggle: (key: string) => void;
   sortBy: (key: RacunicaSort) => void;
+  onCalc: (t: CalcTarget) => void;
 }) {
   return (
     <div className="border-border bg-surface shadow-soft hidden overflow-x-auto rounded-lg border md:block">
@@ -945,6 +967,9 @@ function DesktopTable({
                           )}
                           {abcOf ? <AbcBadge cls={abcOf(r.key)} /> : null}
                           {r.archived ? <Badge variant="warning">Arhiviran</Badge> : null}
+                          {canSimulate(r) ? (
+                            <CalcButton onClick={() => onCalc({ row: r, sku: null })} />
+                          ) : null}
                         </div>
                         <div className="text-ink-faint text-xs">
                           {r.outOfCatalog
@@ -986,6 +1011,9 @@ function DesktopTable({
                           <div className="text-ink flex flex-wrap items-center gap-1.5 text-sm break-words">
                             {v.label}
                             {v.archived ? <Badge variant="warning">Arhivirana</Badge> : null}
+                            {!v.archived && v.mp != null ? (
+                              <CalcButton onClick={() => onCalc({ row: r, sku: v.sku })} />
+                            ) : null}
                           </div>
                           <div className="text-ink-faint font-mono text-xs">{v.sku}</div>
                         </td>
@@ -1092,12 +1120,14 @@ function MobileCards({
   state,
   open,
   toggle,
+  onCalc,
 }: {
   rows: RacunicaRow[];
   abcOf?: (key: string) => AbcClass | undefined;
   state: State;
   open: Set<string>;
   toggle: (key: string) => void;
+  onCalc: (t: CalcTarget) => void;
 }) {
   return (
     <div className="space-y-2 md:hidden">
@@ -1125,6 +1155,7 @@ function MobileCards({
               <span className="flex shrink-0 gap-1">
                 {abcOf ? <AbcBadge cls={abcOf(r.key)} /> : null}
                 {r.archived ? <Badge variant="warning">Arhiviran</Badge> : null}
+                {canSimulate(r) ? <CalcButton onClick={() => onCalc({ row: r, sku: null })} /> : null}
               </span>
             </div>
 

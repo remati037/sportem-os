@@ -381,3 +381,71 @@ export function deadStock(rows: RacunicaRow[], today: string, days: number): Dea
   }
   return out.sort((a, b) => b.value - a.value || a.productName.localeCompare(b.productName, "sr"));
 }
+
+/* ---------- „šta ako" kalkulator (P4) — samo računa, ništa ne upisuje ---------- */
+
+/**
+ * Cena „kao na sajtu": zaokruži NAVIŠE na prvu cenu koja se završava na 90
+ * (ispod 10.000 RSD) ili na 990 (od 10.000 RSD). 4.286 → 4.290; 12.300 → 12.990.
+ */
+export function shopPrice(x: number): number {
+  if (x <= 0) return 0;
+  const small = Math.max(Math.ceil((x - 90) / 100) * 100 + 90, 90);
+  if (small < 10_000) return small;
+  return Math.ceil((x - 990) / 1000) * 1000 + 990;
+}
+
+/** MP koja daje tačno ciljnu maržu (od MP): VP / (1 − cilj). Celi RSD, naviše. */
+export function mpForTarget(vp: number, targetPct: number): number | null {
+  if (targetPct <= 0 || targetPct >= 100) return null;
+  return Math.ceil(vp / (1 - targetPct / 100));
+}
+
+export type SimulationInput = {
+  mp: number; // trenutna kataloška MP
+  vp: number; // trenutna kataloška VP
+  newMp: number;
+  newVp: number;
+  /** Prodato komada te varijante u izabranom periodu. */
+  qty: number;
+};
+
+export type Simulation = {
+  profitPerUnit: number; // nova MP − nova VP
+  marginPct: number | null;
+  currentPerUnit: number; // sadašnja kataloška MP − VP
+  currentMarginPct: number | null;
+  deltaPerUnit: number;
+  deltaMarginPp: number | null; // procentni poeni
+  /**
+   * Koliko komada više (u %) treba prodati po novoj ceni za istu zaradu po
+   * komadu kao sada. null = nova zarada po komadu ≤ 0 (gubitak).
+   */
+  extraQtyPct: number | null;
+  /**
+   * Na istom broju komada kao u periodu: zarada po sadašnjoj i po novoj
+   * kataloškoj ceni (obe iz kataloga, da „bez promene" bude tačno isto).
+   */
+  periodNow: number;
+  periodNew: number;
+};
+
+export function simulate(i: SimulationInput): Simulation {
+  const profitPerUnit = i.newMp - i.newVp;
+  const currentPerUnit = i.mp - i.vp;
+  const marginPctNew = marginPct(profitPerUnit, i.newMp);
+  const marginPctCur = marginPct(currentPerUnit, i.mp);
+  return {
+    profitPerUnit,
+    marginPct: marginPctNew,
+    currentPerUnit,
+    currentMarginPct: marginPctCur,
+    deltaPerUnit: profitPerUnit - currentPerUnit,
+    deltaMarginPp:
+      marginPctNew != null && marginPctCur != null ? marginPctNew - marginPctCur : null,
+    extraQtyPct:
+      profitPerUnit > 0 && currentPerUnit > 0 ? (currentPerUnit / profitPerUnit - 1) * 100 : null,
+    periodNow: i.qty * currentPerUnit,
+    periodNew: i.qty * profitPerUnit,
+  };
+}

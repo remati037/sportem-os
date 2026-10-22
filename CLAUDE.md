@@ -660,3 +660,7 @@ npm run icons          # regeneriši PWA ikonice
 - Sve prognoze gledaju **unazad od danas**, nezavisno od izabranog perioda. `getRacunica` računa prozore po SKU i podatke meseca (`RacunicaData.month`: ostvareno od 1. do danas + zarada po danu za 28 punih dana) iz istog učitavanja cele istorije.
 - **UI:** kartica „Zarada do kraja meseca" (procena + raspon najslabija/najjača nedelja + tempo) iznad prekidača pogleda; kolone **Trend** i **Prognoza** (30 d · „nula za N d", na proizvodu prva varijanta koja nestaje); filter `?trend=raste|pada|nestaje`; sort trend/prognoza/do_nule; CSV kolone. Prva kolona tabele je zaključana (`sticky`) jer je tabela šira od 1280 px.
 - `npm run provera:racunica` proširen (prozori komada, ostvareno = Dashboard, raspon) — PASS.
+
+**Korak P4 — Računica: kalkulator „šta ako" (potvrđeno sa korisnikom 22.10.2026):**
+- **Bez migracije, samo računa — NIŠTA ne upisuje** (D11). `app/(app)/racunica/kalkulator.tsx` (`Sheet side="responsive"`): varijanta (podrazumevano najprodavanija), nova MP ↔ popust % (vezani), nova VP; izlaz: marža RSD/% i razlika, prag isplativosti (% komada više/manje za istu zaradu po komadu), „na N kom iz perioda: sada → posle" (obe cifre iz kataloga), MP za ciljnu maržu (`mpForTarget`) zaokružena kao na sajtu (`shopPrice`: …90 / od 10.000 …990) + „Isprobaj", link „Otvori u Katalogu".
+- `lib/racunica.ts`: `simulate`, `mpForTarget`, `shopPrice` (čiste funkcije, celi RSD).
