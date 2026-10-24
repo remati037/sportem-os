@@ -297,6 +297,40 @@ async function main() {
     );
     const abcSum = rac.abc.A.zarada + rac.abc.B.zarada + rac.abc.C.zarada;
     check("isplativost_artikala: A+B+C = zarada", abcSum === ref.zarada, `${rsd(abcSum)}`);
+
+    // Reklame M4: izvori svih porudžbina = Dashboard; potrošnja = Σ ad_insights_daily.
+    const rek = await runTool("reklame_pregled", { od: p.od, do: p.do });
+    const uk = rek.izvori_svih_porudzbina.ukupno;
+    check(
+      "reklame_pregled: Σ izvora zarada = Dashboard",
+      uk.zarada_rsd === ref.zarada && uk.promet_rsd === ref.promet,
+      `${rsd(uk.zarada_rsd)} vs ${rsd(ref.zarada)}`,
+    );
+    check(
+      "reklame_pregled: porudžbine + otkazane = broj",
+      uk.porudzbine + uk.otkazane_vracene === ref.broj,
+      `${uk.porudzbine}+${uk.otkazane_vracene} vs ${ref.broj}`,
+    );
+    const spend = await all<{ spend_rsd: number | null }>((a, b) =>
+      supabase
+        .from("ad_insights_daily")
+        .select("spend_rsd")
+        .gte("date", p.od)
+        .lte("date", p.do)
+        .order("campaign_id")
+        .order("date")
+        .range(a, b),
+    );
+    const spendRef = spend.reduce((t, r) => t + (r.spend_rsd ?? 0), 0);
+    const spendCamp = (rek.kampanje as { potrosnja_rsd: number }[]).reduce(
+      (t, k) => t + k.potrosnja_rsd,
+      0,
+    );
+    check(
+      "reklame_pregled: potrošnja = Σ ad_insights_daily = Σ kampanja",
+      rek.potrosnja_rsd === spendRef && (spendCamp === spendRef || rek.kampanje.length === 25),
+      `${rsd(rek.potrosnja_rsd)} vs ${rsd(spendRef)}`,
+    );
     console.log("");
   }
 

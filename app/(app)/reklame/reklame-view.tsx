@@ -5,6 +5,8 @@ import { datum, datumVreme, num, rsd } from "@/lib/format";
 import { daysBetween, pct, roas, usd } from "@/lib/meta/labels";
 import type { RangePeriod } from "@/lib/period";
 import {
+  adsSiteTotals,
+  buildCampaignRows,
   costPerPurchaseRsd,
   ctrPct,
   metaRoas,
@@ -228,41 +230,10 @@ export function ReklameView({
   today: string;
   isAdmin: boolean;
 }) {
-  const { totals, campaigns, daily } = overview;
+  const { totals, daily } = overview;
 
-  // Kampanje sa potrošnjom u periodu + kampanje koje su donele porudžbine i bez
-  // potrošnje u periodu (klik ranije, kupovina sada).
-  const bySpend = new Map(campaigns.map((c) => [c.id, c]));
-  const campaignIds = new Set([...bySpend.keys(), ...attribution.byCampaign.keys()]);
-  const rows: CampaignRowView[] = [...campaignIds].map((id) => {
-    const c = bySpend.get(id);
-    const site = attribution.byCampaign.get(id);
-    const info = attribution.campaignInfo.get(id);
-    const spendRsd = c?.spendRsd ?? 0;
-    const siteOrders = site?.realized ?? 0;
-    const siteProfit = site?.profit ?? 0;
-    return {
-      id,
-      name: c?.name ?? info?.name ?? id,
-      status: c?.status ?? info?.status ?? null,
-      spendRsd,
-      linkClicks: c?.linkClicks ?? 0,
-      ctr: c ? ctrPct(c) : null,
-      siteOrders,
-      siteProfit,
-      net: siteProfit - spendRsd,
-      costPerOrder: siteOrders > 0 ? Math.round(spendRsd / siteOrders) : null,
-      needsVp: (site?.needsVp ?? 0) > 0,
-      purchases: c?.metaPurchases ?? 0,
-      roas: c ? metaRoas(c) : null,
-    };
-  });
-
-  // Porudžbine sa Meta oglasa = prepoznate kampanje + Meta bez prepoznate kampanje.
-  const fromAds = [...attribution.byCampaign.values(), attribution.metaUnknown].reduce(
-    (a, b) => ({ realized: a.realized + b.realized, profit: a.profit + b.profit }),
-    { realized: 0, profit: 0 },
-  );
+  const rows: CampaignRowView[] = buildCampaignRows(overview, attribution);
+  const fromAds = adsSiteTotals(attribution);
   const adsNet = fromAds.profit - totals.spendRsd;
 
   // Grafikon: svaki dan perioda (i bez potrošnje), ali ne posle danas.
@@ -381,8 +352,8 @@ export function ReklameView({
             „Porudžbine“ i „Zarada“ su sa sajta: porudžbina se pripisuje kampanji po UTM-u iz linka
             oglasa (WooCommerce beleži odakle je kupac došao), bez otkazanih i vraćenih, zarada iz
             zamrznutih cena. Meta sama dodaje UTM sa ID-jem kampanje u linkove oglasa, pa se
-            kampanje prepoznaju od februara. * Po Meta-i: kupovine beleži Meta piksel po svom
-            modelu i obično ih precenjuje.
+            kampanje prepoznaju od februara. * Po Meta-i: kupovine beleži Meta piksel po svom modelu
+            i obično ih precenjuje.
           </p>
 
           <SourcesTable attribution={attribution} />

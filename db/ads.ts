@@ -333,7 +333,17 @@ export async function getAdExpenseComparison(client?: Client): Promise<AdExpense
  * utm_source koji znači plaćeni Meta oglas. Meta sama dodaje `fb`/`ig`/`th`
  * (Threads)/`an` (Audience Network)/`msg` (Messenger) uz utm_medium=paid.
  */
-const META_SOURCES = new Set(["facebook", "fb", "instagram", "ig", "th", "threads", "meta", "an", "msg"]);
+const META_SOURCES = new Set([
+  "facebook",
+  "fb",
+  "instagram",
+  "ig",
+  "th",
+  "threads",
+  "meta",
+  "an",
+  "msg",
+]);
 
 export type SiteStats = {
   /** Sve porudžbine (i otkazane/vraćene) — isto kao kartica „Porudžbine" na Dashboardu. */
@@ -446,4 +456,76 @@ export async function getAdAttribution(
   }
 
   return out;
+}
+
+/* ── spoj Meta + sajt po kampanji (strana /reklame i AI alat — JEDAN izvor) ── */
+
+export type AdCampaignRow = {
+  id: string;
+  name: string;
+  status: string | null;
+  spendRsd: number;
+  linkClicks: number;
+  ctr: number | null;
+  /** Realizovane porudžbine sa sajta (bez Otkazano/Vraćeno). */
+  siteOrders: number;
+  siteProfit: number;
+  /** Zarada sa sajta − potrošnja. */
+  net: number;
+  /** Potrošnja / realizovane porudžbine; null bez porudžbina. */
+  costPerOrder: number | null;
+  needsVp: boolean;
+  purchases: number;
+  roas: number | null;
+};
+
+/**
+ * Kampanje sa potrošnjom u periodu + kampanje koje su donele porudžbine i bez
+ * potrošnje u periodu (klik ranije, kupovina sada). Sortirano po potrošnji.
+ */
+export function buildCampaignRows(
+  overview: AdsOverview,
+  attribution: AdAttribution,
+): AdCampaignRow[] {
+  const bySpend = new Map(overview.campaigns.map((c) => [c.id, c]));
+  const ids = new Set([...bySpend.keys(), ...attribution.byCampaign.keys()]);
+  return [...ids]
+    .map((id) => {
+      const c = bySpend.get(id);
+      const site = attribution.byCampaign.get(id);
+      const info = attribution.campaignInfo.get(id);
+      const spendRsd = c?.spendRsd ?? 0;
+      const siteOrders = site?.realized ?? 0;
+      const siteProfit = site?.profit ?? 0;
+      return {
+        id,
+        name: c?.name ?? info?.name ?? id,
+        status: c?.status ?? info?.status ?? null,
+        spendRsd,
+        linkClicks: c?.linkClicks ?? 0,
+        ctr: c ? ctrPct(c) : null,
+        siteOrders,
+        siteProfit,
+        net: siteProfit - spendRsd,
+        costPerOrder: siteOrders > 0 ? Math.round(spendRsd / siteOrders) : null,
+        needsVp: (site?.needsVp ?? 0) > 0,
+        purchases: c?.metaPurchases ?? 0,
+        roas: c ? metaRoas(c) : null,
+      };
+    })
+    .sort((a, b) => b.spendRsd - a.spendRsd);
+}
+
+/** Porudžbine sa Meta oglasa = prepoznate kampanje + Meta bez prepoznate kampanje. */
+export function adsSiteTotals(attribution: AdAttribution): SiteStats {
+  const t = emptySite();
+  for (const s of [...attribution.byCampaign.values(), attribution.metaUnknown]) {
+    t.orders += s.orders;
+    t.realized += s.realized;
+    t.cancelled += s.cancelled;
+    t.revenue += s.revenue;
+    t.profit += s.profit;
+    t.needsVp += s.needsVp;
+  }
+  return t;
 }

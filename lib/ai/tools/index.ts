@@ -16,6 +16,16 @@ import {
 import { getOrderDetail, getOrderStatusHistory } from "@/db/orders";
 import { getOfferStats, listOfferRules } from "@/db/offers";
 import {
+  adsSiteTotals,
+  buildCampaignRows,
+  costPerPurchaseRsd,
+  ctrPct,
+  getAdAttribution,
+  getAdsOverview,
+  metaRoas,
+  type SiteStats,
+} from "@/db/ads";
+import {
   findCustomerGroup,
   getCustomerFlags,
   getCustomerNotes,
@@ -782,14 +792,40 @@ export function createAiTools(
       "Računica: isplativost artikala za period — iste cifre kao strana /racunica. Po proizvodu: kataloška MP i marža (TRENUTNE cene), stvarno prodato/promet/zarada/marža iz zamrznutih cena, popust u odnosu na katalog, otkazano, ABC klasa (A = prvih 80 % zarade), kvadrant (zvezde / obim / niša / kandidati za izbacivanje — granice: medijana komada i ciljna marža), trend (30 vs 30 dana), prognoza 30 dana, dana do nule. Uz to: zbirovi, procena zarade do kraja meseca i mrtva roba (popisano stanje bez prodaje 90 dana). Koristi za pitanja o marži, šta se isplati, šta poskupeti/izbaciti, šta raste/pada.",
       z.object({
         ...period,
-        cilj: z.number().min(1).max(99).default(DEFAULT_TARGET_PCT).describe("Ciljna marža u % (od MP)"),
+        cilj: z
+          .number()
+          .min(1)
+          .max(99)
+          .default(DEFAULT_TARGET_PCT)
+          .describe("Ciljna marža u % (od MP)"),
         pretraga: z.string().max(100).optional().describe("Deo naziva, brenda ili SKU"),
         samo: z
-          .enum(["sve", "ispod_cilja", "zvezde", "obim", "nisa", "kandidati", "raste", "pada", "nestaje"])
+          .enum([
+            "sve",
+            "ispod_cilja",
+            "zvezde",
+            "obim",
+            "nisa",
+            "kandidati",
+            "raste",
+            "pada",
+            "nestaje",
+          ])
           .default("sve")
           .describe("Suzi listu artikala"),
         sort: z
-          .enum(["zarada", "marza", "katalog", "promet", "prodato", "popust", "otkazano", "trend", "prognoza", "do_nule"])
+          .enum([
+            "zarada",
+            "marza",
+            "katalog",
+            "promet",
+            "prodato",
+            "popust",
+            "otkazano",
+            "trend",
+            "prognoza",
+            "do_nule",
+          ])
           .default("zarada"),
         smer: z.enum(["opadajuce", "rastuce"]).default("opadajuce"),
         limit: z.number().int().min(1).max(40).default(20),
@@ -828,7 +864,11 @@ export function createAiTools(
           );
 
         const t = data.totals;
-        const abcSum = { A: { artikala: 0, zarada: 0 }, B: { artikala: 0, zarada: 0 }, C: { artikala: 0, zarada: 0 } };
+        const abcSum = {
+          A: { artikala: 0, zarada: 0 },
+          B: { artikala: 0, zarada: 0 },
+          C: { artikala: 0, zarada: 0 },
+        };
         for (const r of base) {
           const c = abc.get(r.key) ?? "C";
           abcSum[c].artikala += 1;
@@ -865,7 +905,8 @@ export function createAiTools(
             varijanti: dead.length,
             vrednost_po_vp_rsd: dead.reduce((s, d) => s + d.value, 0),
             najvece: dead.slice(0, 5).map((d) => ({
-              artikal: d.variant.label === "—" ? d.productName : `${d.productName} · ${d.variant.label}`,
+              artikal:
+                d.variant.label === "—" ? d.productName : `${d.productName} · ${d.variant.label}`,
               sku: d.variant.sku,
               stanje: d.variant.stock,
               vrednost_po_vp_rsd: d.value,
@@ -884,8 +925,11 @@ export function createAiTools(
               brend: r.brand,
               van_kataloga: r.outOfCatalog || undefined,
               arhiviran: r.archived || undefined,
-              katalog_mp_rsd: r.mpMin == null ? null : r.mpMin === r.mpMax ? r.mpMin : [r.mpMin, r.mpMax],
-              katalog_marza_procenat: one(single ? catalogMarginOf(single.mp, single.vp) : r.catalogMarginPct),
+              katalog_mp_rsd:
+                r.mpMin == null ? null : r.mpMin === r.mpMax ? r.mpMin : [r.mpMin, r.mpMax],
+              katalog_marza_procenat: one(
+                single ? catalogMarginOf(single.mp, single.vp) : r.catalogMarginPct,
+              ),
               prodato: r.stats.qty,
               otkazano: r.stats.cancelledQty,
               promet_rsd: r.stats.revenue,
@@ -895,7 +939,11 @@ export function createAiTools(
               abc: abc.get(r.key),
               kvadrant: quadrant(r),
               trend:
-                tr.dir === "few" ? "malo podataka" : tr.dir === "new" ? "novo" : `${tr.pct > 0 ? "+" : ""}${Math.round(tr.pct)} %`,
+                tr.dir === "few"
+                  ? "malo podataka"
+                  : tr.dir === "new"
+                    ? "novo"
+                    : `${tr.pct > 0 ? "+" : ""}${Math.round(tr.pct)} %`,
               prognoza_30d_komada: one(forecastQty(r.vel)),
               dana_do_nule: days == null ? null : Math.round(days),
               stanje: r.outOfCatalog ? null : r.stock,
@@ -936,6 +984,92 @@ export function createAiTools(
               prihod_rsd: round(r.revenue),
             })),
           napomena: "Otkazane i vraćene porudžbine nisu uračunate u porudžbine i prihod.",
+        };
+      },
+    ),
+    tool(
+      "reklame_pregled",
+      "Meta (Facebook/Instagram) reklame za period: potrošnja (RSD po kursu NBS i USD), klikovi, CTR, kupovine i ROAS po Meta-i, i — ključno — STVARNE porudžbine i zarada sa sajta po kampanji (UTM atribucija), zarada − potrošnja i trošak po porudžbini. Plus raspodela svih porudžbina po izvoru (Meta, ostalo, nepoznato).",
+      z.object({
+        ...period,
+        kampanja: z
+          .string()
+          .optional()
+          .describe("Deo naziva kampanje — vrati samo kampanje čiji naziv sadrži ovaj tekst"),
+      }),
+      async ({ od, do: doDate, kampanja }) => {
+        checkPeriod(od, doDate);
+        const [overview, attribution] = await Promise.all([
+          getAdsOverview(od, doDate, supabase),
+          getAdAttribution(od, doDate, supabase),
+        ]);
+        const t = overview.totals;
+        const ads = adsSiteTotals(attribution);
+        const q = kampanja ? normText(kampanja) : null;
+        const rows = buildCampaignRows(overview, attribution).filter(
+          (r) => !q || normText(r.name).includes(q),
+        );
+        const site = (s: SiteStats) => ({
+          porudzbine: s.realized,
+          otkazane_vracene: s.cancelled,
+          promet_rsd: s.revenue,
+          zarada_rsd: s.profit,
+        });
+        return {
+          period: { od, do: doDate },
+          potrosnja_rsd: t.spendRsd,
+          potrosnja_usd: t.spendMinor / 100,
+          klikovi_na_link: t.linkClicks,
+          ctr_procenat: one(ctrPct(t)),
+          meta_kupovine: t.metaPurchases,
+          meta_roas: one(metaRoas(t)),
+          meta_trosak_po_kupovini_rsd: costPerPurchaseRsd(t),
+          sajt_porudzbine_sa_oglasa: ads.realized,
+          sajt_zarada_sa_oglasa_rsd: ads.profit,
+          zarada_minus_potrosnja_rsd: ads.profit - t.spendRsd,
+          trosak_po_porudzbini_rsd: ads.realized > 0 ? round(t.spendRsd / ads.realized) : null,
+          kampanje: rows.slice(0, 25).map((r) => ({
+            naziv: r.name,
+            status: r.status,
+            potrosnja_rsd: r.spendRsd,
+            klikovi: r.linkClicks,
+            ctr_procenat: one(r.ctr),
+            sajt_porudzbine: r.siteOrders,
+            sajt_zarada_rsd: r.siteProfit,
+            zarada_minus_potrosnja_rsd: r.net,
+            trosak_po_porudzbini_rsd: r.costPerOrder,
+            meta_kupovine: r.purchases,
+            meta_roas: one(r.roas),
+          })),
+          izvori_svih_porudzbina: {
+            meta_prepoznata_kampanja: site(
+              [...attribution.byCampaign.values()].reduce(
+                (a, b) => ({
+                  orders: a.orders + b.orders,
+                  realized: a.realized + b.realized,
+                  cancelled: a.cancelled + b.cancelled,
+                  revenue: a.revenue + b.revenue,
+                  profit: a.profit + b.profit,
+                  needsVp: a.needsVp + b.needsVp,
+                }),
+                { orders: 0, realized: 0, cancelled: 0, revenue: 0, profit: 0, needsVp: 0 },
+              ),
+            ),
+            meta_bez_prepoznate_kampanje: site(attribution.metaUnknown),
+            ostali_izvori: site(attribution.other),
+            bez_podatka_o_izvoru: site(attribution.none),
+            ukupno: site(attribution.total),
+          },
+          napomena: [
+            "„Sajt“ cifre: porudžbina se pripisuje kampanji po UTM-u iz linka oglasa (poslednji klik), bez otkazanih i vraćenih; zarada = MP − VP iz zamrznutih cena (bez poštarine i drugih troškova). Kupac koji je video oglas pa došao drugim putem nije pripisan oglasu.",
+            "Meta kupovine i ROAS su po Meta pikselu i njenom modelu pripisivanja — obično precenjeni.",
+            ads.needsVp > 0
+              ? `${ads.needsVp} porudžbina sa oglasa nema VP — zarada nepotpuna.`
+              : null,
+            t.missingRsd > 0
+              ? "Za neke dane kurs NBS još nije stigao — potrošnja u RSD privremeno manja."
+              : null,
+          ].filter(Boolean),
         };
       },
     ),

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { ArrowDown, ArrowUp } from "lucide-react";
 
+import type { AdCampaignRow } from "@/db/ads";
 import { cn } from "@/lib/utils";
 import { num, rsd } from "@/lib/format";
 import { campaignStatus, pct, roas } from "@/lib/meta/labels";
@@ -32,25 +33,7 @@ import {
  * Meta-i" (*, piksel). Odlučuje sajt — Meta obično precenjuje.
  */
 
-export type CampaignRowView = {
-  id: string;
-  name: string;
-  status: string | null;
-  spendRsd: number;
-  linkClicks: number;
-  ctr: number | null;
-  /** Realizovane porudžbine sa sajta (bez Otkazano/Vraćeno). */
-  siteOrders: number;
-  siteProfit: number;
-  /** Zarada sa sajta − potrošnja. */
-  net: number;
-  /** Potrošnja / realizovane porudžbine; null bez porudžbina. */
-  costPerOrder: number | null;
-  /** Ima porudžbina bez VP → zarada nepotpuna. */
-  needsVp: boolean;
-  purchases: number;
-  roas: number | null;
-};
+export type CampaignRowView = AdCampaignRow;
 
 type SortKey =
   | "name"

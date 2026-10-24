@@ -17,6 +17,7 @@ export const AI_TOOL_LABELS: Record<string, string> = {
   otkazivanja: "Otkazivanja i vraćanja",
   ponude_statistika: "Ponude na sajtu",
   isplativost_artikala: "Računica (isplativost)",
+  reklame_pregled: "Meta reklame",
   web_search: "Web pretraga",
 };
 
@@ -32,7 +33,7 @@ export function describeToolCall(name: string, input: Record<string, unknown>): 
   const dd = fmt(input.do);
   if (od && dd) parts.push(od === dd ? od : `${od}–${dd}`);
   if (typeof input.dana === "number") parts.push(`${input.dana} dana`);
-  for (const key of ["query", "pretraga", "kupac_ili_grad", "status"]) {
+  for (const key of ["query", "pretraga", "kupac_ili_grad", "status", "kampanja"]) {
     if (typeof input[key] === "string" && input[key]) parts.push(`„${input[key] as string}“`);
   }
   if (typeof input.broj === "number") parts.push(`#${input.broj}`);
