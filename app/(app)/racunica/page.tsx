@@ -6,9 +6,9 @@ import { usd } from "@/lib/ai/models";
 import { getAiBudget } from "@/lib/ai/usage";
 import { todayBelgrade } from "@/lib/date-belgrade";
 import { resolveRange } from "@/lib/period";
+import { RangeFilter } from "@/components/patterns/range-filter";
 import { getRacunica } from "@/db/racunica";
 
-import { RangeFilter } from "./range-filter";
 import { RacunicaView } from "./racunica-view";
 import type { AiState } from "./analiza";
 
@@ -41,7 +41,7 @@ export default async function RacunicaPage({ searchParams }: { searchParams: Pro
         </p>
       </div>
 
-      <RangeFilter period={period} today={todayBelgrade()} />
+      <RangeFilter period={period} today={todayBelgrade()} basePath="/racunica" />
 
       <RacunicaView data={data} periodLabel={period.label} ai={ai} />
     </main>

@@ -162,7 +162,6 @@ export const NAV_ITEMS: NavItem[] = [
     section: "novac",
     roles: STAFF,
     primaryRoles: [],
-    soon: true,
   },
 
   {

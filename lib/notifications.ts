@@ -58,6 +58,17 @@ export const NOTIFICATION_TYPES = [
     label: "Oslobođena blokada tiketa",
     roles: ["admin", "manager"] as Role[],
   },
+  // Reklame (Meta Ads, M2) — potrošnja je finansija, Logistika ih ne vidi.
+  {
+    key: "ad_sync_failed",
+    label: "Meta sinhronizacija nije uspela",
+    roles: ["admin", "manager"] as Role[],
+  },
+  {
+    key: "ad_spend_high",
+    label: "Meta potrošnja preko praga",
+    roles: ["admin", "manager"] as Role[],
+  },
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number]["key"];

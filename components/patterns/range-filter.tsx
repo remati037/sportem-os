@@ -6,18 +6,26 @@ import { useSearchParams } from "next/navigation";
 import { RANGE_PRESETS, rangePresetBounds, type RangePeriod } from "@/lib/period";
 
 /*
- * Period Računice: preset linkovi + prilagođen raspon. Klijentska komponenta jer
+ * Period (Računica, Reklame): preset linkovi + prilagođen raspon. Klijentska komponenta jer
  * filteri tabele žive u URL-u (history.replaceState), pa linkovi perioda moraju
  * da ih čitaju iz TRENUTNOG URL-a da ih promena perioda ne bi obrisala.
  */
-export function RangeFilter({ period, today }: { period: RangePeriod; today: string }) {
+export function RangeFilter({
+  period,
+  today,
+  basePath,
+}: {
+  period: RangePeriod;
+  today: string;
+  basePath: string;
+}) {
   const params = useSearchParams();
   const keep = [...params.entries()].filter(([k]) => k !== "od" && k !== "do");
   const href = (from: string, to: string) => {
     const sp = new URLSearchParams(keep);
     sp.set("od", from);
     sp.set("do", to);
-    return `/racunica?${sp.toString()}`;
+    return `${basePath}?${sp.toString()}`;
   };
 
   return (
@@ -47,7 +55,7 @@ export function RangeFilter({ period, today }: { period: RangePeriod; today: str
         <p className="text-ink-faint text-xs first-letter:uppercase">{period.label}</p>
       </div>
 
-      <form method="get" action="/racunica" className="flex items-end gap-2">
+      <form method="get" action={basePath} className="flex items-end gap-2">
         {keep.map(([k, v]) => (
           <input key={k} type="hidden" name={k} value={v} />
         ))}

@@ -85,9 +85,7 @@ export async function syncMetaExpenses(
   }
 
   if (upserts.length > 0) {
-    const { error } = await supabase
-      .from("expenses")
-      .upsert(upserts, { onConflict: "source_key" });
+    const { error } = await supabase.from("expenses").upsert(upserts, { onConflict: "source_key" });
     if (error) throw new Error(`Upis automatskog troška: ${error.message}`);
   }
 

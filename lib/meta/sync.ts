@@ -257,10 +257,19 @@ export async function syncMeta(): Promise<MetaSyncResult> {
       error: problems.length > 0 ? problems.join(" ") : undefined,
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Nepoznata greška pri Meta sinhronizaciji.";
+    const message =
+      err instanceof Error ? err.message : "Nepoznata greška pri Meta sinhronizaciji.";
     Sentry.captureException(err);
     await writeState(supabase, { last_error: message });
-    return { ok: false, from, to: today, campaigns: campaignsCount, days: rowsCount, months: 0, error: message };
+    return {
+      ok: false,
+      from,
+      to: today,
+      campaigns: campaignsCount,
+      days: rowsCount,
+      months: 0,
+      error: message,
+    };
   }
 }
 
@@ -271,15 +280,13 @@ async function fillRsdForDay(
   middleMicro: number,
   listDate: string,
 ) {
-  const rows = await selectAll<{ campaign_id: string; spend_minor: number }>(
-    "dan bez kursa",
-    () =>
-      supabase
-        .from("ad_insights_daily")
-        .select("campaign_id, spend_minor")
-        .eq("date", day)
-        .is("spend_rsd", null)
-        .order("campaign_id", { ascending: true }),
+  const rows = await selectAll<{ campaign_id: string; spend_minor: number }>("dan bez kursa", () =>
+    supabase
+      .from("ad_insights_daily")
+      .select("campaign_id, spend_minor")
+      .eq("date", day)
+      .is("spend_rsd", null)
+      .order("campaign_id", { ascending: true }),
   );
   for (const r of rows) {
     const { error } = await supabase

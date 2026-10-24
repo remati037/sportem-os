@@ -27,7 +27,7 @@ import {
 import { CategoryManager } from "./category-manager";
 import { ExpenseActions } from "./expense-actions";
 import { ExpenseDialog } from "./expense-dialog";
-import { MetaSyncButton } from "./meta-sync-button";
+import { MetaSyncButton } from "../reklame/meta-sync-button";
 
 /** Oznaka automatskog reda (Meta) — ne menja se ručno, pa nema „⋮" menija. */
 function AutoBadge() {

@@ -111,7 +111,11 @@ export async function getRates(
   );
   for (const r of cached) {
     if (r.date !== today) {
-      rates.set(r.date, { date: r.date, listDate: r.list_date, middleMicro: Number(r.middle_micro) });
+      rates.set(r.date, {
+        date: r.date,
+        listDate: r.list_date,
+        middleMicro: Number(r.middle_micro),
+      });
     }
   }
 

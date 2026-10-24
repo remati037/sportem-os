@@ -384,7 +384,7 @@ async function testTicketPoliciesInMigration() {
    redirektuje Logistiku — statički proveravamo da svaki ulaz zove requireRole. */
 async function testRouteGuards() {
   console.log(
-    "\nKapije ruta — /tiketi, /ponude, /asistent, /kupci i /racunica propuštaju samo Admina i Menadžera:",
+    "\nKapije ruta — /tiketi, /ponude, /asistent, /kupci, /racunica i /reklame propuštaju samo Admina i Menadžera:",
   );
   const { readFile } = await import("node:fs/promises");
   const { fileURLToPath } = await import("node:url");
@@ -408,6 +408,8 @@ async function testRouteGuards() {
     "app/(app)/kupci/[id]/page.tsx",
     "app/(app)/kupci/actions.ts",
     "app/(app)/racunica/page.tsx",
+    "app/(app)/reklame/page.tsx",
+    "app/(app)/reklame/[id]/page.tsx",
   ];
 
   for (const file of files) {

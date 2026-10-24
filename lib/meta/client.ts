@@ -98,7 +98,9 @@ async function getJson<T>(url: URL, label: string): Promise<T> {
     // 190 = token istekao/opozvan · 200/10 = nema dozvole · 17/80004 = limit poziva
     if (code === 190) throw new Error("Meta token je istekao ili opozvan — napravi nov (M0).");
     if (code === 200 || code === 10) {
-      throw new Error(`Meta odbija pristup (${label}) — token mora imati ads_read i pristup nalogu.`);
+      throw new Error(
+        `Meta odbija pristup (${label}) — token mora imati ads_read i pristup nalogu.`,
+      );
     }
     if (code === 17 || code === 80004) {
       throw new Error("Meta privremeno ograničava pozive — sledeći pokušaj će proći.");
