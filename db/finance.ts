@@ -28,6 +28,8 @@ export type PayoutCandidate = {
   id: string;
   woo_order_id: number | null;
   ship_name: string | null;
+  goods_total: number | null;
+  shipping_charged: number | null; // naplaćena poštarina (NULL = nije uneta)
   otkup: number; // vrednost robe + naplaćena poštarina (otkupnina koju kurir vraća)
   delivered_at: string | null;
 };
@@ -77,9 +79,9 @@ export async function getUnpaidDeliveredXexpress(): Promise<PayoutCandidate[]> {
       .order("id", { ascending: true }),
   );
 
-  return rows.map(({ goods_total, shipping_charged, ...o }) => ({
+  return rows.map((o) => ({
     ...o,
-    otkup: otkupOf(goods_total, shipping_charged),
+    otkup: otkupOf(o.goods_total, o.shipping_charged),
   }));
 }
 
@@ -159,9 +161,9 @@ export async function getPayoutDetail(id: string): Promise<PayoutDetail | null> 
   const postageTotal = row.orders.reduce((sum, o) => sum + (o.shipping_charged ?? 0), 0);
   const orders: PayoutCandidate[] = [...row.orders]
     .sort((a, b) => (a.woo_order_id ?? 0) - (b.woo_order_id ?? 0))
-    .map(({ goods_total, shipping_charged, ...o }) => ({
+    .map((o) => ({
       ...o,
-      otkup: otkupOf(goods_total, shipping_charged),
+      otkup: otkupOf(o.goods_total, o.shipping_charged),
     }));
   const otkupTotal = orders.reduce((sum, o) => sum + o.otkup, 0);
   const profitMap = await profitByOrder(orders.map((o) => o.id));

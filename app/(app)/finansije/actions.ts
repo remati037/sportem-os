@@ -89,12 +89,35 @@ export async function createPayout(input: CreatePayoutInput): Promise<FinanceAct
 
   const parsed = createPayoutSchema.safeParse(input);
   if (!parsed.success) return { error: firstZodError(parsed.error) };
-  const { amount, payout_date, delivery_date, notes, order_ids } = parsed.data;
+  const { amount, payout_date, delivery_date, notes, order_ids, shipping } = parsed.data;
 
   const blocked = await assertLinkable(order_ids);
   if (blocked) return { error: blocked };
 
+  // Poštarina se upisuje samo na porudžbine koje ulaze u ovu uplatu.
+  const linked = new Set(order_ids);
+  if (shipping.some((s) => !linked.has(s.order_id))) {
+    return { error: "Poštarina je uneta za porudžbinu koja nije izabrana." };
+  }
+
   const supabase = await createClient();
+
+  // Naplaćena poštarina iz dijaloga (zaboravljena na koraku „Poslato"). Upis
+  // PRE uplate: ako uplata padne, ostaje samo tačna poštarina na porudžbini.
+  // Grupisano po iznosu — obično je ista cifra na većini porudžbina.
+  const byAmount = new Map<number, string[]>();
+  for (const s of shipping) {
+    byAmount.set(s.shipping_charged, [...(byAmount.get(s.shipping_charged) ?? []), s.order_id]);
+  }
+  for (const [shippingCharged, ids] of byAmount) {
+    for (const chunk of chunked(ids)) {
+      const { error: shipErr } = await supabase
+        .from("orders")
+        .update({ shipping_charged: shippingCharged })
+        .in("id", chunk);
+      if (shipErr) return { error: "Čuvanje poštarine nije uspelo." };
+    }
+  }
 
   const { data: payout, error: insErr } = await supabase
     .from("payouts")

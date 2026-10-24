@@ -35,6 +35,20 @@ export const createPayoutSchema = z.object({
   notes: optionalNote,
   // Sme prazno (uplata bez vezanih porudžbina — samo evidencija iznosa).
   order_ids: z.array(uuid("Neispravna porudžbina.")).max(500, "Previše porudžbina."),
+  // Naplaćena poštarina upisana u samom dijalogu (samo promenjene, samo izabrane).
+  shipping: z
+    .array(
+      z.object({
+        order_id: uuid("Neispravna porudžbina."),
+        shipping_charged: z.coerce
+          .number({ message: "Unesite poštarinu." })
+          .int("Poštarina mora biti ceo broj (RSD).")
+          .min(0, "Poštarina ne može biti negativna."),
+      }),
+    )
+    .max(500, "Previše porudžbina.")
+    .optional()
+    .default([]),
 });
 
 export const updatePayoutSchema = createPayoutSchema.extend({

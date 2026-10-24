@@ -26,7 +26,9 @@ import { createPayout } from "../actions";
 /*
  * Nova uplata (Korak 1.6a, Admin). Datum uplate → app izvede T−1 radni dan i
  * pred-čekira porudžbine isporučene tog dana; admin dočekira/odčekira. Baner
- * poredi Σ COD izabranih sa unetim iznosom (informativno, ne blokira).
+ * poredi Σ otkupa izabranih sa unetim iznosom (informativno, ne blokira).
+ * Naplaćena poštarina se može upisati na licu mesta (polje u redu) — kad je
+ * zaboravljena na koraku „Poslato"; čuva se na porudžbini zajedno sa uplatom.
  */
 export function NewPayoutDialog({
   candidates,
@@ -43,6 +45,8 @@ export function NewPayoutDialog({
   const [amount, setAmount] = useState("");
   const [notes, setNotes] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Poštarina upisana u dijalogu, po porudžbini (string — prazno polje = nije uneta).
+  const [shipEdits, setShipEdits] = useState<Map<string, string>>(new Map());
   // Dan za koji je selekcija pred-čekirana — okida ponovni preset pri promeni datuma.
   const [presetDay, setPresetDay] = useState<string | null>(null);
 
@@ -61,13 +65,19 @@ export function NewPayoutDialog({
     );
   }
 
-  const otkupTotal = useMemo(
-    () =>
-      candidates
-        .filter((c) => selected.has(c.id))
-        .reduce((sum, c) => sum + c.otkup, 0),
-    [candidates, selected],
-  );
+  function shippingInput(c: PayoutCandidate): string {
+    return shipEdits.get(c.id) ?? (c.shipping_charged != null ? String(c.shipping_charged) : "");
+  }
+
+  // Otkup = vrednost robe + poštarina (kao `otkupOf`, koji je server-only).
+  function otkupNow(c: PayoutCandidate): number {
+    const ship = shippingInput(c);
+    return ship === "" ? c.otkup : (c.goods_total ?? 0) + Number(ship);
+  }
+
+  const chosen = candidates.filter((c) => selected.has(c.id));
+  const otkupTotal = chosen.reduce((sum, c) => sum + otkupNow(c), 0);
+  const missingShipping = chosen.filter((c) => shippingInput(c) === "").length;
 
   const amountNum = Number(amount) || 0;
   const diff = amountNum - otkupTotal;
@@ -81,6 +91,12 @@ export function NewPayoutDialog({
     });
   }
 
+  function editShipping(id: string, value: string) {
+    setShipEdits((prev) => new Map(prev).set(id, value));
+    // Upis poštarine znači da porudžbina ulazi u uplatu.
+    if (value !== "") setSelected((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+  }
+
   function submit() {
     startTransition(async () => {
       const result = await createPayout({
@@ -88,6 +104,13 @@ export function NewPayoutDialog({
         payout_date: payoutDate,
         notes,
         order_ids: [...selected],
+        // Samo izabrane, upisane i stvarno promenjene.
+        shipping: chosen
+          .filter((c) => {
+            const v = shipEdits.get(c.id);
+            return v != null && v !== "" && Number(v) !== c.shipping_charged;
+          })
+          .map((c) => ({ order_id: c.id, shipping_charged: shipEdits.get(c.id)! })),
       });
       if (result.error) {
         toast.error(result.error);
@@ -98,6 +121,7 @@ export function NewPayoutDialog({
       setAmount("");
       setNotes("");
       setSelected(new Set());
+      setShipEdits(new Map());
       router.refresh();
     });
   }
@@ -115,7 +139,7 @@ export function NewPayoutDialog({
           <Plus /> Nova uplata
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+      <DialogContent className="max-h-[90vh] grid-cols-[minmax(0,1fr)] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Nova uplata</DialogTitle>
           <DialogDescription>
@@ -166,12 +190,25 @@ export function NewPayoutDialog({
               Izabrano: <span className="num font-medium">{num(selected.size)}</span> · Σ otkup{" "}
               <span className="num font-medium">{rsd(otkupTotal)}</span>
             </span>
+            {missingShipping > 0 && (
+              <span className="w-full text-xs sm:order-last">
+                {missingShipping === 1
+                  ? "1 izabrana porudžbina nema upisanu poštarinu."
+                  : `${num(missingShipping)} izabranih porudžbina nema upisanu poštarinu.`}
+              </span>
+            )}
             <span className="num font-semibold">
               Razlika: {diff === 0 ? "0 — poklapa se" : `${diff > 0 ? "+" : ""}${rsd(diff)}`}
             </span>
           </div>
 
-          {/* Kandidati */}
+          {/* Kandidati — poštarina se može upisati odmah (zaboravljena na „Poslato") */}
+          {candidates.length > 0 && (
+            <div className="eyebrow text-ink-faint -mb-2 hidden justify-end gap-3 px-4 sm:flex">
+              <span className="w-24 text-right">Poštarina</span>
+              <span className="w-24 text-right">Otkup</span>
+            </div>
+          )}
           <div className="border-border divide-border max-h-72 divide-y overflow-y-auto rounded-lg border">
             {candidates.length === 0 ? (
               <p className="text-ink-soft px-4 py-6 text-sm">
@@ -180,29 +217,48 @@ export function NewPayoutDialog({
             ) : (
               candidates.map((c) => {
                 const isT1 = c.delivered_at && belgradeDate(c.delivered_at) === targetDay;
+                const ship = shippingInput(c);
                 return (
-                  <label
+                  <div
                     key={c.id}
-                    className="hover:bg-green-soft flex cursor-pointer items-center gap-3 px-4 py-2.5"
+                    className="hover:bg-green-soft flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5"
                   >
-                    <input
-                      type="checkbox"
-                      className="accent-green size-4 cursor-pointer"
-                      checked={selected.has(c.id)}
-                      onChange={() => toggle(c.id)}
-                    />
-                    <span className="num text-ink font-medium">
-                      {c.woo_order_id != null ? `#${c.woo_order_id}` : "—"}
-                    </span>
-                    <span className="text-ink-soft min-w-0 flex-1 truncate text-sm">
-                      {c.ship_name ?? "—"}
-                    </span>
-                    <span className="num text-ink-faint text-xs">
-                      {c.delivered_at ? datum(c.delivered_at) : "—"}
-                      {isT1 ? " · T−1" : ""}
-                    </span>
-                    <span className="num text-ink text-sm">{rsd(c.otkup)}</span>
-                  </label>
+                    <label className="flex min-w-[14rem] flex-1 cursor-pointer items-center gap-3">
+                      <input
+                        type="checkbox"
+                        className="accent-green size-4 shrink-0 cursor-pointer"
+                        checked={selected.has(c.id)}
+                        onChange={() => toggle(c.id)}
+                      />
+                      <span className="num text-ink font-medium">
+                        {c.woo_order_id != null ? `#${c.woo_order_id}` : "—"}
+                      </span>
+                      <span className="text-ink-soft min-w-0 flex-1 truncate text-sm">
+                        {c.ship_name ?? "—"}
+                      </span>
+                      <span className="num text-ink-faint text-xs whitespace-nowrap">
+                        {c.delivered_at ? datum(c.delivered_at) : "—"}
+                        {isT1 ? " · T−1" : ""}
+                      </span>
+                    </label>
+                    <div className="ml-7 flex flex-1 items-center justify-between gap-3 sm:ml-0 sm:flex-none">
+                      <Input
+                        aria-label={`Poštarina za porudžbinu ${c.woo_order_id ?? ""}`}
+                        title="Naplaćena poštarina (RSD)"
+                        inputMode="numeric"
+                        className={
+                          "num h-8 w-24 text-right text-sm " +
+                          (ship === "" ? "border-warning/60 bg-warning-soft" : "")
+                        }
+                        value={ship}
+                        onChange={(e) => editShipping(c.id, e.target.value.replace(/\D/g, ""))}
+                        placeholder="Poštarina"
+                      />
+                      <span className="num text-ink w-24 text-right text-sm">
+                        {rsd(otkupNow(c))}
+                      </span>
+                    </div>
+                  </div>
                 );
               })
             )}
