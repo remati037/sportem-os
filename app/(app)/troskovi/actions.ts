@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { firstZodError } from "@/lib/actions";
 import { requireRole } from "@/lib/auth";
+import { syncMeta } from "@/lib/meta/sync";
 import { createClient } from "@/lib/supabase/server";
 import { deleteExpenseAttachment, uploadExpenseAttachment } from "@/lib/storage";
 import {
@@ -21,6 +22,18 @@ export type ExpenseActionState = {
 };
 
 /* ── helperi ─────────────────────────────────────────────────────────────── */
+
+/** Srpska množina: 1 mesec · 2–4 meseca · 5+ meseci (11–14 → meseci). */
+function monthsWord(n: number): string {
+  const d = n % 10;
+  const dd = n % 100;
+  if (d === 1 && dd !== 11) return "mesec";
+  if (d >= 2 && d <= 4 && (dd < 12 || dd > 14)) return "meseca";
+  return "meseci";
+}
+
+/** Automatski red (Meta) menja isključivo sinhronizacija — ručna izmena bi se prepisala. */
+const AUTO_EXPENSE_ERROR = "Ovaj trošak pravi Meta sinhronizacija automatski — ne menja se ručno.";
 
 function revalidateExpenses() {
   revalidatePath("/troskovi");
@@ -103,10 +116,12 @@ export async function updateExpense(
   const supabase = await createClient();
   const { data: existing } = await supabase
     .from("expenses")
-    .select("attachment_path")
+    .select("attachment_path, source")
     .eq("id", id)
     .maybeSingle();
-  const oldPath = (existing as { attachment_path: string | null } | null)?.attachment_path ?? null;
+  const existingRow = existing as { attachment_path: string | null; source: string | null } | null;
+  if (existingRow?.source) return { error: AUTO_EXPENSE_ERROR };
+  const oldPath = existingRow?.attachment_path ?? null;
 
   const attachment = await handleAttachmentUpload(formData);
   if (attachment.error) return { error: attachment.error };
@@ -119,7 +134,8 @@ export async function updateExpense(
   const { error } = await supabase
     .from("expenses")
     .update({ ...fields, attachment_path: nextPath })
-    .eq("id", id);
+    .eq("id", id)
+    .is("source", null);
   if (error) {
     if (attachment.uploaded) await deleteExpenseAttachment(attachment.path);
     return { error: "Izmena troška nije uspela." };
@@ -139,11 +155,12 @@ export async function deleteExpense(id: string): Promise<ExpenseActionState> {
   const supabase = await createClient();
   const { data: existing } = await supabase
     .from("expenses")
-    .select("attachment_path")
+    .select("attachment_path, source")
     .eq("id", id)
     .maybeSingle();
+  if ((existing as { source: string | null } | null)?.source) return { error: AUTO_EXPENSE_ERROR };
 
-  const { error } = await supabase.from("expenses").delete().eq("id", id);
+  const { error } = await supabase.from("expenses").delete().eq("id", id).is("source", null);
   if (error) return { error: "Brisanje troška nije uspelo." };
 
   await deleteExpenseAttachment(
@@ -152,6 +169,26 @@ export async function deleteExpense(id: string): Promise<ExpenseActionState> {
 
   revalidateExpenses();
   return { error: null, success: "Trošak obrisan." };
+}
+
+/* ── Meta Ads: ručna sinhronizacija ──────────────────────────────────────── */
+
+/**
+ * „Sinhronizuj Meta" — isto što i dnevni cron: povuče potrošnju i ažurira
+ * automatski mesečni trošak. Admin-only jer upisuje u `expenses`.
+ */
+export async function syncMetaNow(): Promise<ExpenseActionState> {
+  await requireRole("admin");
+
+  const result = await syncMeta();
+  revalidateExpenses();
+
+  if (!result.ok) return { error: result.error ?? "Meta sinhronizacija nije uspela." };
+  if (result.error) return { error: null, success: `Sinhronizovano, uz napomenu: ${result.error}` };
+  return {
+    error: null,
+    success: `Meta sinhronizovana — ${result.months} ${monthsWord(result.months)} u troškovima.`,
+  };
 }
 
 /* ── kategorije troškova ─────────────────────────────────────────────────── */

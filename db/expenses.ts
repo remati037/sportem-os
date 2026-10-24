@@ -18,6 +18,8 @@ export type ExpenseRow = {
   category_name: string | null;
   description: string | null;
   attachment_path: string | null;
+  /** null = ručno uneto; „meta" = automatski mesečni trošak (menja ga samo sinhronizacija). */
+  source: string | null;
 };
 
 export type ExpenseCategory = {
@@ -48,7 +50,7 @@ export async function listExpenses(monthStr: string): Promise<ExpenseRow[]> {
     supabase
       .from("expenses")
       .select(
-        "id, amount, date, category_id, description, attachment_path, expense_categories(name)",
+        "id, amount, date, category_id, description, attachment_path, source, expense_categories(name)",
       )
       .gte("date", firstDay)
       .lte("date", lastDay)
@@ -69,6 +71,7 @@ export async function listExpenses(monthStr: string): Promise<ExpenseRow[]> {
       category_name: cat?.name ?? null,
       description: r.description,
       attachment_path: r.attachment_path,
+      source: r.source,
     };
   });
 }

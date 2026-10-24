@@ -82,6 +82,7 @@ const TICKET_TABLES = [
 /* Tri tabele modula Ponude. Vide ih Admin i Menadžer; Logistika nijednu, a
    upis ide isključivo kroz service role (nema nijedne write politike). */
 const OFFER_TABLES = ["offer_rules", "offer_events", "offer_sync_state"];
+const AD_TABLES = ["ad_campaigns", "ad_insights_daily", "ad_sync_state", "fx_rates"];
 
 /* Prefiks privremenih redova koje test pravi pa briše. */
 const TEST_PREFIX = "__rls-test";
@@ -594,6 +595,48 @@ async function testOfferPoliciesInMigration() {
   check("nijedna offer politika ne pominje 'logistics'", leaks.length === 0, `${leaks.length}`);
 }
 
+/* Reklame (Meta Ads, M1) — potrošnja je finansija: samo Admin + Menadžer čitaju,
+   upisuje isključivo service role (sync), Logistika nema nijednu politiku. */
+async function testAdPoliciesInMigration() {
+  console.log("\nPolitike u migraciji — matrica dozvola za `ad_*` / `fx_rates`:");
+  const { readFile } = await import("node:fs/promises");
+  const { fileURLToPath } = await import("node:url");
+  const { dirname, join } = await import("node:path");
+  const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const file = "supabase/migrations/20261024120000_reklame.sql";
+
+  let sql = "";
+  try {
+    sql = await readFile(join(root, file), "utf8");
+  } catch {
+    check(`${file} → postoji`, false, "migracija nije pronađena");
+    return;
+  }
+
+  for (const table of AD_TABLES) {
+    check(
+      `${table} → RLS uključen`,
+      new RegExp(`alter table public\\.${table}\\s+enable row level security`).test(sql),
+    );
+    check(
+      `${table} → select politika za admin + manager`,
+      new RegExp(
+        `create policy "${table}_select"[\\s\\S]*?\\(select public\\.current_app_role\\(\\)\\) in \\('admin', 'manager'\\)`,
+      ).test(sql),
+    );
+  }
+
+  const policies = sql.match(/create policy "[\s\S]*?;/g) ?? [];
+  check(
+    "nema nijedne write politike na ad_* / fx_rates",
+    policies.filter((b) => !b.includes("for select")).length === 0,
+  );
+  check(
+    "nijedna politika ne pominje 'logistics'",
+    policies.filter((b) => b.includes("logistics")).length === 0,
+  );
+}
+
 async function offerRowCountsAsAdmin() {
   const c = await signIn("admin");
   const counts = {};
@@ -994,6 +1037,7 @@ async function testCustomerPoliciesInMigration() {
 async function runStaticChecks() {
   await testTicketPoliciesInMigration();
   await testOfferPoliciesInMigration();
+  await testAdPoliciesInMigration();
   await testAiPoliciesInMigration();
   await testCustomerPoliciesInMigration();
   await testRlsInitplanInMigrations();

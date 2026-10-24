@@ -1,6 +1,6 @@
 # Sportem — Plan implementacije: Reklame (Meta Ads)
 
-> Verzija 1.0 · 18.10.2026 · status: **nacrt — odluke iz §0.3 i ručni korak M0 pre ičega**
+> Verzija 1.1 · 24.10.2026 · status: **M0 urađen, M1 gotov u kodu (25.10.2026) — sledeće M2**
 > Prati pravila iz `CLAUDE.md` (zaključane odluke, migracije, RLS, srpski UI, zamrznute cene).
 > **Jedan korak = jedna sesija.** Za svaku sesiju: `CLAUDE.md` + tekst tog koraka + „PROMPT ZA SESIJU".
 
@@ -25,32 +25,46 @@ Stavka **Reklame** (`/reklame`, sekcija „Novac", trenutno „Uskoro"), **samo 
    Attribution*), sa **zaradom iz zamrznutih `order_items`**, pa: **zarada − potrošnja** i
    **trošak po porudžbini**. Ovo je cifra koja odlučuje — Meta broji „kupovine" po svom modelu
    pripisivanja i obično preteruje; app broji stvarne porudžbine i stvarnu zaradu.
-4. **Prenos u troškove** — jednim klikom, mesečni zbir Meta potrošnje postaje jedan red u
-   `expenses` (kategorija „Reklame"), pa Neto profit ostaje tačan bez duplog unosa.
+4. **Automatski trošak** — posle svake sinhronizacije mesečni zbir Meta potrošnje (u RSD) je
+   tačno jedan red u `expenses` (kategorija „Reklame", oznaka izvora `meta`), pa Neto profit
+   ostaje tačan bez ručnog unosa. **Ovo je glavni razlog modula** (korisnik ne želi da ručno
+   unosi svaku naplatu kod praga).
 
 **Promena zaključane odluke:** pokretanje ovog modula menja §3 „Meta integracija … NISU u Fazi 1"
 → upisati u `CLAUDE.md` kao promenjenu odluku (u M5, ili odmah na početku M1).
 
-### 0.3 Odluke — PREDLOG (potvrditi sa korisnikom pre M1)
+### 0.3 Odluke — POTVRĐENO sa korisnikom 24.10.2026
 
-| # | Tema | Predlog | Zašto |
+| # | Tema | Odluka | Zašto |
 |---|---|---|---|
 | D1 | Smer | **samo čitanje** sa Meta-e — app nikad ne pravi, pauzira ni menja kampanje | manji rizik, manje dozvola (`ads_read`) |
 | D2 | Pristup | **Admin i Menadžer** čitaju; Logistika nema ni stavku ni RLS politiku | potrošnja i zarada su finansije |
-| D3 | Novac | potrošnja se čuva kao **integer u najmanjoj jedinici valute naloga** (para/cent) + valuta; prikaz u RSD | §5 — bez float-a u finansijama; Meta vraća decimalni string |
-| D4 | Valuta naloga | **ako je RSD** → direktno. **Ako je EUR** → u RSD po **srednjem kursu NBS na dan potrošnje**, kurs se čuva uz red (snapshot, kao zamrznute cene) | vidi otvoreno pitanje 1 |
-| D5 | Troškovi | sinhronizacija **ne piše** u `expenses` sama; dugme „Prenesi mesec u troškove" pravi/menja **jedan** red po mesecu, uz oznaku izvora | zaključano: „reklame se unose zbirno i ručno" — ostaje zbirno, samo bez prepisivanja |
+| D3 | Novac | nalog je u **USD** → potrošnja se čuva kao **integer u centima** (`spend_minor`) + valuta; prikaz u RSD | §5 — bez float-a u finansijama; Meta vraća decimalni string (`"12.34"` → 1234, parsira se kao string, nikad `parseFloat`) |
+| D4 | Kurs | **srednji kurs NBS na dan potrošnje** (USD→RSD). Izvor: `kurs.resenje.org` (besplatan JSON, preslikava NBS listu; `GET /api/v1/currencies/usd/rates/{YYYY-MM-DD}` → `exchange_middle`, `date_from` = dan liste — vikend/praznik dobija poslednju objavljenu listu, kao kod NBS). Kurs se čuva uz red kao `fx_rate_micro` (snapshot — stari dani se ne preračunavaju). Kad izvor ne odgovori: dan ostaje bez RSD iznosa, sledeći sync pokušava ponovo, a strana upozorava | zvanični NBS web servis traži registraciju; ovaj izvor je proveren 24.10.2026 (USD 01.10.2026 = 103,8161) |
+| D5 | Troškovi | **AUTOMATSKI** (promenjeno — ranije dugme): posle svake sinhronizacije app za svaki mesec sa potrošnjom pravi ili ažurira **tačno jedan** red u `expenses` (kategorija „Reklame" po imenu, opis „Meta — oktobar 2026", datum = 1. u mesecu, iznos = Σ `spend_rsd`). Red nosi oznaku izvora (`expenses.source = 'meta'`, `source_key = 'meta:2026-10'`, parcijalni UNIQUE) → ponovni sync menja isti red, nikad duplikat. **Ručne redove (`source` null) app nikad ne dira.** U `/troskovi` automatski red je označen „Meta · automatski" i ne menja se ručno (menja ga samo sync) | korisnik ne želi ručni unos posle svake naplate; menja zaključanu odluku „reklame se unose zbirno i ručno" — upisati u `CLAUDE.md` |
+| D10 | Potrošnja, ne naplata | trošak = **potrošnja po danu** (Insights `spend`), NE naplate kartice kod praga | naplata kod praga pokriva više dana i prelazi mesece; banka dodaje svoj kurs i proviziju — tačan dinar je samo na izvodu, prihvaćena razlika ~1–3 % |
+| D11 | Retroaktivno | prvi sync povlači celu istoriju od D9; automatski redovi se prave za **sve** mesece. Pre uključivanja: strana pokazuje po mesecu **„ručno uneto (Reklame) vs Meta"** — korisnik proveri (oktobar kao test), pa SAM obriše svoje ručne redove za te mesece. Dok oba postoje, baner upozorava na dupli trošak | ručni redovi su istovremeno provera da sync daje tačne cifre |
 | D6 | Atribucija porudžbine | **poslednji klik po UTM-u** iz Woo *Order Attribution* (`utm_source`, `utm_campaign`, …) | jedini podatak koji je Sportem-ov, ne Meta-in |
 | D7 | Spajanje UTM ↔ kampanja | `utm_campaign={{campaign.id}}` u URL-u oglasa (Meta dinamički parametar) → spajanje po **ID-u**; naziv kampanje samo kao rezerva | nazivi se menjaju, ID ne |
 | D8 | Sinhronizacija | **dnevni cron** + „Sinhronizuj sada" (obrazac modula Ponude); poslednjih **7 dana se uvek ponovo povlači** (Meta naknadno koriguje cifre) | Hobby plan = jedan dnevni cron po unosu |
 | D9 | Istorija | prvi sync povlači **od 02.02.2026** (početak podataka u app-u) | poređenje sa porudžbinama ima smisla samo odatle |
 
-### 0.4 Otvorena pitanja (pitati na početku M1)
+### 0.4 Pitanja — odgovori (24.10.2026)
 
-1. **Valuta Meta ad naloga** (Ads Manager → Podešavanja naloga)? Ako je EUR — prihvatljiv kurs NBS na dan potrošnje, ili ručno unet mesečni kurs (kao na izvodu kartice)?
-2. Koliko ad naloga? Plan pretpostavlja **jedan**; više naloga = kolona `account_id` svuda (predviđena u šemi, UI tek ako treba).
-3. Da li oglasi već imaju UTM parametre? Ako nemaju — korak M0.3 (ručno) i atribucija važi tek od tog dana; ranije porudžbine ostaju „nepoznat izvor".
-4. Da li „Prenesi u troškove" treba da **zameni** postojeći ručni red „Reklame" za taj mesec, ili da ga ostavi i doda novi? Predlog: **zameni samo red koji je napravilo dugme** (oznaka izvora), ručne ne dira.
+1. Valuta naloga: **USD**, srednji kurs NBS na dan potrošnje (D3, D4).
+2. Ad nalog: **jedan** (`account_id` ostaje u šemi, UI ga ne prikazuje).
+3. UTM u oglasima: **još otvoreno** — pita se na početku M3 (ne blokira M1–M2).
+4. Ručni redovi: korisnik ih briše sam posle poređenja (D11); automatski se pravi za sve mesece.
+5. Pregled `/reklame` (potrošnja po kampanji i danu): **da**, M2.
+6. PDV: Sportem **nije u sistemu PDV-a** → trošak = Insights `spend`, **bez ikakvog PDV obračuna**.
+7. Push (potvrđeno): **`ad_sync_failed`** — sync pao (token istekao/ukinut, Meta greška) i
+   **`ad_spend_high`** — potrošnja JUČE prešla prag. Oba Admin+Menadžer, kroz postojeći
+   `notifyRoles` + preference na `/obavestenja` (nova 2 tipa u `lib/notifications.ts`). Dedup
+   `reference_id`: `ad_sync_failed:{YYYY-MM-DD}` (najviše jedan dnevno), `ad_spend_high:{dan potrošnje}`.
+   Prag: env `META_DAILY_SPEND_ALERT_RSD` (prazno = isključeno). **Nije u realnom vremenu** — cron
+   je dnevni (Hobby), pa javlja za protekli dan. Radi se u M2.
+8. Atribucija (M3) — posle M1–M2; **UTM u oglase dodati odmah** (M0.3), da se podaci skupljaju
+   pre nego što ekran postoji.
 
 ### 0.5 Dve tehničke činjenice
 
@@ -103,25 +117,32 @@ prijemu porudžbine; `order.updated` je i dalje ne dira) — nijedno postojeće 
   - `ad_campaigns` (`id text` = Meta ID, `account_id text`, `name`, `status`, `objective`, `updated_at`)
   - `ad_insights_daily` (`campaign_id → ad_campaigns`, `date date`, `currency text`, `spend_minor bigint`, `fx_rate_micro bigint` (RSD po jedinici × 10⁶, null za RSD nalog), `spend_rsd int` (zaokruženo, snapshot), `impressions int`, `clicks int`, `link_clicks int`, `meta_purchases int`, `meta_purchase_value_minor bigint`, PK `(campaign_id, date)`)
   - `ad_sync_state` (`last_synced_at`, `last_error`)
+  - `expenses.source text null` + `expenses.source_key text null` + parcijalni UNIQUE `(source_key) where source_key is not null` (D5)
   - RLS: select admin+manager, **nijedna write politika** (piše samo service role — obrazac Ponude), nijedna za Logistiku, svi pozivi u `(select …)`
-- `lib/meta/client.ts`, `lib/meta/sync.ts` **(novo)**; kurs (ako D4 = EUR) — `lib/meta/fx.ts`
+- `lib/meta/client.ts`, `lib/meta/sync.ts` **(novo)**; kurs — `lib/meta/fx.ts` (D4, `kurs.resenje.org`, keš po danu liste)
+- `lib/meta/expenses.ts` **(novo)** — posle sync-a upsert jednog `expenses` reda po mesecu po `source_key` (D5); mesec bez ijednog dana sa kursom se preskače; ručni redovi se ne diraju
+- `/troskovi` — automatski red označen „Meta · automatski", bez Izmeni/Obriši (akcije odbijaju `source is not null` i na serveru)
 - `app/api/cron/meta-sync/route.ts` **(novo)** — GET, `Bearer CRON_SECRET`; `vercel.json` cron (npr. `0 5 * * *`)
 - `scripts/meta-check.mjs` **(novo, samo čita)** — poredi zbir `spend` za poslednjih 30 dana iz baze sa direktnim Insights pozivom na nivou naloga (`level=account`) → razlika ≤ 1 RSD po danu
 
 **Rezultat**
 Posle „Sinhronizuj sada" tabela ima svaku kampanju po danu od 02.02.2026; `meta-check` = 0 razlike;
+u `expenses` postoji po jedan „Meta — {mesec}" red za svaki mesec sa potrošnjom (ponovni sync = 0 novih);
 bez tokena sync tiho vraća „nije podešeno" (kao Resend/VAPID).
+**Test sa korisnikom:** oktobar 2026 — ručno uneti „Reklame" vs automatski red, razlika objašnjena kursom banke.
 
 > **PROMPT ZA SESIJU (M1)**
 > ```
 > Pročitaj CLAUDE.md i docs/Sportem-Plan-Reklame.md (sekcije 0, 1 i korak M1). M0 je urađen.
-> PRVO mi postavi pitanja iz §0.4 i potvrdi odluke D1–D9; tek onda kreni.
-> Uradi SAMO M1: migracija ad_campaigns / ad_insights_daily / ad_sync_state (novac kao integer:
-> spend_minor + fx_rate_micro + spend_rsd snapshot, NIKAD float), RLS select admin+manager,
-> bez write politika, bez logistics, svaki current_app_role() u (select …).
-> lib/meta/client.ts (server-only, token nikad u log/poruku, verzija Graph API-ja u jednoj
-> konstanti — proveri aktuelnu), lib/meta/sync.ts (upsert, poslednjih 7 dana uvek ponovo,
-> nikad ne baca), cron ruta + vercel.json, scripts/meta-check.mjs. Obrazac: modul Ponude
+> Odluke D1–D11 i §0.4 su potvrđene; bez PDV-a (Sportem nije u sistemu PDV-a).
+> Uradi SAMO M1: migracija ad_campaigns / ad_insights_daily / ad_sync_state + expenses.source /
+> source_key (novac kao integer: spend_minor u USD centima + fx_rate_micro + spend_rsd snapshot,
+> NIKAD float), RLS select admin+manager, bez write politika, bez logistics, svaki
+> current_app_role() u (select …). lib/meta/client.ts (server-only, token nikad u log/poruku,
+> verzija Graph API-ja u jednoj konstanti — proveri aktuelnu), lib/meta/fx.ts (srednji kurs NBS
+> preko kurs.resenje.org, D4), lib/meta/sync.ts (upsert, poslednjih 7 dana uvek ponovo, nikad ne
+> baca), lib/meta/expenses.ts (automatski jedan red po mesecu, D5 — ručne ne dira), oznaka u
+> /troskovi, cron ruta + vercel.json, scripts/meta-check.mjs. Obrazac: modul Ponude
 > (lib/offers/*). Dopuni rls:static. NE pokreći db push. lint + tsc + rls:static + build.
 > ```
 > **Ručno posle M1:** `supabase db push`, pa „Sinhronizuj sada" / `node scripts/meta-check.mjs`.
@@ -139,6 +160,9 @@ bez tokena sync tiho vraća „nije podešeno" (kao Resend/VAPID).
 grafikon **dva panela** (potrošnja po danu / Meta kupovine po danu — nikad dve y-ose, odluka iz
 Ponuda) → tabela kampanja (sortiranje, mobilne kartice) → detalj kampanje po danima.
 Svuda natpis „po Meta-i" uz Meta cifre, da se ne mešaju sa sajtom (M3).
+Plus tabela po mesecu **„ručno uneto (Reklame) vs Meta automatski"** + baner „Mogući dupli trošak
+za {mesec}" dok postoje oba (D11) — ovde se radi test oktobra pre brisanja ručnih redova.
+Plus dva push tipa iz §0.4.7 (`ad_sync_failed`, `ad_spend_high`), okidani iz meta-sync crona.
 
 > **PROMPT ZA SESIJU (M2)**
 > ```
@@ -185,17 +209,14 @@ Svuda natpis „po Meta-i" uz Meta cifre, da se ne mešaju sa sajtom (M3).
 ### M4 — Troškovi, Dashboard, asistent
 
 **Fajlovi**
-- `app/(app)/reklame/actions.ts` — `transferMonthToExpenses(month)` (**Admin-only**): jedan red u `expenses` (kategorija „Reklame" po **imenu**, opis „Meta — {mesec}", iznos = Σ `spend_rsd`), sa oznakom izvora (`description` prefiks ili nova kolona — odlučiti; nova kolona = mala migracija); ponovni klik **menja** isti red, ne pravi novi; ručne redove ne dira (otvoreno pitanje 4)
-- `/reklame` — baner „Oktobar: Meta potrošnja X, u troškovima Y" kad se razlikuju
+- Automatski trošak je već u M1 (D5), poređenje ručno/automatski u M2 (D11).
 - `lib/ai/tools/index.ts` — alat **`reklame_pregled`** (period → potrošnja, Meta i sajt cifre po kampanji) + `ai:check` dopuna
 - Dashboard — **ne dira se** u v1 (neto već uključuje troškove; posebna kartica tek ako korisnik traži)
 
 > **PROMPT ZA SESIJU (M4)**
 > ```
 > Pročitaj CLAUDE.md i docs/Sportem-Plan-Reklame.md (korak M4). M1–M3 su gotovi.
-> Uradi SAMO M4 — „Prenesi mesec u troškove" (Admin-only, jedan red po mesecu, kategorija
-> „Reklame" po imenu, ponovni klik menja isti red, ručne redove ne dira), baner o razlici,
-> AI alat reklame_pregled (samo čitanje) + ai:check. computePeriodMetrics NE diraj — troškovi
+> Uradi SAMO M4 — AI alat reklame_pregled (samo čitanje) + ai:check. computePeriodMetrics NE diraj — troškovi
 > ulaze u neto samo kroz expenses. lint + tsc + rls:static + build + npm run ai:check.
 > ```
 

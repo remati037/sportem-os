@@ -1,10 +1,12 @@
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, Paperclip, Plus, Receipt, Tags } from "lucide-react";
+import { ChevronLeft, ChevronRight, Paperclip, Plus, Receipt, Tags, Zap } from "lucide-react";
 
 import { requireRole } from "@/lib/auth";
+import { getMetaSyncState } from "@/db/ads";
 import { listExpenseCategories, listExpenses } from "@/db/expenses";
-import { rsd, datum } from "@/lib/format";
+import { rsd, datum, datumVreme } from "@/lib/format";
 import { todayBelgrade } from "@/lib/date-belgrade";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/patterns/empty-state";
 import {
@@ -25,8 +27,20 @@ import {
 import { CategoryManager } from "./category-manager";
 import { ExpenseActions } from "./expense-actions";
 import { ExpenseDialog } from "./expense-dialog";
+import { MetaSyncButton } from "./meta-sync-button";
+
+/** Oznaka automatskog reda (Meta) — ne menja se ručno, pa nema „⋮" menija. */
+function AutoBadge() {
+  return (
+    <Badge variant="info">
+      <Zap /> Meta · automatski
+    </Badge>
+  );
+}
 
 export const dynamic = "force-dynamic";
+// „Sinhronizuj Meta" (server akcija ove strane) prvi put povlači celu istoriju.
+export const maxDuration = 60;
 
 /*
  * Troškovi (Korak 1.7). Admin unosi/uređuje/briše; Menadžer čita; Logistika
@@ -65,9 +79,10 @@ export default async function TroskoviPage({
   const rawMonth = typeof sp.mesec === "string" ? sp.mesec : "";
   const mesec = MONTH_RE.test(rawMonth) ? rawMonth : todayBelgrade().slice(0, 7);
 
-  const [expenses, categories] = await Promise.all([
+  const [expenses, categories, metaSync] = await Promise.all([
     listExpenses(mesec),
     listExpenseCategories(),
+    getMetaSyncState(),
   ]);
 
   const total = expenses.reduce((sum, e) => sum + e.amount, 0);
@@ -80,7 +95,8 @@ export default async function TroskoviPage({
           <h1 className="text-ink text-xl font-bold">Troškovi</h1>
         </div>
         {isAdmin ? (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <MetaSyncButton />
             <CategoryManager
               categories={categories}
               trigger={
@@ -126,6 +142,19 @@ export default async function TroskoviPage({
             </Link>
           </div>
         </div>
+        {metaSync ? (
+          <div className="border-border mt-3 border-t pt-3 text-xs">
+            <p className="text-ink-faint">
+              Reklame sa Meta-e se upisuju automatski (potrošnja po danu, srednji kurs NBS).{" "}
+              {metaSync.lastSyncedAt
+                ? `Poslednja sinhronizacija: ${datumVreme(metaSync.lastSyncedAt)}.`
+                : "Još nije sinhronizovano."}
+            </p>
+            {metaSync.lastError ? (
+              <p className="text-warning mt-1 break-words">{metaSync.lastError}</p>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       {expenses.length === 0 ? (
@@ -158,8 +187,9 @@ export default async function TroskoviPage({
                       {e.category_name ?? "—"}
                     </TableCell>
                     <TableCell className="text-ink-soft px-4 py-2.5">
-                      <span className="flex items-center gap-1.5">
+                      <span className="flex flex-wrap items-center gap-1.5">
                         {e.description ?? "—"}
+                        {e.source ? <AutoBadge /> : null}
                         {e.attachment_path ? (
                           <Paperclip className="text-ink-faint size-3.5 shrink-0" />
                         ) : null}
@@ -170,7 +200,7 @@ export default async function TroskoviPage({
                     </TableCell>
                     {isAdmin ? (
                       <TableCell className="px-4 py-2.5 text-right">
-                        <ExpenseActions expense={e} categories={categories} />
+                        {e.source ? null : <ExpenseActions expense={e} categories={categories} />}
                       </TableCell>
                     ) : null}
                   </TableRow>
@@ -189,17 +219,20 @@ export default async function TroskoviPage({
                   trailing={
                     <>
                       <span className="num font-semibold">{rsd(e.amount)}</span>
-                      {isAdmin ? <ExpenseActions expense={e} categories={categories} /> : null}
+                      {isAdmin && !e.source ? (
+                        <ExpenseActions expense={e} categories={categories} />
+                      ) : null}
                     </>
                   }
                 />
-                {e.description || e.attachment_path ? (
+                {e.description || e.attachment_path || e.source ? (
                   <div className="mt-3 space-y-1.5">
                     {e.description ? (
                       <MobileCardField label="Opis">
                         <span>{e.description}</span>
                       </MobileCardField>
                     ) : null}
+                    {e.source ? <AutoBadge /> : null}
                     {e.attachment_path ? (
                       <MobileCardField label="Prilog">
                         <span className="text-ink-soft flex items-center gap-1">
