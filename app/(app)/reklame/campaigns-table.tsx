@@ -27,6 +27,9 @@ import {
  * Tabela kampanja sa sortiranjem (podrazumevano potrošnja, opadajuće) —
  * obrazac `ponude/rules-table.tsx`. Klijentska je samo zbog sortiranja; cifre
  * stižu gotove sa servera. Na telefonu kartice, bez horizontalnog skrola.
+ *
+ * Dve vrste cifara: „sajt" (porudžbine i zarada iz app-a, po UTM-u) i „po
+ * Meta-i" (*, piksel). Odlučuje sajt — Meta obično precenjuje.
  */
 
 export type CampaignRowView = {
@@ -34,37 +37,52 @@ export type CampaignRowView = {
   name: string;
   status: string | null;
   spendRsd: number;
-  impressions: number;
   linkClicks: number;
   ctr: number | null;
-  cpc: number | null;
+  /** Realizovane porudžbine sa sajta (bez Otkazano/Vraćeno). */
+  siteOrders: number;
+  siteProfit: number;
+  /** Zarada sa sajta − potrošnja. */
+  net: number;
+  /** Potrošnja / realizovane porudžbine; null bez porudžbina. */
+  costPerOrder: number | null;
+  /** Ima porudžbina bez VP → zarada nepotpuna. */
+  needsVp: boolean;
   purchases: number;
-  costPerPurchase: number | null;
   roas: number | null;
 };
 
 type SortKey =
   | "name"
   | "spendRsd"
-  | "impressions"
   | "linkClicks"
-  | "ctr"
-  | "cpc"
+  | "siteOrders"
+  | "siteProfit"
+  | "net"
+  | "costPerOrder"
   | "purchases"
-  | "costPerPurchase"
   | "roas";
 
 const COLUMNS: { key: SortKey; label: string; numeric: boolean }[] = [
   { key: "name", label: "Kampanja", numeric: false },
   { key: "spendRsd", label: "Potrošnja", numeric: true },
-  { key: "impressions", label: "Prikazi", numeric: true },
   { key: "linkClicks", label: "Klikovi", numeric: true },
-  { key: "ctr", label: "CTR", numeric: true },
-  { key: "cpc", label: "Cena klika", numeric: true },
+  { key: "siteOrders", label: "Porudžbine", numeric: true },
+  { key: "siteProfit", label: "Zarada", numeric: true },
+  { key: "net", label: "Zarada − potrošnja", numeric: true },
+  { key: "costPerOrder", label: "Po porudžbini", numeric: true },
   { key: "purchases", label: "Kupovine*", numeric: true },
-  { key: "costPerPurchase", label: "Po kupovini*", numeric: true },
   { key: "roas", label: "ROAS*", numeric: true },
 ];
+
+function Net({ value }: { value: number }) {
+  return (
+    <span className={value < 0 ? "text-danger" : value > 0 ? "text-success" : undefined}>
+      {value > 0 ? "+" : ""}
+      {rsd(value)}
+    </span>
+  );
+}
 
 export function CampaignsTable({
   rows,
@@ -97,8 +115,8 @@ export function CampaignsTable({
       return;
     }
     setSortKey(key);
-    // nazivi abecedno; cene (manje je bolje) odozdo; ostali brojevi odozgo
-    setAsc(key === "name" || key === "cpc" || key === "costPerPurchase");
+    // nazivi abecedno; cena po porudžbini (manje je bolje) odozdo; ostali brojevi odozgo
+    setAsc(key === "name" || key === "costPerOrder");
   }
 
   const href = (id: string) => `/reklame/${encodeURIComponent(id)}${query ? `?${query}` : ""}`;
@@ -113,7 +131,7 @@ export function CampaignsTable({
               {COLUMNS.map((col) => (
                 <TableHead
                   key={col.key}
-                  className={cn("bg-surface-2 h-9 px-4", col.numeric && "text-right")}
+                  className={cn("bg-surface-2 h-9 px-3", col.numeric && "text-right")}
                 >
                   <button
                     type="button"
@@ -143,7 +161,7 @@ export function CampaignsTable({
               const st = campaignStatus(r.status);
               return (
                 <TableRow key={r.id} className="border-border">
-                  <TableCell className="px-4 py-2.5">
+                  <TableCell className="px-3 py-2.5">
                     <Link
                       href={href(r.id)}
                       className="text-ink hover:text-green font-medium break-words"
@@ -154,20 +172,30 @@ export function CampaignsTable({
                       <Badge variant={st.variant}>{st.label}</Badge>
                     </div>
                   </TableCell>
-                  <TableCell className="num text-ink px-4 py-2.5 text-right font-semibold">
+                  <TableCell className="num text-ink px-3 py-2.5 text-right font-semibold">
                     {rsd(r.spendRsd)}
                   </TableCell>
-                  <TableCell className="num px-4 py-2.5 text-right">{num(r.impressions)}</TableCell>
-                  <TableCell className="num px-4 py-2.5 text-right">{num(r.linkClicks)}</TableCell>
-                  <TableCell className="num px-4 py-2.5 text-right">{pct(r.ctr)}</TableCell>
-                  <TableCell className="num px-4 py-2.5 text-right">
-                    {r.cpc == null ? "—" : rsd(r.cpc)}
+                  <TableCell className="num px-3 py-2.5 text-right">
+                    {num(r.linkClicks)}
+                    <div className="text-ink-faint text-xs">{pct(r.ctr)}</div>
                   </TableCell>
-                  <TableCell className="num px-4 py-2.5 text-right">{num(r.purchases)}</TableCell>
-                  <TableCell className="num px-4 py-2.5 text-right">
-                    {r.costPerPurchase == null ? "—" : rsd(r.costPerPurchase)}
+                  <TableCell className="num px-3 py-2.5 text-right">{num(r.siteOrders)}</TableCell>
+                  <TableCell className="num px-3 py-2.5 text-right">
+                    {rsd(r.siteProfit)}
+                    {r.needsVp ? <span title="Neke porudžbine nemaju VP">*</span> : null}
                   </TableCell>
-                  <TableCell className="num px-4 py-2.5 text-right">{roas(r.roas)}</TableCell>
+                  <TableCell className="num px-3 py-2.5 text-right font-semibold">
+                    <Net value={r.net} />
+                  </TableCell>
+                  <TableCell className="num px-3 py-2.5 text-right">
+                    {r.costPerOrder == null ? "—" : rsd(r.costPerOrder)}
+                  </TableCell>
+                  <TableCell className="num text-ink-soft px-3 py-2.5 text-right">
+                    {num(r.purchases)}
+                  </TableCell>
+                  <TableCell className="num text-ink-soft px-3 py-2.5 text-right">
+                    {roas(r.roas)}
+                  </TableCell>
                 </TableRow>
               );
             })}
@@ -189,24 +217,23 @@ export function CampaignsTable({
                 <MobileCardField label="Potrošnja">
                   <span className="num font-semibold">{rsd(r.spendRsd)}</span>
                 </MobileCardField>
-                <MobileCardField label="Klikovi">
+                <MobileCardField label="Porudžbine (sajt)">
                   <span className="num">
-                    {num(r.linkClicks)} <span className="text-ink-faint">({pct(r.ctr)})</span>
-                  </span>
-                </MobileCardField>
-                <MobileCardField label="Kupovine*">
-                  <span className="num">
-                    {num(r.purchases)}
-                    {r.costPerPurchase != null ? (
-                      <span className="text-ink-faint">
-                        {" "}
-                        · {rsd(r.costPerPurchase)} po kupovini
-                      </span>
+                    {num(r.siteOrders)}
+                    {r.costPerOrder != null ? (
+                      <span className="text-ink-faint"> · {rsd(r.costPerOrder)} po porudžbini</span>
                     ) : null}
                   </span>
                 </MobileCardField>
-                <MobileCardField label="ROAS*">
-                  <span className="num">{roas(r.roas)}</span>
+                <MobileCardField label="Zarada − potrošnja">
+                  <span className="num font-semibold">
+                    <Net value={r.net} />
+                  </span>
+                </MobileCardField>
+                <MobileCardField label="Kupovine* · ROAS*">
+                  <span className="num">
+                    {num(r.purchases)} · {roas(r.roas)}
+                  </span>
                 </MobileCardField>
               </div>
             </MobileCard>

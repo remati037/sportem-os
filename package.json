@@ -18,6 +18,7 @@
     "woo:test": "node --env-file-if-exists=.env.local scripts/woo-webhook-test.mjs",
     "offers:check": "node --env-file-if-exists=.env.local scripts/offers-check.mjs",
     "meta:check": "node --env-file-if-exists=.env.local scripts/meta-check.mjs",
+    "backfill:atribucija": "node --env-file-if-exists=.env.local scripts/woo-attribution-backfill.mjs",
     "ai:check": "npx --yes tsx@4.20.6 --conditions=react-server --env-file-if-exists=.env.local scripts/ai-check.ts",
     "backfill": "node --env-file-if-exists=.env.local scripts/woo-backfill.mjs",
     "backfill:apply": "node --env-file-if-exists=.env.local scripts/woo-backfill.mjs --apply",

@@ -107,7 +107,7 @@ export const wooOrderSchema = z.looseObject({
   billing: wooAddress,
   shipping: wooAddress,
   line_items: z.array(wooLineItem).optional().default([]),
-  /** Order meta (plugin „Sportem Offers" upisuje poklone iz paketa). */
+  /** Order meta (pokloni iz paketa „Sportem Offers" + Woo Order Attribution). */
   meta_data: z
     .array(z.looseObject({ key: z.string().nullish(), value: z.unknown() }))
     .optional()
@@ -155,6 +155,39 @@ export function wooPackageMeta(order: Pick<WooOrder, "meta_data">): {
   return {
     giftText: metaText(find(WOO_META_GIFT_TEXT)),
     freeShipping: metaFlag(find(WOO_META_FREE_SHIPPING)),
+  };
+}
+
+/* ── Atribucija (WooCommerce Order Attribution, plan Reklame M3) ───────── */
+
+const ATTR_PREFIX = "_wc_order_attribution_";
+
+export type WooAttribution = {
+  attr_source_type: string | null;
+  attr_utm_source: string | null;
+  attr_utm_medium: string | null;
+  attr_utm_campaign: string | null;
+  attr_utm_content: string | null;
+  attr_referrer: string | null;
+};
+
+/**
+ * Odakle je kupac došao (`_wc_order_attribution_*` u `meta_data`). Woo upisuje
+ * „(none)" za prazno polje → null. Bez meta polja → sve null (stara porudžbina
+ * ili isključen Order Attribution) — nikad ne baca.
+ */
+export function wooAttribution(order: Pick<WooOrder, "meta_data">): WooAttribution {
+  const find = (key: string) => {
+    const text = metaText(order.meta_data.find((m) => m.key === `${ATTR_PREFIX}${key}`)?.value);
+    return text && text !== "(none)" ? text.slice(0, 500) : null;
+  };
+  return {
+    attr_source_type: find("source_type"),
+    attr_utm_source: find("utm_source"),
+    attr_utm_medium: find("utm_medium"),
+    attr_utm_campaign: find("utm_campaign"),
+    attr_utm_content: find("utm_content"),
+    attr_referrer: find("referrer"),
   };
 }
 

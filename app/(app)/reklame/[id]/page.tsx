@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { requireRole } from "@/lib/auth";
 import { todayBelgrade } from "@/lib/date-belgrade";
 import { resolveRange } from "@/lib/period";
-import { getAdCampaignDetail } from "@/db/ads";
+import { getAdAttribution, getAdCampaignDetail } from "@/db/ads";
 
 import { KampanjaView } from "./kampanja-view";
 
@@ -22,8 +22,19 @@ export default async function KampanjaPage({
   const { id } = await params;
   const period = resolveRange(await searchParams, "30d");
 
-  const detail = await getAdCampaignDetail(decodeURIComponent(id), period.from, period.to);
+  const campaignId = decodeURIComponent(id);
+  const [detail, attribution] = await Promise.all([
+    getAdCampaignDetail(campaignId, period.from, period.to),
+    getAdAttribution(period.from, period.to),
+  ]);
   if (!detail) notFound();
 
-  return <KampanjaView detail={detail} period={period} today={todayBelgrade()} />;
+  return (
+    <KampanjaView
+      detail={detail}
+      site={attribution.byCampaign.get(campaignId) ?? null}
+      period={period}
+      today={todayBelgrade()}
+    />
+  );
 }

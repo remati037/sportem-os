@@ -2,6 +2,8 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { loadSales, sumItems } from "@/db/sales";
+import { rangeToUtcPrefilter } from "@/lib/period";
 import { createClient } from "@/lib/supabase/server";
 import { selectAll } from "@/lib/supabase/paginate";
 
@@ -323,4 +325,125 @@ export async function getAdExpenseComparison(client?: Client): Promise<AdExpense
   }
 
   return [...months.values()].sort((a, b) => b.month.localeCompare(a.month));
+}
+
+/* ── atribucija: šta kaže sajt (plan Reklame, M3) ───────────────────────── */
+
+/**
+ * utm_source koji znači plaćeni Meta oglas. Meta sama dodaje `fb`/`ig`/`th`
+ * (Threads)/`an` (Audience Network)/`msg` (Messenger) uz utm_medium=paid.
+ */
+const META_SOURCES = new Set(["facebook", "fb", "instagram", "ig", "th", "threads", "meta", "an", "msg"]);
+
+export type SiteStats = {
+  /** Sve porudžbine (i otkazane/vraćene) — isto kao kartica „Porudžbine" na Dashboardu. */
+  orders: number;
+  /** Bez Otkazano/Vraćeno. */
+  realized: number;
+  cancelled: number;
+  /** Promet i zarada samo realizovanih, iz ZAMRZNUTIH order_items (§4). */
+  revenue: number;
+  profit: number;
+  /** Realizovane bez VP — zarada im je nepotpuna. */
+  needsVp: number;
+};
+
+export type AdAttribution = {
+  /** Po Meta ID kampanje (poklapanje utm_campaign ↔ ad_campaigns.id, rezerva naziv). */
+  byCampaign: Map<string, SiteStats>;
+  /** Naziv i status svake kampanje naloga (i one bez potrošnje u periodu). */
+  campaignInfo: Map<string, CampaignRow>;
+  /** Meta oglas (utm_source facebook/instagram…) bez prepoznate kampanje. */
+  metaUnknown: SiteStats;
+  /** Drugi izvori: organski, direktno, preporuka, drugi UTM. */
+  other: SiteStats;
+  /** Porudžbine bez ikakve atribucije (starije od Order Attribution ili ručne). */
+  none: SiteStats;
+  total: SiteStats;
+};
+
+function emptySite(): SiteStats {
+  return { orders: 0, realized: 0, cancelled: 0, revenue: 0, profit: 0, needsVp: 0 };
+}
+
+type AttrRow = {
+  id: string;
+  attr_source_type: string | null;
+  attr_utm_source: string | null;
+  attr_utm_campaign: string | null;
+};
+
+/**
+ * Porudžbine perioda raspoređene po izvoru. Isti učitavač i pravila kao
+ * Dashboard (`loadSales`: `ordered_at` u beogradskim danima, Otkazano/Vraćeno po
+ * IMENU, novac iz zamrznutih stavki) → Σ zarade svih korpi = zarada Dashboarda.
+ * Kampanja se prepoznaje po ID-u (utm_campaign={{campaign.id}}), rezerva naziv.
+ */
+export async function getAdAttribution(
+  from: string,
+  to: string,
+  client?: Client,
+): Promise<AdAttribution> {
+  const supabase = await clientOr(client);
+  const { gteUtc, ltUtc } = rangeToUtcPrefilter(from, to);
+
+  const [campaigns, sales, attrRows] = await Promise.all([
+    loadCampaigns(supabase),
+    loadSales(supabase, from, to),
+    selectAll<AttrRow>("atribucija porudžbina", () =>
+      supabase
+        .from("orders")
+        .select("id, attr_source_type, attr_utm_source, attr_utm_campaign")
+        .not("ordered_at", "is", null)
+        .gte("ordered_at", gteUtc)
+        .lt("ordered_at", ltUtc)
+        .order("id", { ascending: true }),
+    ),
+  ]);
+
+  const attrById = new Map(attrRows.map((r) => [r.id, r]));
+  const ids = new Set(campaigns.map((c) => c.id));
+  const byName = new Map(campaigns.map((c) => [c.name.trim().toLowerCase(), c.id]));
+
+  const out: AdAttribution = {
+    byCampaign: new Map(),
+    campaignInfo: new Map(campaigns.map((c) => [c.id, c])),
+    metaUnknown: emptySite(),
+    other: emptySite(),
+    none: emptySite(),
+    total: emptySite(),
+  };
+
+  for (const o of sales.orders) {
+    const a = attrById.get(o.id);
+    const campaign = a?.attr_utm_campaign?.trim() ?? "";
+    const campaignId = ids.has(campaign) ? campaign : byName.get(campaign.toLowerCase());
+
+    let bucket: SiteStats;
+    if (campaignId) {
+      bucket = out.byCampaign.get(campaignId) ?? emptySite();
+      out.byCampaign.set(campaignId, bucket);
+    } else if (META_SOURCES.has((a?.attr_utm_source ?? "").trim().toLowerCase())) {
+      bucket = out.metaUnknown;
+    } else if (a?.attr_source_type || a?.attr_utm_source) {
+      bucket = out.other;
+    } else {
+      bucket = out.none;
+    }
+
+    for (const b of [bucket, out.total]) {
+      b.orders++;
+      if (o.cancelled) {
+        b.cancelled++;
+        continue;
+      }
+      const { revenue, profit } = sumItems(o.items);
+      b.realized++;
+      b.revenue += revenue;
+      b.profit += profit;
+      if (o.needs_vp) b.needsVp++;
+    }
+  }
+
+  return out;
 }

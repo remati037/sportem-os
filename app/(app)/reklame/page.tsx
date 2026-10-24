@@ -1,7 +1,12 @@
 import { requireRole } from "@/lib/auth";
 import { todayBelgrade } from "@/lib/date-belgrade";
 import { resolveRange } from "@/lib/period";
-import { getAdExpenseComparison, getAdsOverview, getMetaSyncState } from "@/db/ads";
+import {
+  getAdAttribution,
+  getAdExpenseComparison,
+  getAdsOverview,
+  getMetaSyncState,
+} from "@/db/ads";
 
 import { ReklameView } from "./reklame-view";
 
@@ -23,8 +28,9 @@ export default async function ReklamePage({
   const sp = await searchParams;
   const period = resolveRange(sp, "30d");
 
-  const [overview, months, syncState] = await Promise.all([
+  const [overview, attribution, months, syncState] = await Promise.all([
     getAdsOverview(period.from, period.to),
+    getAdAttribution(period.from, period.to),
     getAdExpenseComparison(),
     getMetaSyncState(),
   ]);
@@ -32,6 +38,7 @@ export default async function ReklamePage({
   return (
     <ReklameView
       overview={overview}
+      attribution={attribution}
       months={months}
       syncState={syncState}
       period={period}

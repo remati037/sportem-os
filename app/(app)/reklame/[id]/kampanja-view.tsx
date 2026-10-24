@@ -4,7 +4,7 @@ import { ChevronLeft } from "lucide-react";
 import { datum, num, rsd } from "@/lib/format";
 import { campaignStatus, daysBetween, pct, roas, usd } from "@/lib/meta/labels";
 import type { RangePeriod } from "@/lib/period";
-import { cpcRsd, ctrPct, metaRoas, type AdCampaignDetail } from "@/db/ads";
+import { ctrPct, metaRoas, type AdCampaignDetail, type SiteStats } from "@/db/ads";
 import { DailyBars } from "@/components/charts/daily-bars";
 import { EmptyState } from "@/components/patterns/empty-state";
 import { RangeFilter } from "@/components/patterns/range-filter";
@@ -41,15 +41,20 @@ function Kpi({ label, value, hint }: { label: string; value: string; hint?: stri
 
 export function KampanjaView({
   detail,
+  site,
   period,
   today,
 }: {
   detail: AdCampaignDetail;
+  /** Porudžbine sa sajta pripisane ovoj kampanji (UTM), null kad ih nema. */
+  site: SiteStats | null;
   period: RangePeriod;
   today: string;
 }) {
   const { campaign, totals, days: rows } = detail;
   const st = campaignStatus(campaign.status);
+  const siteOrders = site?.realized ?? 0;
+  const net = (site?.profit ?? 0) - totals.spendRsd;
 
   const days = daysBetween(period.from, period.to < today ? period.to : today);
   const byDay = new Map(rows.map((r) => [r.date, r]));
@@ -75,20 +80,32 @@ export function KampanjaView({
         basePath={`/reklame/${encodeURIComponent(campaign.id)}`}
       />
 
-      {rows.length === 0 ? (
+      {rows.length === 0 && siteOrders === 0 ? (
         <EmptyState title="Nema potrošnje u periodu." description="Izaberi drugi period." />
       ) : (
         <>
           <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Kpi label="Potrošnja" value={rsd(totals.spendRsd)} hint={usd(totals.spendMinor)} />
             <Kpi
-              label="Klikovi na link"
-              value={num(totals.linkClicks)}
-              hint={`CTR ${pct(ctrPct(totals))} · ${num(totals.impressions)} prikaza`}
+              label="Potrošnja"
+              value={rsd(totals.spendRsd)}
+              hint={`${usd(totals.spendMinor)} · ${num(totals.linkClicks)} klikova (CTR ${pct(ctrPct(totals))})`}
             />
-            <Kpi label="Cena klika" value={cpcRsd(totals) == null ? "—" : rsd(cpcRsd(totals)!)} />
             <Kpi
-              label="Kupovine po Meta-i"
+              label="Porudžbine (sajt)"
+              value={num(siteOrders)}
+              hint={
+                siteOrders > 0
+                  ? `${rsd(Math.round(totals.spendRsd / siteOrders))} po porudžbini`
+                  : "po UTM-u iz linka oglasa"
+              }
+            />
+            <Kpi
+              label="Zarada − potrošnja"
+              value={`${net > 0 ? "+" : ""}${rsd(net)}`}
+              hint={`zarada sa sajta ${rsd(site?.profit ?? 0)}${site?.needsVp ? " (nepotpuna — nema VP)" : ""}`}
+            />
+            <Kpi
+              label="Kupovine po Meta-i*"
               value={num(totals.metaPurchases)}
               hint={`ROAS ${roas(metaRoas(totals))}`}
             />

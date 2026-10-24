@@ -43,6 +43,8 @@ const WOO_ID_B = 990002; // nepoznat SKU
 const WOO_ID_C = 990003; // otkazivanje na plaćenoj
 const WOO_ID_D = 990004; // paket sa poklonima na prvom prijemu
 const WOO_ID_E = 990005; // pokloni stigli tek sa order.updated
+const WOO_ID_F = 990006; // atribucija na prvom prijemu (Reklame M3)
+const WOO_ID_G = 990007; // atribucija stigla tek sa order.updated
 const TEST_PHONE = "0699990001";
 // Drugi kupac za poklone — da ga ne poveže „rizičan kupac" sa otkazanom A.
 const GIFT_PHONE = "0699990002";
@@ -64,7 +66,8 @@ async function post(payload, { badSignature = false, noSignature = false } = {})
     "x-wc-webhook-topic": "order.created",
   };
   // noSignature = Woo ping / napad bez potpisa; badSignature = pogrešan potpis.
-  if (!noSignature) headers["x-wc-webhook-signature"] = badSignature ? sign(`${body}x`) : sign(body);
+  if (!noSignature)
+    headers["x-wc-webhook-signature"] = badSignature ? sign(`${body}x`) : sign(body);
   const res = await fetch(`${APP_URL}/api/webhooks/woo`, {
     method: "POST",
     headers,
@@ -107,7 +110,7 @@ async function getOrder(wooId) {
   const { data } = await db
     .from("orders")
     .select(
-      "id, needs_vp, needs_review, review_reason, woo_status, cancelled_at, gift_text, free_shipping, goods_total, shipping_charged, cod_amount, customer_id, payment_status, stock_applied, order_statuses(name), order_items(sku, quantity, mp_at_sale, vp_at_sale, profit_at_sale, variant_id)",
+      "id, needs_vp, needs_review, review_reason, woo_status, cancelled_at, gift_text, free_shipping, attr_source_type, attr_utm_source, attr_utm_medium, attr_utm_campaign, goods_total, shipping_charged, cod_amount, customer_id, payment_status, stock_applied, order_statuses(name), order_items(sku, quantity, mp_at_sale, vp_at_sale, profit_at_sale, variant_id)",
     )
     .eq("woo_order_id", wooId)
     .maybeSingle();
@@ -128,7 +131,7 @@ async function cleanup() {
   await db
     .from("orders")
     .delete()
-    .in("woo_order_id", [WOO_ID_A, WOO_ID_B, WOO_ID_C, WOO_ID_D, WOO_ID_E]);
+    .in("woo_order_id", [WOO_ID_A, WOO_ID_B, WOO_ID_C, WOO_ID_D, WOO_ID_E, WOO_ID_F, WOO_ID_G]);
   await db.from("customers").delete().in("phone", [TEST_PHONE, GIFT_PHONE]);
 }
 
@@ -239,7 +242,10 @@ async function main() {
   check("JSON ping", (await post({ webhook_id: 42 })) === 200);
 
   console.log("\n7b) NEPOTPISAN ping → 200 (Woo deliver_ping ne šalje potpis)");
-  check("form-encoded ping bez potpisa", (await post("webhook_id=42", { noSignature: true })) === 200);
+  check(
+    "form-encoded ping bez potpisa",
+    (await post("webhook_id=42", { noSignature: true })) === 200,
+  );
   check("JSON ping bez potpisa", (await post({ webhook_id: 42 }, { noSignature: true })) === 200);
   check(
     "nepotpisana PRAVA porudžbina → 401",
@@ -266,8 +272,9 @@ async function main() {
   const gPhone = "+381 69/999-0002";
   check(
     "HTTP 200 (paket)",
-    (await post(makeOrder({ id: WOO_ID_D, sku: "NE-POSTOJI-XYZ", phone: gPhone, meta: giftMeta }))) ===
-      200,
+    (await post(
+      makeOrder({ id: WOO_ID_D, sku: "NE-POSTOJI-XYZ", phone: gPhone, meta: giftMeta }),
+    )) === 200,
   );
   let d = await getOrder(WOO_ID_D);
   check("gift_text snimljen", d?.gift_text === GIFT, JSON.stringify(d?.gift_text));
@@ -308,6 +315,66 @@ async function main() {
   check(
     "prazan poklon dopunjen na update-u (niz → redovi)",
     (await getOrder(WOO_ID_E))?.gift_text === "Poklon: Čarape\nPoklon: Flašica",
+  );
+
+  console.log("\n10) Atribucija (Woo Order Attribution) — snapshot");
+  const attrMeta = (source, campaign) => [
+    { key: "_wc_order_attribution_source_type", value: "utm" },
+    { key: "_wc_order_attribution_utm_source", value: source },
+    { key: "_wc_order_attribution_utm_medium", value: "(none)" },
+    { key: "_wc_order_attribution_utm_campaign", value: campaign },
+  ];
+  const aPhone = "+381 69/999-0003";
+  check(
+    "HTTP 200 (sa atribucijom)",
+    (await post(
+      makeOrder({
+        id: WOO_ID_F,
+        sku: "NE-POSTOJI-XYZ",
+        phone: aPhone,
+        meta: attrMeta("ig", "120252079699270136"),
+      }),
+    )) === 200,
+  );
+  let f = await getOrder(WOO_ID_F);
+  check("utm_source snimljen", f?.attr_utm_source === "ig", JSON.stringify(f?.attr_utm_source));
+  check("utm_campaign = ID kampanje", f?.attr_utm_campaign === "120252079699270136");
+  check("„(none)“ → null", f?.attr_utm_medium === null);
+  check("source_type snimljen", f?.attr_source_type === "utm");
+  check(
+    "HTTP 200 (update sa drugom atribucijom)",
+    (await post(
+      makeOrder({
+        id: WOO_ID_F,
+        sku: "NE-POSTOJI-XYZ",
+        phone: aPhone,
+        meta: attrMeta("fb", "PREPISANO"),
+      }),
+    )) === 200,
+  );
+  f = await getOrder(WOO_ID_F);
+  check("order.updated NE prepisuje atribuciju", f?.attr_utm_campaign === "120252079699270136");
+
+  check(
+    "HTTP 200 (bez atribucije)",
+    (await post(makeOrder({ id: WOO_ID_G, sku: "NE-POSTOJI-XYZ", phone: aPhone }))) === 200,
+  );
+  check("bez meta → atribucija null", (await getOrder(WOO_ID_G))?.attr_source_type === null);
+  check(
+    "HTTP 200 (atribucija stigla sa update-om)",
+    (await post(
+      makeOrder({
+        id: WOO_ID_G,
+        sku: "NE-POSTOJI-XYZ",
+        phone: aPhone,
+        meta: attrMeta("fb", "777"),
+      }),
+    )) === 200,
+  );
+  const g = await getOrder(WOO_ID_G);
+  check(
+    "prazna atribucija dopunjena na update-u",
+    g?.attr_utm_source === "fb" && g?.attr_utm_campaign === "777",
   );
 
   await cleanup();

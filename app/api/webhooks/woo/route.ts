@@ -18,6 +18,7 @@ import {
   parseRsd,
   verifyWooSignature,
   wooOrderSchema,
+  wooAttribution,
   wooPackageMeta,
   type WooOrder,
 } from "@/lib/woo";
@@ -99,7 +100,8 @@ export async function POST(request: Request) {
   }
 }
 
-const EXISTING_COLUMNS = "id, status_id, invoice_id, payment_status, cancelled_at, gift_text";
+const EXISTING_COLUMNS =
+  "id, status_id, invoice_id, payment_status, cancelled_at, gift_text, attr_source_type";
 
 type ExistingOrder = {
   id: string;
@@ -108,6 +110,7 @@ type ExistingOrder = {
   payment_status: string;
   cancelled_at: string | null;
   gift_text: string | null;
+  attr_source_type: string | null;
 };
 
 /** ID statusa iz lookup tabele po imenu (nikad hardkodovan UUID). */
@@ -228,6 +231,8 @@ async function insertOrder(
       ship_note: order.customer_note?.trim() || null,
       gift_text: pkg.giftText,
       free_shipping: pkg.freeShipping,
+      // Odakle je kupac došao (Woo Order Attribution) — snapshot, kao adresa.
+      ...wooAttribution(order),
       goods_total: goodsTotal,
       shipping_charged: parseRsd(order.shipping_total),
       cod_amount: isCod ? total : null,
@@ -331,6 +336,11 @@ async function syncExistingOrder(
       patch.gift_text = pkg.giftText;
       patch.free_shipping = pkg.freeShipping;
     }
+  }
+  // Atribucija: isto pravilo kao pokloni — samo dopuna dok je prazna.
+  if (existing.attr_source_type == null) {
+    const attr = wooAttribution(order);
+    if (Object.values(attr).some((v) => v != null)) Object.assign(patch, attr);
   }
   // Otkazano/vraćeno u Woo-u → roba se vraća na stanje (posle uspešnog update-a).
   let releaseStock = false;

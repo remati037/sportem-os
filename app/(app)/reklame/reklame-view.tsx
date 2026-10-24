@@ -6,9 +6,9 @@ import { daysBetween, pct, roas, usd } from "@/lib/meta/labels";
 import type { RangePeriod } from "@/lib/period";
 import {
   costPerPurchaseRsd,
-  cpcRsd,
   ctrPct,
   metaRoas,
+  type AdAttribution,
   type AdExpenseMonth,
   type AdsOverview,
   type MetaSyncState,
@@ -141,8 +141,79 @@ function ExpenseComparison({ months }: { months: AdExpenseMonth[] }) {
   );
 }
 
+/** Odakle su porudžbine perioda — zbir = Dashboard za isti period. */
+function SourcesTable({ attribution }: { attribution: AdAttribution }) {
+  const campaigns = [...attribution.byCampaign.values()].reduce(
+    (a, b) => ({
+      orders: a.orders + b.orders,
+      realized: a.realized + b.realized,
+      cancelled: a.cancelled + b.cancelled,
+      revenue: a.revenue + b.revenue,
+      profit: a.profit + b.profit,
+      needsVp: a.needsVp + b.needsVp,
+    }),
+    { orders: 0, realized: 0, cancelled: 0, revenue: 0, profit: 0, needsVp: 0 },
+  );
+  const lines = [
+    { label: "Meta oglasi — prepoznata kampanja", s: campaigns },
+    { label: "Meta oglas — kampanja nije prepoznata", s: attribution.metaUnknown },
+    { label: "Ostali izvori (organski, direktno, preporuka…)", s: attribution.other },
+    { label: "Bez podatka o izvoru", s: attribution.none },
+  ];
+
+  return (
+    <section className="mt-10">
+      <h2 className="text-ink mb-1 text-base font-semibold">Odakle su porudžbine</h2>
+      <p className="text-ink-faint mb-4 text-xs">
+        Sve porudžbine perioda po izvoru posete. Ukupna zarada je ista kao na Dashboardu za isti
+        period.
+      </p>
+      <div className="border-border bg-surface shadow-soft overflow-x-auto rounded-lg border">
+        <table className="w-full text-xs sm:text-sm">
+          <thead>
+            <tr className="bg-surface-2 text-ink-soft text-left">
+              <th className="eyebrow h-9 px-3 sm:px-4">Izvor</th>
+              <th className="eyebrow h-9 px-3 text-right sm:px-4">Porudžbine</th>
+              <th className="eyebrow hidden h-9 px-3 text-right sm:table-cell sm:px-4">Promet</th>
+              <th className="eyebrow h-9 px-3 text-right sm:px-4">Zarada</th>
+            </tr>
+          </thead>
+          <tbody>
+            {[...lines, { label: "Ukupno", s: attribution.total }].map(({ label, s: st }) => (
+              <tr
+                key={label}
+                className={
+                  "border-border border-t " + (label === "Ukupno" ? "text-ink font-semibold" : "")
+                }
+              >
+                <td className="text-ink px-3 py-2.5 sm:px-4">{label}</td>
+                <td className="num px-3 py-2.5 text-right whitespace-nowrap sm:px-4">
+                  {num(st.realized)}
+                  {st.cancelled > 0 ? (
+                    <div className="text-ink-faint text-xs font-normal">
+                      + {num(st.cancelled)} otk./vrać.
+                    </div>
+                  ) : null}
+                </td>
+                <td className="num hidden px-3 py-2.5 text-right whitespace-nowrap sm:table-cell sm:px-4">
+                  {rsd(st.revenue)}
+                </td>
+                <td className="num px-3 py-2.5 text-right whitespace-nowrap sm:px-4">
+                  {rsd(st.profit)}
+                  {st.needsVp > 0 ? <span title="Neke porudžbine nemaju VP">*</span> : null}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 export function ReklameView({
   overview,
+  attribution,
   months,
   syncState,
   period,
@@ -150,6 +221,7 @@ export function ReklameView({
   isAdmin,
 }: {
   overview: AdsOverview;
+  attribution: AdAttribution;
   months: AdExpenseMonth[];
   syncState: MetaSyncState | null;
   period: RangePeriod;
@@ -158,19 +230,40 @@ export function ReklameView({
 }) {
   const { totals, campaigns, daily } = overview;
 
-  const rows: CampaignRowView[] = campaigns.map((c) => ({
-    id: c.id,
-    name: c.name,
-    status: c.status,
-    spendRsd: c.spendRsd,
-    impressions: c.impressions,
-    linkClicks: c.linkClicks,
-    ctr: ctrPct(c),
-    cpc: cpcRsd(c),
-    purchases: c.metaPurchases,
-    costPerPurchase: costPerPurchaseRsd(c),
-    roas: metaRoas(c),
-  }));
+  // Kampanje sa potrošnjom u periodu + kampanje koje su donele porudžbine i bez
+  // potrošnje u periodu (klik ranije, kupovina sada).
+  const bySpend = new Map(campaigns.map((c) => [c.id, c]));
+  const campaignIds = new Set([...bySpend.keys(), ...attribution.byCampaign.keys()]);
+  const rows: CampaignRowView[] = [...campaignIds].map((id) => {
+    const c = bySpend.get(id);
+    const site = attribution.byCampaign.get(id);
+    const info = attribution.campaignInfo.get(id);
+    const spendRsd = c?.spendRsd ?? 0;
+    const siteOrders = site?.realized ?? 0;
+    const siteProfit = site?.profit ?? 0;
+    return {
+      id,
+      name: c?.name ?? info?.name ?? id,
+      status: c?.status ?? info?.status ?? null,
+      spendRsd,
+      linkClicks: c?.linkClicks ?? 0,
+      ctr: c ? ctrPct(c) : null,
+      siteOrders,
+      siteProfit,
+      net: siteProfit - spendRsd,
+      costPerOrder: siteOrders > 0 ? Math.round(spendRsd / siteOrders) : null,
+      needsVp: (site?.needsVp ?? 0) > 0,
+      purchases: c?.metaPurchases ?? 0,
+      roas: c ? metaRoas(c) : null,
+    };
+  });
+
+  // Porudžbine sa Meta oglasa = prepoznate kampanje + Meta bez prepoznate kampanje.
+  const fromAds = [...attribution.byCampaign.values(), attribution.metaUnknown].reduce(
+    (a, b) => ({ realized: a.realized + b.realized, profit: a.profit + b.profit }),
+    { realized: 0, profit: 0 },
+  );
+  const adsNet = fromAds.profit - totals.spendRsd;
 
   // Grafikon: svaki dan perioda (i bez potrošnje), ali ne posle danas.
   const days = daysBetween(period.from, period.to < today ? period.to : today);
@@ -221,16 +314,24 @@ export function ReklameView({
             <Kpi
               label="Potrošnja"
               value={rsd(totals.spendRsd)}
-              hint={`${usd(totals.spendMinor)} · kurs NBS po danu`}
+              hint={`${usd(totals.spendMinor)} · ${num(totals.linkClicks)} klikova (CTR ${pct(ctrPct(totals))})`}
             />
             <Kpi
-              label="Klikovi na link"
-              value={num(totals.linkClicks)}
-              hint={`CTR ${pct(ctrPct(totals))} · ${num(totals.impressions)} prikaza`}
+              label="Porudžbine sa oglasa"
+              value={num(fromAds.realized)}
+              hint={
+                fromAds.realized > 0
+                  ? `sajt · ${rsd(Math.round(totals.spendRsd / fromAds.realized))} po porudžbini`
+                  : "sajt · po UTM-u"
+              }
             />
-            <Kpi label="Cena klika" value={cpcRsd(totals) == null ? "—" : rsd(cpcRsd(totals)!)} />
             <Kpi
-              label="Kupovine po Meta-i"
+              label="Zarada − potrošnja"
+              value={`${adsNet > 0 ? "+" : ""}${rsd(adsNet)}`}
+              hint={`zarada sa oglasa ${rsd(fromAds.profit)}`}
+            />
+            <Kpi
+              label="Kupovine po Meta-i*"
               value={num(totals.metaPurchases)}
               hint={`ROAS ${roas(metaRoas(totals))}${costPerPurchaseRsd(totals) != null ? ` · ${rsd(costPerPurchaseRsd(totals)!)} po kupovini` : ""}`}
             />
@@ -269,7 +370,7 @@ export function ReklameView({
           {rows.length === 0 ? (
             <EmptyState
               icon={<Target />}
-              title="Nema potrošnje u periodu."
+              title="Nema potrošnje ni porudžbina sa oglasa u periodu."
               description="Izaberi drugi period."
             />
           ) : (
@@ -277,10 +378,14 @@ export function ReklameView({
           )}
 
           <p className="text-ink-faint mt-4 text-xs">
-            * Po Meta-i: kupovine beleži Meta piksel po svom modelu pripisivanja i obično ih
-            precenjuje. Stvarne porudžbine i zarada po kampanji (preko UTM-a sa sajta) dolaze
-            sledeće.
+            „Porudžbine“ i „Zarada“ su sa sajta: porudžbina se pripisuje kampanji po UTM-u iz linka
+            oglasa (WooCommerce beleži odakle je kupac došao), bez otkazanih i vraćenih, zarada iz
+            zamrznutih cena. Meta sama dodaje UTM sa ID-jem kampanje u linkove oglasa, pa se
+            kampanje prepoznaju od februara. * Po Meta-i: kupovine beleži Meta piksel po svom
+            modelu i obično ih precenjuje.
           </p>
+
+          <SourcesTable attribution={attribution} />
         </>
       )}
 
