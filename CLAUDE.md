@@ -16,7 +16,7 @@ Vlasnici: **korisnik (Admin)** i **brat (Menadžer)**. **Drug (Logistika)** je d
   za važeće odluke gleda se §3 ovog fajla, ne plan (plan još tvrdi „Email nije u Fazi 1", što više ne važi).
 - `docs/Sportem-Dizajn-Sistem.md` — dizajn tokeni, boje, tipografija, komponente. Izvor istine za UI (Korak 0.2/0.3).
 - `docs/Sportem-Plan-Izvestaji.md` — **živi plan**: modul Izveštaji / Izvoz, faze R0–R8. Bez migracije.
-- `docs/Sportem-Plan-Nabavka.md` (N1–N4), `docs/Sportem-Plan-Reklame.md` (M0–M5) — **nacrti** za „Uskoro" stavke iz navigacije (Kupci je urađen — plan u `docs/arhiva/2026-10-18-Plan-Kupci.md`; Računica je urađena — plan u `docs/arhiva/2026-10-22-Plan-Racunica.md`); odluke u njihovom §0 su PREDLOG i potvrđuju se na početku prvog koraka.
+- `docs/Sportem-Plan-Nabavka.md` (N1–N4) — **nacrt** za „Uskoro" stavku iz navigacije (Kupci je urađen — plan u `docs/arhiva/2026-10-18-Plan-Kupci.md`; Računica — `docs/arhiva/2026-10-22-Plan-Racunica.md`; Reklame — `docs/arhiva/2026-10-25-Plan-Reklame.md`); odluke u njegovom §0 su PREDLOG i potvrđuju se na početku prvog koraka.
 - `docs/backlog.md` — šta je još otvoreno (P0/P1/P2), provereno nad kodom 22.09.2026.
 
 ---
@@ -46,8 +46,8 @@ Vlasnici: **korisnik (Admin)** i **brat (Menadžer)**. **Drug (Logistika)** je d
 - Svaki proizvod ima bar jednu varijantu (i bez pravih varijanti — „default" varijanta); porudžbina uvek gađa varijantu **po SKU**.
 - Poštarina/težina/broj paketa se popunjavaju na koraku **„Poslato"**, ne na kreiranju.
 - **Faktura drugu = automatski izračunata cifra + spisak porudžbina/stavki u app-u. Bez PDF fakture.** (PDF postoji samo za listu za slanje — Korak 1.5.)
-- Troškovi ne diraju fakturu; reklame se unose zbirno i ručno; bez ponavljajućih troškova.
-- XExpress API **nije u Fazi 1.** (Auto-decrement inventara je naknadno uveden — v. §10. **Meta Ads integracija postoji od 24.10.2026, SAMO ČITANJE** — v. §10 „Korak M1"; ranije „Meta nije u Fazi 1".)
+- Troškovi ne diraju fakturu; bez ponavljajućih troškova. **Meta reklame upisuje sinhronizacija automatski** (jedan red po mesecu — v. „Reklame"); ostale reklame se unose ručno.
+- XExpress API **nije u Fazi 1.** (Auto-decrement inventara je naknadno uveden — v. §10. **Meta Ads integracija postoji od 24.10.2026, SAMO ČITANJE** — v. „Reklame — zaključane odluke" ispod; ranije „Meta nije u Fazi 1".)
 - **Auth: Supabase Auth** — 3 fiksna interna korisnika + 1 vendor, bez javne registracije, native RLS.
 
 ### Tiketi (kanban) — zaključane odluke
@@ -119,6 +119,21 @@ Vlasnici: **korisnik (Admin)** i **brat (Menadžer)**. **Drug (Logistika)** je d
 - **AI:** alat `isplativost_artikala` (samo čita, iste cifre kao strana) + „Pitaj asistenta" (samo pred-popuni) + „Analiziraj" na klik (nikad automatski) kroz postojeću chat rutu — razgovor ostaje u Asistentu i ulazi u mesečni limit.
 - **Van opsega v1:** troškovi/poštarina/reklame po artiklu, upis cene iz kalkulatora, prag po kategoriji, sezonska prognoza, cenovna elastičnost, chat panel u strani, automatski AI sažeci, pristup za Logistiku.
 - **Modul NE dira:** zamrznute cene i `order_items`, katalog (cene, stanje), finansije, RLS, tok statusa, webhook, `syncOrderStock`.
+
+### Reklame (`/reklame`) — zaključane odluke
+
+> Modul „Reklame" (`docs/arhiva/2026-10-25-Plan-Reklame.md`, koraci M0–M5 — **sve urađeno**). Implementacione
+> beleške su u §10 („Korak M1"…„Korak M5").
+
+- **Meta Ads, SAMO ČITANJE** (`ads_read`, System User token bez isteka, Graph API verzija u jednoj konstanti `GRAPH_API_VERSION`). App nikad ne pravi, pauzira ni menja kampanje. Token isključivo na serveru (`lib/meta/client.ts`), nikad u log, poruku greške ni klijentu.
+- **Pristup: SAMO Admin i Menadžer** (potrošnja i zarada su finansije). Logistika nema stavku, rutu (`requireRole`) ni nijednu politiku na `ad_*`/`fx_rates`. **Nijedna write politika** — piše isključivo service role (cron + „Sinhronizuj Meta", koje sme samo Admin jer piše u `expenses`).
+- **Novac bez float-a:** nalog je u USD → `spend_minor` u centima; RSD = centi × **srednji kurs NBS na dan potrošnje** (`kurs.resenje.org`, vikend = poslednja lista), kurs je snapshot uz red. **Bez PDV-a** (Sportem nije u sistemu PDV-a).
+- **Trošak = potrošnja po danu (Insights), NE naplate kartice kod praga.** Sinhronizacija pravi/menja **tačno jedan** red „Meta — {mesec}" u `expenses` (`source='meta'`, `source_key='meta:YYYY-MM'`, kategorija „Reklame" po imenu). Taj red se ne menja ni ne briše ručno (server odbija); **ručne troškove app nikad ne dira**. Mesec sa danom bez kursa se ne upisuje (ostaje stara cifra). Razlika od izvoda (kurs banke, provizija) je prihvaćena.
+- **Sinhronizacija:** dnevni cron + dugme; prvi put od 01.02.2026, posle poslednjih 7 dana + danas (Meta koriguje unazad). Nikad ne baca — greška u `ad_sync_state.last_error`. Push `ad_sync_failed` i `ad_spend_high` (prag `META_DAILY_SPEND_ALERT_RSD`), samo iz crona, Admin + Menadžer.
+- **Atribucija:** izvor posete iz WooCommerce Order Attribution (`orders.attr_*`) — snapshot sa prvog webhooka, `order.updated` samo dopunjuje prazno. Kampanja po `utm_campaign` = **Meta ID kampanje** (Meta ga sama dodaje), rezerva naziv. **Odluka se donosi na „sajt" ciframa** (porudžbine i zarada iz ZAMRZNUTIH `order_items`, bez Otkazano/Vraćeno po imenu, poslednji klik); Meta kupovine/ROAS su samo Meta-ina procena (`*`). **Σ zarade svih izvora = Dashboard** (dokaz `npm run ai:check`, `meta:check`).
+- **AI alat `reklame_pregled`** samo čita, iste cifre kao `/reklame` (`buildCampaignRows`/`adsSiteTotals` — jedan izvor).
+- **Van opsega v1:** upravljanje kampanjama iz app-a, Google/TikTok reklame, nivo oglasa i ad seta (samo kampanja), Meta Conversions API, publike iz kupaca, naplate kartice/izvod, reklame po artiklu (u Računici), pristup za Logistiku.
+- **Modul NE dira:** zamrznute cene i `order_items`, fakture/uplate/poštarinu, `computePeriodMetrics` (trošak ulazi u neto kroz `expenses`), tok statusa, `syncOrderStock`, RLS postojećih tabela.
 
 ## 4. Centralni princip: zamrznute cene (snapshot) — NE DIRATI bez potvrde
 
@@ -692,7 +707,7 @@ npm run icons          # regeneriši PWA ikonice
 - **Brzina `/racunica`: 1.696 ms → 228–289 ms** (medijana, service-role). (1) `loadSales` (`db/sales.ts`) čita `.in(200)` parčad **paralelno** (dobijaju i AI alati i Dashboard grafikoni; pravila nedirana). (2) Nov **`loadSalesWide`** za celu istoriju: statusi + porudžbine + stavke cele tabele kroz `selectAllByIdShards` istovremeno; zajednička pravila (`toOrders`: Beograd dan, Otkazano/Vraćeno po imenu) su u jednoj funkciji. `getRacunica` koristi `loadSalesWide`. Posle izmene `provera:racunica` i `ai:check` PASS.
 - `npm run perf`: nova sonda `racunica`, sonda `dashboard` usklađena sa paralelnim parčadima. Snimak `docs/perf/2026-10-22-perf-racunica.txt`.
 
-**Korak M1 — Reklame: Meta Ads potrošnja + automatski trošak (plan `docs/Sportem-Plan-Reklame.md`, potvrđeno sa korisnikom 24.10.2026):**
+**Korak M1 — Reklame: Meta Ads potrošnja + automatski trošak (plan `docs/arhiva/2026-10-25-Plan-Reklame.md`, potvrđeno sa korisnikom 24.10.2026):**
 - **PROMENJENE ODLUKE:** „Meta integracija nije u Fazi 1" → postoji, **samo čitanje** (`ads_read`, app nikad ne menja kampanje); „reklame se unose zbirno i ručno" → **mesečni trošak reklama pravi sinhronizacija automatski**. Ručni troškovi ostaju kakvi jesu.
 - **Migracija `20261024120000_reklame.sql`:** `ad_campaigns`, `ad_insights_daily` (PK `(campaign_id, date)`; `spend_minor` = USD centi, `fx_rate_micro` = srednji kurs NBS × 10⁶, `fx_list_date`, `spend_rsd` snapshot), `ad_sync_state` (red `meta`), `fx_rates` (keš kursa po danu) + **`expenses.source` / `expenses.source_key` (UNIQUE, ne parcijalni — PostgREST `on_conflict` ga traži; NULL-ovi ručnih redova se ne sudaraju)**. RLS: select admin+manager u `(select …)`, **nijedna write politika** (piše service role), Logistika ništa. **Pre produkcije: `supabase db push` PRE deploy-a** — `/troskovi` selektuje `expenses.source` i bez kolone pada.
 - **Novac bez float-a:** Meta `spend` je decimalni string → `decimalToMinor` (string parsiranje); RSD = `minorToRsd` (BigInt, pola naviše). Bez PDV-a (Sportem nije u sistemu PDV-a). Trošak = **potrošnja po danu (Insights), NE naplate kartice kod praga** — razlika od izvoda (kurs banke + provizija) je prihvaćena.
@@ -729,3 +744,10 @@ npm run icons          # regeneriši PWA ikonice
 - **Jedan izvor za stranu i alat:** `buildCampaignRows(overview, attribution)` i `adsSiteTotals(attribution)` u `db/ads.ts` — `/reklame` i alat računaju isto (tip `CampaignRowView = AdCampaignRow`).
 - System prompt: alat pomenut u spisku; za reklame odluka na „sajt" ciframa, Meta kupovine/ROAS kao Meta-ina procena. Labela „Meta reklame" (+ `kampanja` u opisu poziva).
 - **`npm run ai:check` dopunjen** — za 5 perioda: Σ izvora zarada/promet = Dashboard, porudžbine + otkazane = broj, potrošnja = Σ `ad_insights_daily` = Σ kampanja → PASS (25.10.2026). Plan je predviđao dugme „Prenesi u troškove" u M4 — nepotrebno, trošak je automatski od M1.
+
+**Korak M5 — Reklame: QA, dozvole i dokumentacija (zatvara modul, 25.10.2026):**
+- **Bez migracije i bez nove zavisnosti.** Zaključane odluke su u §3 („Reklame — zaključane odluke"); plan je premešten u `docs/arhiva/2026-10-25-Plan-Reklame.md` i označen kao urađen (M0–M5).
+- **`npm run rls:test` dopunjen** (ista skripta): Logistika → 0 redova na 4 tabele (`ad_campaigns`, `ad_insights_daily`, `ad_sync_state`, `fx_rates`) + odbijen insert; Menadžer čita, insert u `ad_campaigns`/`fx_rates` odbijen (opciono, kao T7/A6/C5). **Živi deo NIJE pokrenut** — i dalje nema naloga Menadžera/Logistike ni `.env.test.local`.
+- **`npm run rls:static` dopunjen** `testAdsServerGuards()`: `reklame/actions.ts` svaka akcija `requireRole("admin")`, cron `meta-sync` traži `Bearer CRON_SECRET` (inače 401), `troskovi/actions.ts` čuva automatski red (`.is("source", null)` na izmeni i brisanju). PASS.
+- **QA 25.10.2026:** `meta:check` PASS (30 dana baza = Meta do centa, svaki dan ima kurs, 9 meseci tačno jedan red = Σ RSD), `ai:check` PASS (reklame = Dashboard, 5 perioda), `woo:test` PASS (sekcija 10 atribucija), `/reklame` i detalj kampanje u `AppShell`-u desktop + 375 px bez horizontalnog skrola, cron 401/200.
+- **Otvoreno za korisnika:** obrisati ručne „Meta Ads …" redove u Troškovima (dok postoje, `/reklame` upozorava na dupli trošak); otkazati probnu porudžbinu #3635; opciono `META_DAILY_SPEND_ALERT_RSD` u Vercel env.

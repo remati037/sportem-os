@@ -639,6 +639,103 @@ async function testAdPoliciesInMigration() {
   );
 }
 
+async function adRowCountsAsAdmin() {
+  const c = await signIn("admin");
+  const counts = {};
+  for (const table of AD_TABLES) counts[table] = await countRows(c, table);
+  await c.auth.signOut();
+  return counts;
+}
+
+async function testLogisticsAds(adminCounts) {
+  console.log("\nLogistika — reklame MORAJU biti nedostupne (potrošnja je finansija):");
+  const c = await signIn("logistics");
+  for (const table of AD_TABLES) {
+    const n = await countRows(c, table);
+    const adminN = adminCounts[table];
+    const note =
+      adminN === -1
+        ? "Admin dobija grešku — je li migracija push-ovana?"
+        : adminN === 0
+          ? "napomena: tabela je prazna i za Admina (provera je prazna)"
+          : `Admin vidi ${adminN}`;
+    check(`${table} → 0 redova`, n === 0, note);
+  }
+  await expectInsertDenied(
+    c,
+    "ad_campaigns",
+    { id: TEST_PREFIX, account_id: TEST_PREFIX, name: TEST_PREFIX },
+    "ad_campaigns ← insert odbijen",
+  );
+  await c.auth.signOut();
+}
+
+async function testStaffAdsReadOnly() {
+  console.log("\nMenadžer — čita reklame, ali ih ne piše (sinhronizacija ide service role):");
+  const c = await signInOptional("manager");
+  if (!c) return;
+  for (const table of AD_TABLES) check(`${table} → čitljivo`, (await countRows(c, table)) >= 0);
+  await expectInsertDenied(
+    c,
+    "ad_campaigns",
+    { id: TEST_PREFIX, account_id: TEST_PREFIX, name: TEST_PREFIX },
+    "ad_campaigns ← insert odbijen",
+  );
+  await expectInsertDenied(
+    c,
+    "fx_rates",
+    { currency: "USD", date: "1999-01-01", list_date: "1999-01-01", middle_micro: 1 },
+    "fx_rates ← insert odbijen",
+  );
+  await c.auth.signOut();
+}
+
+/* Statički: upis reklama i automatskog troška je zaključan na serveru. */
+async function testAdsServerGuards() {
+  console.log(
+    "\nReklame — serverske kapije (sync samo Admin, cron sa tajnim ključem, auto-trošak):",
+  );
+  const { readFile } = await import("node:fs/promises");
+  const { fileURLToPath } = await import("node:url");
+  const { dirname, join } = await import("node:path");
+  const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const read = async (f) => {
+    try {
+      return await readFile(join(root, f), "utf8");
+    } catch {
+      check(`${f} → postoji`, false, "fajl nije pronađen");
+      return null;
+    }
+  };
+
+  const actions = await read("app/(app)/reklame/actions.ts");
+  if (actions) {
+    const exported = (actions.match(/export async function/g) ?? []).length;
+    const gates = (actions.match(/requireRole\("admin"\)/g) ?? []).length;
+    check(
+      'reklame/actions.ts → svaka akcija requireRole("admin")',
+      exported > 0 && gates >= exported,
+      `${gates} kapija / ${exported} akcija`,
+    );
+  }
+
+  const cron = await read("app/api/cron/meta-sync/route.ts");
+  if (cron) {
+    check(
+      "cron meta-sync → Bearer CRON_SECRET, inače 401",
+      cron.includes("Bearer ${secret}") && /status:\s*401/.test(cron),
+    );
+  }
+
+  const exp = await read("app/(app)/troskovi/actions.ts");
+  if (exp) {
+    check(
+      "troskovi → automatski (Meta) red se ne menja ni ne briše ručno",
+      (exp.match(/\.is\("source", null\)/g) ?? []).length >= 2,
+    );
+  }
+}
+
 async function offerRowCountsAsAdmin() {
   const c = await signIn("admin");
   const counts = {};
@@ -1044,6 +1141,7 @@ async function runStaticChecks() {
   await testCustomerPoliciesInMigration();
   await testRlsInitplanInMigrations();
   await testRouteGuards();
+  await testAdsServerGuards();
 }
 
 async function main() {
@@ -1062,7 +1160,9 @@ async function main() {
     console.error("Nedostaje NEXT_PUBLIC_SUPABASE_URL ili NEXT_PUBLIC_SUPABASE_ANON_KEY.");
     process.exit(2);
   }
-  console.log("RLS test — Sportem OS (Korak 0.5 + T7 Tiketi + A6 Asistent + C5 Kupci)");
+  console.log(
+    "RLS test — Sportem OS (Korak 0.5 + T7 Tiketi + A6 Asistent + C5 Kupci + M5 Reklame)",
+  );
 
   // Statičke provere prve — daju rezultat i kad test nalozi nisu podešeni.
   await runStaticChecks();
@@ -1079,6 +1179,10 @@ async function main() {
   await testLogisticsOffers(adminOfferCounts);
   await testStaffOffersReadOnly();
 
+  const adminAdCounts = await adRowCountsAsAdmin();
+  await testLogisticsAds(adminAdCounts);
+  await testStaffAdsReadOnly();
+
   const adminAi = await testAdminAi();
   await testLogisticsAi();
   await testManagerAi(adminAi.convId);
@@ -1091,7 +1195,7 @@ async function main() {
 
   console.log(
     failures === 0
-      ? "\n✅ PASS — RLS skriva finansije, tikete, AI i beleške kupaca od Logistike; Menadžer ne dira podešavanja, tuđe razgovore ni tuđe beleške.\n"
+      ? "\n✅ PASS — RLS skriva finansije, reklame, tikete, AI i beleške kupaca od Logistike; Menadžer ne dira podešavanja, tuđe razgovore ni tuđe beleške.\n"
       : `\n❌ FAIL — ${failures} provera(e) nije prošla.\n`,
   );
   process.exit(failures === 0 ? 0 : 1);

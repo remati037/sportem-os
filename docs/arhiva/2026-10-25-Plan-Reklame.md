@@ -1,6 +1,6 @@
 # Sportem — Plan implementacije: Reklame (Meta Ads)
 
-> Verzija 1.1 · 24.10.2026 · status: **M0–M4 urađeni (25.10.2026) — sledeće M5 (QA, dozvole, dokumentacija)**
+> Verzija 1.1 · 24.10.2026 · status: **URAĐENO (M0–M5, 25.10.2026)** — arhiva. Važeće odluke su u `CLAUDE.md` §3 („Reklame — zaključane odluke") i §10 („Korak M1"…„Korak M5"); gde se ovaj plan razlikuje od urađenog, važi CLAUDE.md
 > Prati pravila iz `CLAUDE.md` (zaključane odluke, migracije, RLS, srpski UI, zamrznute cene).
 > **Jedan korak = jedna sesija.** Za svaku sesiju: `CLAUDE.md` + tekst tog koraka + „PROMPT ZA SESIJU".
 
