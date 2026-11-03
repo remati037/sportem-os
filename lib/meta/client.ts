@@ -159,6 +159,84 @@ export async function fetchCampaigns(): Promise<MetaCampaignApi[]> {
   );
 }
 
+export type MetaAdInsightApi = MetaInsightApi & {
+  adset_id: string;
+  adset_name: string;
+  ad_id: string;
+  ad_name: string;
+};
+
+export type MetaAdSetApi = {
+  id: string;
+  name: string;
+  effective_status?: string;
+  daily_budget?: string; // centi valute naloga
+  campaign_id?: string;
+};
+
+export type MetaAdApi = {
+  id: string;
+  name: string;
+  effective_status?: string;
+  adset_id?: string;
+  created_time?: string;
+};
+
+const LIVE_STATUSES = ["ACTIVE", "IN_PROCESS", "PENDING_REVIEW", "WITH_ISSUES", "DISAPPROVED"];
+
+/** Insights po OGLASU i danu za [since, until] — dnevni izveštaj (Telegram). */
+export async function fetchAdInsights(since: string, until: string): Promise<MetaAdInsightApi[]> {
+  const acct = metaAccountId();
+  return getAllPages<MetaAdInsightApi>(
+    graphUrl(`${acct}/insights`, {
+      level: "ad",
+      time_increment: "1",
+      time_range: JSON.stringify({ since, until }),
+      fields: [
+        "campaign_id",
+        "campaign_name",
+        "adset_id",
+        "adset_name",
+        "ad_id",
+        "ad_name",
+        "spend",
+        "impressions",
+        "inline_link_clicks",
+        "account_currency",
+        "actions",
+      ].join(","),
+      limit: String(PAGE_LIMIT),
+    }),
+    `insights oglasa ${since}–${until}`,
+  );
+}
+
+/** Ad setovi koji mogu da troše (aktivni ili na pregledu) — budžet i status. */
+export async function fetchLiveAdSets(): Promise<MetaAdSetApi[]> {
+  const acct = metaAccountId();
+  return getAllPages<MetaAdSetApi>(
+    graphUrl(`${acct}/adsets`, {
+      fields: "id,name,effective_status,daily_budget,campaign_id",
+      limit: String(PAGE_LIMIT),
+      filtering: JSON.stringify([{ field: "effective_status", operator: "IN", value: LIVE_STATUSES }]),
+    }),
+    "ad setovi",
+  );
+}
+
+/** Oglasi koji mogu da troše (aktivni ili na pregledu) — status i datum nastanka. */
+export async function fetchLiveAds(): Promise<MetaAdApi[]> {
+  const acct = metaAccountId();
+  return getAllPages<MetaAdApi>(
+    graphUrl(`${acct}/ads`, {
+      fields: "id,name,effective_status,adset_id,created_time",
+      limit: String(PAGE_LIMIT),
+      filtering: JSON.stringify([{ field: "effective_status", operator: "IN", value: LIVE_STATUSES }]),
+    }),
+    "oglasi",
+  );
+}
+
 /**
  * Insights po kampanji i danu za [since, until] (oba uključena, dani naloga).
  * Pozivalac deli dug period na mesece — jedan ogroman upit Meta ume da odbije.
