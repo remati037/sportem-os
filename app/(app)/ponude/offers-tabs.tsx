@@ -6,16 +6,19 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import type { OfferPeriodDays } from "@/lib/offers/period";
 
-/* Pravila (upsell/order bump) / Paketi (setovi). Obrazac finance-tabs.tsx;
-   izabrani period (`?dana=`) se prenosi u drugi tab. „Paketi" su aktivni po
-   prefiksu, a „Pravila" za sve ostalo pod /ponude (uklj. detalj pravila). */
+/* Pravila (upsell/order bump) / Paketi (setovi) / Korpe (podsetnici za
+   napuštene korpe). Obrazac finance-tabs.tsx; izabrani period (`?dana=`) se
+   prenosi u drugi tab. „Paketi" i „Korpe" su aktivni po prefiksu, a „Pravila"
+   za sve ostalo pod /ponude (uklj. detalj pravila). */
 export function OffersTabs({ days }: { days: OfferPeriodDays }) {
   const pathname = usePathname();
   const onPackages = pathname === "/ponude/paketi" || pathname.startsWith("/ponude/paketi/");
+  const onCarts = pathname === "/ponude/korpe";
 
   const tabs = [
-    { href: `/ponude?dana=${days}`, label: "Pravila", active: !onPackages },
+    { href: `/ponude?dana=${days}`, label: "Pravila", active: !onPackages && !onCarts },
     { href: `/ponude/paketi?dana=${days}`, label: "Paketi", active: onPackages },
+    { href: `/ponude/korpe?dana=${days}`, label: "Korpe", active: onCarts },
   ];
 
   return (

@@ -67,10 +67,13 @@ export function offersConfigured(): boolean {
   return Boolean(process.env.SPORTEM_WP_URL && process.env.SPORTEM_OFFERS_API_KEY);
 }
 
-function baseUrl(): string {
+/** REST namespace-ovi naših pluginova; oba čitaju isti ključ (Sportem Korpa koristi ključ iz Offers-a). */
+type PluginNamespace = "sportem-offers/v1" | "sportem-korpa/v1";
+
+function baseUrl(ns: PluginNamespace = "sportem-offers/v1"): string {
   const url = process.env.SPORTEM_WP_URL;
   if (!url) throw new Error("SPORTEM_WP_URL nije podešen.");
-  return `${url.replace(/\/$/, "")}/wp-json/sportem-offers/v1`;
+  return `${url.replace(/\/$/, "")}/wp-json/${ns}`;
 }
 
 /**
@@ -78,11 +81,15 @@ function baseUrl(): string {
  * Greške su razdvojene po uzroku, da se na stranici vidi šta treba popraviti:
  *   401/403 → pogrešan ključ · 404 → plugin/ruta ne postoji · 5xx → sajt
  */
-async function get<T>(path: string, params?: Record<string, string | number>): Promise<T> {
+async function get<T>(
+  path: string,
+  params?: Record<string, string | number>,
+  ns: PluginNamespace = "sportem-offers/v1",
+): Promise<T> {
   const key = process.env.SPORTEM_OFFERS_API_KEY;
   if (!key) throw new Error("SPORTEM_OFFERS_API_KEY nije podešen.");
 
-  const url = new URL(`${baseUrl()}${path}`);
+  const url = new URL(`${baseUrl(ns)}${path}`);
   for (const [k, v] of Object.entries(params ?? {})) url.searchParams.set(k, String(v));
 
   const controller = new AbortController();
@@ -282,6 +289,48 @@ export async function fetchPackageStats(days: number): Promise<PackagesStatsApi>
   const data = await get<PackagesStatsApi>("/packages/stats", { days });
   if (!data || !Array.isArray(data.packages)) {
     throw new Error("Odgovor /packages/stats nema niz „packages“.");
+  }
+  return data;
+}
+
+/* ── Napuštene korpe (plugin „Sportem Korpa") ─────────────────────────────────
+ * Poseban plugin, isti ključ. Čita se uživo; plugin čuva korpe 60 dana, pa
+ * `days` ide najviše do 60. Test korpe plugin ne broji.
+ */
+
+export type CartStatsApi = {
+  days: number;
+  /** Korpe u kojima je kupac upisao mejl, a nije poručio odmah. */
+  captured: number;
+  sent1: number;
+  sent2: number;
+  /** Među korpama kojima je poslat mejl 1 (klik se računa i kao otvaranje). */
+  opened: number;
+  clicked: number;
+  /** Poručio sam, pre ijednog podsetnika. */
+  ordered_before: number;
+  /** Poručio preko linka iz mejla. */
+  recovered_link: number;
+  /** Dobio mejl, poručio istom adresom/telefonom bez klika na link. */
+  recovered_posle: number;
+  revenue_link: number;
+  revenue_posle: number;
+  unsub: number;
+  bounce: number;
+  complaint: number;
+};
+
+export const CART_STATS_MAX_DAYS = 60;
+
+/** Zbirna statistika podsetnika za poslednjih `days` dana (najviše 60). */
+export async function fetchCartStats(days: number): Promise<CartStatsApi> {
+  const data = await get<CartStatsApi>(
+    "/stats",
+    { days: Math.min(days, CART_STATS_MAX_DAYS) },
+    "sportem-korpa/v1",
+  );
+  if (!data || typeof data.captured !== "number") {
+    throw new Error("Odgovor sportem-korpa /stats nema očekivana polja.");
   }
   return data;
 }
