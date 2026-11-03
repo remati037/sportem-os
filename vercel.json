@@ -15,6 +15,10 @@
     {
       "path": "/api/cron/meta-report",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/prodaja-report",
+      "schedule": "0 8 * * *"
     }
   ]
 }
