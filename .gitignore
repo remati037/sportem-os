@@ -53,3 +53,6 @@ yarn-error.log*
 /public/sw.js
 /public/sw.js.map
 /public/swe-worker-*.js
+
+# lokalni PDF izvozi (interne cene, pregovori) — repo je javan
+/*.pdf
