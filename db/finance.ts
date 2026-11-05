@@ -128,7 +128,7 @@ export async function listPayouts(): Promise<PayoutRow[]> {
 
 export type PayoutDetail = {
   payout: PayoutRow;
-  orders: PayoutCandidate[];
+  orders: (PayoutCandidate & { ordered_at: string | null })[];
   otkupTotal: number;
   postageTotal: number; // Σ shipping_charged (poštarina naplaćena kupcima; deo otkupa)
   difference: number; // amount − otkupTotal (0 = poklapa se)
@@ -141,7 +141,7 @@ export async function getPayoutDetail(id: string): Promise<PayoutDetail | null> 
     .from("payouts")
     .select(
       `id, amount, payout_date, delivery_date, notes, invoice_id,
-       orders(id, woo_order_id, ship_name, goods_total, shipping_charged, delivered_at)`,
+       orders(id, woo_order_id, ship_name, goods_total, shipping_charged, delivered_at, ordered_at)`,
     )
     .eq("id", id)
     .maybeSingle();
@@ -156,10 +156,11 @@ export async function getPayoutDetail(id: string): Promise<PayoutDetail | null> 
       goods_total: number | null;
       shipping_charged: number | null;
       delivered_at: string | null;
+      ordered_at: string | null;
     }[];
   };
   const postageTotal = row.orders.reduce((sum, o) => sum + (o.shipping_charged ?? 0), 0);
-  const orders: PayoutCandidate[] = [...row.orders]
+  const orders: PayoutDetail["orders"] = [...row.orders]
     .sort((a, b) => (a.woo_order_id ?? 0) - (b.woo_order_id ?? 0))
     .map((o) => ({
       ...o,

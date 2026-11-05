@@ -83,7 +83,7 @@ export default async function UplataPage({ params }: { params: Promise<{ id: str
             <TableRow className="hover:bg-transparent">
               <TableHead className="eyebrow bg-surface-2 h-9 px-4">Br.</TableHead>
               <TableHead className="eyebrow bg-surface-2 h-9 px-4">Kupac</TableHead>
-              <TableHead className="eyebrow bg-surface-2 h-9 px-4">Isporučeno</TableHead>
+              <TableHead className="eyebrow bg-surface-2 h-9 px-4">Datum porudžbine</TableHead>
               <TableHead className="eyebrow bg-surface-2 h-9 px-4 text-right">Otkup</TableHead>
             </TableRow>
           </TableHeader>
@@ -108,7 +108,7 @@ export default async function UplataPage({ params }: { params: Promise<{ id: str
                   </TableCell>
                   <TableCell className="text-ink px-4 py-2.5">{o.ship_name ?? "—"}</TableCell>
                   <TableCell className="num text-ink-soft px-4 py-2.5">
-                    {o.delivered_at ? datum(o.delivered_at) : "—"}
+                    {o.ordered_at ? datum(o.ordered_at) : "—"}
                   </TableCell>
                   <TableCell className="num px-4 py-2.5 text-right">{rsd(o.otkup)}</TableCell>
                 </TableRow>
