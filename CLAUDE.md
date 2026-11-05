@@ -753,3 +753,10 @@ npm run icons          # regeneriši PWA ikonice
 - **`npm run rls:static` dopunjen** `testAdsServerGuards()`: `reklame/actions.ts` svaka akcija `requireRole("admin")`, cron `meta-sync` traži `Bearer CRON_SECRET` (inače 401), `troskovi/actions.ts` čuva automatski red (`.is("source", null)` na izmeni i brisanju). PASS.
 - **QA 25.10.2026:** `meta:check` PASS (30 dana baza = Meta do centa, svaki dan ima kurs, 9 meseci tačno jedan red = Σ RSD), `ai:check` PASS (reklame = Dashboard, 5 perioda), `woo:test` PASS (sekcija 10 atribucija), `/reklame` i detalj kampanje u `AppShell`-u desktop + 375 px bez horizontalnog skrola, cron 401/200.
 - **Otvoreno za korisnika:** obrisati ručne „Meta Ads …" redove u Troškovima (dok postoje, `/reklame` upozorava na dupli trošak); otkazati probnu porudžbinu #3635; opciono `META_DAILY_SPEND_ALERT_RSD` u Vercel env.
+
+**Ponude → Mejlovi (Brevo, 5.11.2026, na zahtev korisnika):**
+- **Bez migracije, bez nove zavisnosti.** Tab „Mejlovi" (`/ponude/mejlovi`, detalj `/ponude/mejlovi/[id]`), obrazac taba Korpe: brojke o mejlovima **uživo iz Brevoa** (`lib/email/brevo.ts`, `server-only`, ključ `BREVO_API_KEY` samo na serveru, timeout 15 s), porudžbine iz Supabase-a (`lib/email/overview.ts`).
+- **Veza kampanja ↔ porudžbine je `utm_campaign`** pročitan iz linkova u HTML-u kampanje; porudžbine su `attr_utm_source = 'email'` i `attr_utm_medium = 'email'` (podsetnici za korpe imaju `abandoned_cart` i ovde ne ulaze). Otkazano/Vraćeno po IMENU ne ulaze u zbir; „Zarada" = Σ `profit_at_sale` zamrznutih stavki (bez VP se preskače).
+- Prikazuju se sve kampanje osim nacrta (zakazane i one koje se šalju uvek, poslate po datumu slanja u periodu). „Otvorilo" je Brevo `uniqueViews` (sa Apple MPP).
+- Pristup: `requireRole("admin", "manager")`. Kampanje se prave i zakazuju skriptama van aplikacije (`scripts/brevo-novembar.mjs`, `scripts/email-preporuke-novembar.mjs`, `scripts/email-segmenti-novembar.mjs`, `scripts/lib/vokativ.mjs`) — app samo čita.
+- **Vercel env:** `BREVO_API_KEY` (bez njega tab pokazuje „Brevo nije povezan").
