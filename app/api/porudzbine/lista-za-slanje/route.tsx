@@ -2,6 +2,7 @@ import { renderToBuffer } from "@react-pdf/renderer";
 
 import { getProfile } from "@/lib/auth";
 import { getOrdersForShipping } from "@/db/orders";
+import { todayBelgrade } from "@/lib/date-belgrade";
 
 import { ShippingListDocument } from "./shipping-pdf";
 
@@ -38,14 +39,17 @@ export async function GET(request: Request) {
   }
 
   const printedAtIso = new Date().toISOString();
+  // Datum u imenu fajla (DD-MM-YYYY, beogradski dan) — da se liste ne mešaju.
+  const [y, m, d] = todayBelgrade().split("-");
+  const fileName = `lista-za-slanje-${d}-${m}-${y}`;
   const buffer = await renderToBuffer(
-    <ShippingListDocument orders={orders} printedAtIso={printedAtIso} />,
+    <ShippingListDocument orders={orders} printedAtIso={printedAtIso} title={fileName} />,
   );
 
   return new Response(new Uint8Array(buffer), {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": 'inline; filename="lista-za-slanje.pdf"',
+      "Content-Disposition": `inline; filename="${fileName}.pdf"`,
       "Cache-Control": "no-store",
     },
   });

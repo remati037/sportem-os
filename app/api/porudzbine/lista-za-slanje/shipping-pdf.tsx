@@ -109,14 +109,17 @@ function addressLine(o: ShippingOrder): string {
 export function ShippingListDocument({
   orders,
   printedAtIso,
+  title = "Lista za slanje",
 }: {
   orders: ShippingOrder[];
   printedAtIso: string;
+  /** Naslov PDF-a — pregledač ga nudi kao ime fajla pri štampi/čuvanju. */
+  title?: string;
 }) {
   registerFonts();
 
   return (
-    <Document title="Lista za slanje" author="Sportem">
+    <Document title={title} author="Sportem">
       <Page size="A4" style={styles.page}>
         <View style={styles.header} fixed>
           <Text style={styles.title}>Lista za slanje</Text>
