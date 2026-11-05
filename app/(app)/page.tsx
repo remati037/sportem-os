@@ -4,11 +4,13 @@ import { getProfile } from "@/lib/auth";
 import { getDashboardMetrics } from "@/db/dashboard";
 import { computePeriodMetrics } from "@/db/metrics";
 import { getDashboardCharts } from "@/db/dashboard-charts";
+import { getPdvTurnover } from "@/db/pdv";
 import { rsd, num } from "@/lib/format";
 import { comparisonRange, resolvePeriod } from "@/lib/period";
 
 import { DashboardCharts } from "./dashboard-charts";
 import { MetricCard, marginDelta, pctDelta } from "./metric-card";
+import { PdvCard } from "./pdv-card";
 import { PeriodFilter } from "./period-filter";
 import { OrdersRefresh } from "./porudzbine/orders-refresh";
 
@@ -36,12 +38,14 @@ export default async function DashboardPage({
   const period = resolvePeriod(await searchParams);
   const cmp = comparisonRange(period);
 
-  const [metrics, charts, current, previous] = await Promise.all([
+  const [metrics, charts, current, previous, pdv] = await Promise.all([
     getDashboardMetrics({ from: period.from, to: period.to }),
     getDashboardCharts({ from: period.from, to: period.to }),
     // Tekući period isečen na „danas" — računa se zasebno samo kad se seče.
     cmp && cmp.current.to !== period.to ? computePeriodMetrics(cmp.current) : null,
     cmp ? computePeriodMetrics(cmp.previous) : null,
+    // PDV prag — klizno 12 meseci, nezavisno od filtera perioda.
+    getPdvTurnover(),
   ]);
 
   const base = current ?? metrics;
@@ -88,6 +92,8 @@ export default async function DashboardPage({
           delta={previous ? marginDelta(base, previous, vs) : null}
         />
       </div>
+
+      <PdvCard data={pdv} />
 
       <DashboardCharts key={`${period.from}_${period.to}`} data={charts} />
     </main>

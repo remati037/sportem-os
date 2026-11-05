@@ -760,3 +760,10 @@ npm run icons          # regeneriši PWA ikonice
 - Prikazuju se sve kampanje osim nacrta (zakazane i one koje se šalju uvek, poslate po datumu slanja u periodu). „Otvorilo" je Brevo `uniqueViews` (sa Apple MPP).
 - Pristup: `requireRole("admin", "manager")`. Kampanje se prave i zakazuju skriptama van aplikacije (`scripts/brevo-novembar.mjs`, `scripts/email-preporuke-novembar.mjs`, `scripts/email-segmenti-novembar.mjs`, `scripts/lib/vokativ.mjs`) — app samo čita.
 - **Vercel env:** `BREVO_API_KEY` (bez njega tab pokazuje „Brevo nije povezan").
+
+**Dashboard: kartica „PDV prag" (dodato 5.11.2026 na zahtev korisnika):**
+- **Zašto:** korisnik razmatra sopstvenu firmu (preduzetnik knjigaš van PDV-a) — isplativa je samo dok je promet ispod **8.000.000 RSD u poslednjih 12 meseci (klizno)**. Kartica prati koliko je Sportem blizu praga.
+- **Kod:** `lib/pdv.ts` (konstante `PDV_THRESHOLD_RSD = 8_000_000`, `PDV_WARN_RSD = 7_500_000`, `pdvLevel`, kalendarski helperi), `db/pdv.ts` (`getPdvTurnover()`), `app/(app)/pdv-card.tsx`; poziv u `Promise.all` na `app/(app)/page.tsx`. **Nezavisno od filtera perioda.** Bez migracije, samo čita.
+- **Promet = Σ zamrznuti `mp_at_sale × quantity` + Σ `orders.shipping_charged`** (poštarina naplaćena kupcu je promet; kad je kupac plaća direktno kuriru, ne ulazi). Ista pravila kao `computePeriodMetrics`: `ordered_at`, celi beogradski dani, Otkazano/Vraćeno isključene **po imenu**, paginacija kroz `paginate`.
+- **Prozor** = 365 dana do danas, ali ne pre `DATA_START`; dok nema pune godine podataka, prikazuje se i **procena na 12 meseci** (preračun). Uz to **tempo poslednjih 90 dana** preračunat na godinu. Nivo (Ispod / Blizu / Preko praga) se računa po NAJVEĆOJ od te tri cifre — rano upozorenje, ne zakonska cifra.
+- **`npm run perf` sonda za Dashboard NIJE dopunjena** novim upitima (2 dodatna select-a + parčad `order_items`) — dopuniti pri sledećem merenju.
