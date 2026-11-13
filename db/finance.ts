@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
-import { chunked, must, mustRows, selectAll } from "@/lib/supabase/paginate";
+import { chunked, must, selectAll } from "@/lib/supabase/paginate";
 import { APP_STATUS } from "@/lib/woo";
 import { computePeriodMetrics } from "@/db/metrics";
 
@@ -610,27 +610,12 @@ async function xexpressHistoryBoundary(): Promise<string | null> {
 }
 
 /**
- * id-jevi statusa čije porudžbine ulaze u XExpress fakturu poštarine:
- * „Isporučeno" i „Vraćeno" (vraćene su takođe slate → plaća se poštarina).
- * „Otkazano" NE (nije poslato). Lookup po imenu, nikad hardkodovan UUID.
- */
-async function eligibleXexpressStatusIds(): Promise<string[]> {
-  const supabase = await createClient();
-  const res = await supabase
-    .from("order_statuses")
-    .select("id")
-    .in("name", [APP_STATUS.delivered, APP_STATUS.returned]);
-  return mustRows<{ id: string }>(res, "statusi Isporučeno/Vraćeno").map((r) => r.id);
-}
-
-/**
- * Kandidati za XExpress fakturu: xexpress + Isporučeno/Vraćeno + još nevezani za
- * neku fakturu, novije od granice istorije (v. `xexpressHistoryBoundary`). Ručna
- * selekcija po specifikaciji koju XExpress šalje. Najnovije prvo.
+ * Kandidati za XExpress fakturu: SVE xexpress porudžbine (bilo koji status —
+ * XExpress naplaćuje poštarinu i pre isporuke, i za vraćene/odbijene) koje još
+ * nisu vezane za neku fakturu, novije od granice istorije (v.
+ * `xexpressHistoryBoundary`). Ručna selekcija po specifikaciji. Najnovije prvo.
  */
 export async function getEligibleXexpressOrders(): Promise<XexpressCandidate[]> {
-  const statusIds = await eligibleXexpressStatusIds();
-  if (statusIds.length === 0) return [];
   const boundary = await xexpressHistoryBoundary();
 
   const supabase = await createClient();
@@ -638,7 +623,6 @@ export async function getEligibleXexpressOrders(): Promise<XexpressCandidate[]> 
     .from("orders")
     .select("id, woo_order_id, ordered_at, ship_name, shipping_charged, shipping_actual")
     .eq("delivery_method", "xexpress")
-    .in("status_id", statusIds)
     .is("xexpress_invoice_id", null);
   if (boundary) query = query.gte("ordered_at", boundary);
   const ordered = query.order("ordered_at", { ascending: false }).order("id", { ascending: true });
