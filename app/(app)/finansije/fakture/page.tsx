@@ -104,12 +104,13 @@ export default async function FakturePage() {
               {num(cash.open.length)} uplata označeno kao keš (van fakture)
               {cash.openNet !== cash.openTotal ? (
                 <>
-                  {" "}· neto posle poreza <span className="num">{rsd(cash.openNet)}</span>
+                  {" "}· zarada <span className="num">{rsd(cash.openTotal)}</span> − porez{" "}
+                  <span className="num">{rsd(cash.openTotal - cash.openNet)}</span>
                 </>
               ) : null}
             </p>
           </div>
-          <div className="text-ink num text-xl font-bold">{rsd(cash.openTotal)}</div>
+          <div className="text-ink num text-xl font-bold">{rsd(cash.openNet)}</div>
         </div>
       ) : null}
 

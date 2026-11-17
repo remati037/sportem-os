@@ -450,22 +450,22 @@ export async function getBlockedNeedsVpOrders(): Promise<BlockedOrder[]> {
 
 /**
  * „Drug mi duguje" = Σ zarade nefakturisanih uplata „faktura" (za sledeću fakturu)
- * + Σ zarade keš uplata čiji keš još nije primljen.
+ * + Σ keša koji još nije primljen, POSLE poreza (toliko stvarno stiže u kešu).
  */
 export async function getDrugMiDuguje(): Promise<{
   total: number;
   payoutCount: number;
   invoiceTotal: number;
-  cashOpenTotal: number;
+  cashOpenTotal: number; // keš koji čeka — POSLE poreza (toliko stiže u kešu)
   cashOpenCount: number;
 }> {
   const all = await getInvoiceablePayouts();
   const [inv, cash] = await Promise.all([getInvoiceCandidates(all), getCashPayouts(all)]);
   return {
-    total: inv.total + cash.openTotal,
+    total: inv.total + cash.openNet,
     payoutCount: inv.payouts.length,
     invoiceTotal: inv.total,
-    cashOpenTotal: cash.openTotal,
+    cashOpenTotal: cash.openNet,
     cashOpenCount: cash.open.length,
   };
 }

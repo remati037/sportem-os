@@ -681,7 +681,7 @@ export function createAiTools(
           za_fakturisanje_porez_rsd: kandidati.tax,
           za_fakturisanje_neto_rsd: kandidati.net,
           nefakturisanih_uplata: kandidati.payouts.length,
-          kes_ceka: { uplata: duguje.cashOpenCount, zarada_rsd: duguje.cashOpenTotal },
+          kes_ceka: { uplata: duguje.cashOpenCount, posle_poreza_rsd: duguje.cashOpenTotal },
           isporuceno_a_neuplaceno: {
             porudzbina: neuplaceno.length,
             otkupnina_rsd: neuplaceno.reduce((s, o) => s + o.otkup, 0),
