@@ -91,7 +91,9 @@ function SettlementRow({ payout, isAdmin }: { payout: PayoutInvoiceCandidate; is
         toast.error(res.error);
         return;
       }
-      toast.success(res.success ?? "Sačuvano.");
+      toast.success(
+        payout.cash_received_at ? (res.success ?? "Sačuvano.") : `Keš primljen: ${rsd(payout.net)}.`,
+      );
       router.refresh();
     });
   }

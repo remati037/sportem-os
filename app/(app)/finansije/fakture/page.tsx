@@ -125,7 +125,7 @@ export default async function FakturePage() {
           {cash.received.length > 0 ? (
             <p className="text-ink-soft mt-2 text-xs">
               Keš primljen za {num(cash.received.length)} uplata (
-              <span className="num">{rsd(cash.received.reduce((s, p) => s + p.profit, 0))}</span>
+              <span className="num">{rsd(cash.received.reduce((s, p) => s + p.net, 0))}</span>
               ) — zatvoreno.
             </p>
           ) : null}
