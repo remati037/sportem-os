@@ -7,7 +7,7 @@ import { firstZodError } from "@/lib/actions";
 import { requireRole } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { chunked, must, selectAll, selectAllIn } from "@/lib/supabase/paginate";
+import { chunked, must, mustRows, selectAll, selectAllIn } from "@/lib/supabase/paginate";
 import { previousWorkingDay } from "@/lib/date-belgrade";
 import { APP_STATUS } from "@/lib/woo";
 import { getSaldoPostarine } from "@/db/finance";
@@ -16,6 +16,8 @@ import {
   updatePayoutSchema,
   issueInvoiceSchema,
   markInvoicePaidSchema,
+  setPayoutSettlementSchema,
+  setCashReceivedSchema,
   settlePostageSchema,
   xexpressInvoiceSchema,
   updateXexpressInvoiceSchema,
@@ -296,13 +298,84 @@ async function assertInvoiceable(payoutIds: string[]): Promise<string | null> {
         .select("id")
         .in("id", chunk)
         .is("invoice_id", null)
+        .eq("settlement", "faktura")
         .order("id", { ascending: true }),
   );
 
   if (rows.length !== payoutIds.length) {
-    return "Neke uplate više nisu dostupne za fakturu (već fakturisane). Osveži i pokušaj ponovo.";
+    return "Neke uplate više nisu dostupne za fakturu (već fakturisane ili označene kao keš). Osveži i pokušaj ponovo.";
   }
   return null;
+}
+
+/* ── Način naplate uplate (faktura / keš) + porez ─────────────────────────── */
+
+function revalidateSettlement(payoutId: string) {
+  revalidatePath("/finansije/fakture");
+  revalidatePayouts(payoutId);
+}
+
+export type SetPayoutSettlementInput = z.input<typeof setPayoutSettlementSchema>;
+
+/**
+ * Admin bira za NEfakturisanu uplatu: faktura ili keš + stopu poreza koji se
+ * oduzima od zarade. Fakturisana uplata se ne menja (porez/način su tada deo
+ * izdate fakture). Prelazak nazad na „faktura" briše oznaku primljenog keša.
+ */
+export async function setPayoutSettlement(
+  input: SetPayoutSettlementInput,
+): Promise<FinanceActionState> {
+  await requireRole("admin");
+  const parsed = setPayoutSettlementSchema.safeParse(input);
+  if (!parsed.success) return { error: firstZodError(parsed.error) };
+  const { payout_id, settlement, tax_percent } = parsed.data;
+
+  const supabase = await createClient();
+  const patch: Record<string, unknown> = { settlement, tax_rate_bp: tax_percent };
+  if (settlement === "faktura") patch.cash_received_at = null;
+
+  const res = await supabase
+    .from("payouts")
+    .update(patch)
+    .eq("id", payout_id)
+    .is("invoice_id", null)
+    .select("id");
+  const rows = mustRows<{ id: string }>(res, "način naplate uplate");
+  if (rows.length === 0) {
+    return { error: "Uplata je već fakturisana ili ne postoji — osveži stranu." };
+  }
+
+  revalidateSettlement(payout_id);
+  return {
+    error: null,
+    success: settlement === "kes" ? "Uplata označena kao keš." : "Uplata ide na fakturu.",
+  };
+}
+
+export type SetCashReceivedInput = z.input<typeof setCashReceivedSchema>;
+
+/** Admin označava da je keš za keš-uplatu primljen (ili poništava oznaku). */
+export async function setCashReceived(input: SetCashReceivedInput): Promise<FinanceActionState> {
+  await requireRole("admin");
+  const parsed = setCashReceivedSchema.safeParse(input);
+  if (!parsed.success) return { error: firstZodError(parsed.error) };
+  const { payout_id, received } = parsed.data;
+
+  const supabase = await createClient();
+  const res = await supabase
+    .from("payouts")
+    .update({ cash_received_at: received ? new Date().toISOString() : null })
+    .eq("id", payout_id)
+    .eq("settlement", "kes")
+    .is("invoice_id", null)
+    .select("id");
+  const rows = mustRows<{ id: string }>(res, "keš primljen");
+  if (rows.length === 0) {
+    return { error: "Uplata nije označena kao keš — osveži stranu." };
+  }
+
+  revalidateSettlement(payout_id);
+  return { error: null, success: received ? "Keš označen kao primljen." : "Oznaka poništena." };
 }
 
 export type IssueInvoiceInput = z.input<typeof issueInvoiceSchema>;

@@ -32,7 +32,7 @@ export default async function FakturaPage({ params }: { params: Promise<{ id: st
   const detail = await getInvoiceDetail(id);
   if (!detail) notFound();
 
-  const { invoice, orders, computedTotal, isBackfill } = detail;
+  const { invoice, orders, computedTotal, tax, isBackfill } = detail;
   const frozen = invoice.total_amount ?? 0;
   // period_from == period_to za nove fakture (jedan datum); istorijske mogu imati
   // opseg — prikaži jedan datum ako se poklapaju, inače opseg.
@@ -72,8 +72,14 @@ export default async function FakturaPage({ params }: { params: Promise<{ id: st
       </div>
 
       {/* Sažetak */}
-      <div className="mb-6 grid grid-cols-2 gap-3">
+      <div className={`mb-6 grid gap-3 ${tax > 0 ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-2"}`}>
         <SummaryCard label="Ukupna zarada (faktura)" value={rsd(frozen)} />
+        {tax > 0 ? (
+          <>
+            <SummaryCard label="Porez" value={`− ${rsd(tax)}`} />
+            <SummaryCard label="Neto posle poreza" value={rsd(frozen - tax)} />
+          </>
+        ) : null}
         <SummaryCard label="Porudžbina" value={num(invoice.orderCount)} />
       </div>
 

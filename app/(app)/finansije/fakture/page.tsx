@@ -3,6 +3,8 @@ import { FileText, AlertTriangle } from "lucide-react";
 
 import { requireRole } from "@/lib/auth";
 import {
+  getCashPayouts,
+  getInvoiceablePayouts,
   getInvoiceCandidates,
   getBlockedNeedsVpOrders,
   listInvoices,
@@ -27,6 +29,7 @@ import {
 
 import { FinanceTabs } from "../finance-tabs";
 import { IssueInvoicePanel } from "./issue-invoice-panel";
+import { PayoutSettlementList } from "./payout-settlement-list";
 
 export const dynamic = "force-dynamic";
 
@@ -39,11 +42,19 @@ export default async function FakturePage() {
   const { profile } = await requireRole("admin", "manager");
   const isAdmin = profile.role === "admin";
 
-  const [candidates, blocked, invoices] = await Promise.all([
-    getInvoiceCandidates(),
+  const [allUninvoiced, blocked, invoices] = await Promise.all([
+    getInvoiceablePayouts(),
     getBlockedNeedsVpOrders(),
     listInvoices(),
   ]);
+  const [candidates, cash] = await Promise.all([
+    getInvoiceCandidates(allUninvoiced),
+    getCashPayouts(allUninvoiced),
+  ]);
+  // Lista za izbor načina: faktura + keš koji još čeka (primljen keš je zatvoren).
+  const openPayouts = allUninvoiced.filter(
+    (p) => p.linkedCount > 0 && !(p.settlement === "kes" && p.cash_received_at),
+  );
 
   return (
     <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-10">
@@ -72,11 +83,54 @@ export default async function FakturePage() {
           ) : (
             <p className="text-ink-soft text-xs">
               {num(candidates.payouts.length)} nefakturisanih uplata
+              {candidates.tax > 0 ? (
+                <>
+                  {" "}· porez <span className="num">− {rsd(candidates.tax)}</span> · neto{" "}
+                  <span className="num">{rsd(candidates.net)}</span>
+                </>
+              ) : null}
             </p>
           )}
         </div>
         <div className="text-green num text-xl font-bold">{rsd(candidates.total)}</div>
       </div>
+
+      {/* Keš (van fakture) */}
+      {cash.open.length > 0 ? (
+        <div className="border-border bg-surface mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-4 py-3">
+          <div>
+            <div className="eyebrow">Keš — čeka</div>
+            <p className="text-ink-soft text-xs">
+              {num(cash.open.length)} uplata označeno kao keš (van fakture)
+              {cash.openNet !== cash.openTotal ? (
+                <>
+                  {" "}· neto posle poreza <span className="num">{rsd(cash.openNet)}</span>
+                </>
+              ) : null}
+            </p>
+          </div>
+          <div className="text-ink num text-xl font-bold">{rsd(cash.openTotal)}</div>
+        </div>
+      ) : null}
+
+      {/* Nefakturisane uplate — način naplate + porez */}
+      {openPayouts.length > 0 ? (
+        <section className="mb-6">
+          <h2 className="text-ink mb-1 text-sm font-semibold">Nefakturisane uplate</h2>
+          <p className="text-ink-soft mb-2 text-xs">
+            Za svaku uplatu izaberi da li zarada ide na fakturu ili u keš, i koliki porez se
+            oduzima od zarade.
+          </p>
+          <PayoutSettlementList payouts={openPayouts} isAdmin={isAdmin} />
+          {cash.received.length > 0 ? (
+            <p className="text-ink-soft mt-2 text-xs">
+              Keš primljen za {num(cash.received.length)} uplata (
+              <span className="num">{rsd(cash.received.reduce((s, p) => s + p.profit, 0))}</span>
+              ) — zatvoreno.
+            </p>
+          ) : null}
+        </section>
+      ) : null}
 
       {/* Upozorenje: needs_vp */}
       {blocked.length > 0 ? (

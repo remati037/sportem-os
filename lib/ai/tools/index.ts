@@ -676,8 +676,12 @@ export function createAiTools(
           getSaldoPostarine(),
         ]);
         return {
-          za_fakturisanje_rsd: duguje.total,
+          drug_duguje_ukupno_rsd: duguje.total,
+          za_fakturisanje_rsd: duguje.invoiceTotal,
+          za_fakturisanje_porez_rsd: kandidati.tax,
+          za_fakturisanje_neto_rsd: kandidati.net,
           nefakturisanih_uplata: kandidati.payouts.length,
+          kes_ceka: { uplata: duguje.cashOpenCount, zarada_rsd: duguje.cashOpenTotal },
           isporuceno_a_neuplaceno: {
             porudzbina: neuplaceno.length,
             otkupnina_rsd: neuplaceno.reduce((s, o) => s + o.otkup, 0),

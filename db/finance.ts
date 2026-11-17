@@ -92,6 +92,9 @@ export type PayoutRow = {
   delivery_date: string | null;
   notes: string | null;
   invoice_id: string | null; // faktura na kojoj je uplata (NULL = nefakturisana)
+  settlement: PayoutSettlement;
+  tax_rate_bp: number;
+  cash_received_at: string | null;
   linkedCount: number;
   linkedOtkup: number; // Σ otkupnina vezanih porudžbina
   profit: number; // Σ zamrznuta zarada vezanih porudžbina (order_profit view)
@@ -108,7 +111,7 @@ export async function listPayouts(): Promise<PayoutRow[]> {
     supabase
       .from("payouts")
       .select(
-        "id, amount, payout_date, delivery_date, notes, invoice_id, orders(id, goods_total, shipping_charged)",
+        "id, amount, payout_date, delivery_date, notes, invoice_id, settlement, tax_rate_bp, cash_received_at, orders(id, goods_total, shipping_charged)",
       )
       .order("payout_date", { ascending: false })
       .order("created_at", { ascending: false })
@@ -140,7 +143,7 @@ export async function getPayoutDetail(id: string): Promise<PayoutDetail | null> 
   const res = await supabase
     .from("payouts")
     .select(
-      `id, amount, payout_date, delivery_date, notes, invoice_id,
+      `id, amount, payout_date, delivery_date, notes, invoice_id, settlement, tax_rate_bp, cash_received_at,
        orders(id, woo_order_id, ship_name, goods_total, shipping_charged, delivered_at, ordered_at)`,
     )
     .eq("id", id)
@@ -178,6 +181,9 @@ export async function getPayoutDetail(id: string): Promise<PayoutDetail | null> 
       delivery_date: row.delivery_date,
       notes: row.notes,
       invoice_id: row.invoice_id,
+      settlement: row.settlement,
+      tax_rate_bp: row.tax_rate_bp,
+      cash_received_at: row.cash_received_at,
       linkedCount: orders.length,
       linkedOtkup: otkupTotal,
       profit: profitTotal,
@@ -302,27 +308,50 @@ async function profitByOrder(orderIds: string[]): Promise<Map<string, number>> {
  * Kandidat za fakturu = jedna UPLATA (payout) koja još nije ni na jednoj fakturi.
  * Faktura se sklapa od uplata (ne pojedinačnih porudžbina) — jednostavnije.
  */
+export type PayoutSettlement = "faktura" | "kes";
+
+/** Porez koji se ODUZIMA od zarade (bazni poeni: 1000 = 10 %). Ceo RSD, pola naviše. */
+export function taxOf(profit: number, taxRateBp: number): number {
+  if (taxRateBp <= 0 || profit <= 0) return 0;
+  return Math.round((profit * taxRateBp) / 10000);
+}
+
 export type PayoutInvoiceCandidate = {
   id: string;
   payout_date: string;
   linkedCount: number; // broj vezanih porudžbina
   otkup: number; // Σ otkupnina vezanih porudžbina
   profit: number; // Σ zamrznuta zarada (order_profit) — osnova „za fakturisanje"
+  settlement: PayoutSettlement;
+  tax_rate_bp: number;
+  tax: number; // porez koji se oduzima od zarade
+  net: number; // profit − tax
+  cash_received_at: string | null;
 };
 
-export type InvoiceCandidates = { payouts: PayoutInvoiceCandidate[]; total: number };
+export type InvoiceCandidates = {
+  payouts: PayoutInvoiceCandidate[]; // settlement = faktura
+  total: number; // Σ zarade (bruto)
+  tax: number;
+  net: number;
+};
 
-/** Nefakturisane uplate (payout.invoice_id null) sa Σ zarade i otkupnine. */
+/** Nefakturisane uplate (payout.invoice_id null) sa Σ zarade, poreza i otkupnine. */
 export async function getInvoiceablePayouts(): Promise<PayoutInvoiceCandidate[]> {
   const supabase = await createClient();
   const rows = await selectAll<{
     id: string;
     payout_date: string;
+    settlement: PayoutSettlement;
+    tax_rate_bp: number;
+    cash_received_at: string | null;
     orders: { id: string; goods_total: number | null; shipping_charged: number | null }[];
   }>("nefakturisane uplate", () =>
     supabase
       .from("payouts")
-      .select("id, payout_date, orders(id, goods_total, shipping_charged)")
+      .select(
+        "id, payout_date, settlement, tax_rate_bp, cash_received_at, orders(id, goods_total, shipping_charged)",
+      )
       .is("invoice_id", null)
       .order("payout_date", { ascending: false })
       .order("created_at", { ascending: false })
@@ -331,23 +360,58 @@ export async function getInvoiceablePayouts(): Promise<PayoutInvoiceCandidate[]>
 
   const profitMap = await profitByOrder(rows.flatMap((p) => p.orders.map((o) => o.id)));
 
-  return rows.map((p) => ({
-    id: p.id,
-    payout_date: p.payout_date,
-    linkedCount: p.orders.length,
-    otkup: p.orders.reduce((sum, o) => sum + otkupOf(o.goods_total, o.shipping_charged), 0),
-    profit: p.orders.reduce((sum, o) => sum + (profitMap.get(o.id) ?? 0), 0),
-  }));
+  return rows.map((p) => {
+    const profit = p.orders.reduce((sum, o) => sum + (profitMap.get(o.id) ?? 0), 0);
+    const tax = taxOf(profit, p.tax_rate_bp);
+    return {
+      id: p.id,
+      payout_date: p.payout_date,
+      linkedCount: p.orders.length,
+      otkup: p.orders.reduce((sum, o) => sum + otkupOf(o.goods_total, o.shipping_charged), 0),
+      profit,
+      settlement: p.settlement,
+      tax_rate_bp: p.tax_rate_bp,
+      tax,
+      net: profit - tax,
+      cash_received_at: p.cash_received_at,
+    };
+  });
+}
+
+function sumCandidates(payouts: PayoutInvoiceCandidate[]) {
+  return {
+    total: payouts.reduce((s, p) => s + p.profit, 0),
+    tax: payouts.reduce((s, p) => s + p.tax, 0),
+    net: payouts.reduce((s, p) => s + p.net, 0),
+  };
 }
 
 /**
- * Kandidati za fakturu = nefakturisane uplate (bez praznih). „Za fakturisanje" =
- * Σ zarade tih uplata (zamrznuti profit_at_sale kroz order_profit view).
+ * Kandidati za fakturu = nefakturisane uplate sa načinom „faktura" (bez praznih).
+ * „Za fakturisanje" = Σ zarade tih uplata (zamrznuti profit_at_sale kroz
+ * order_profit view). Keš uplate su izdvojene (getCashPayouts).
  */
-export async function getInvoiceCandidates(): Promise<InvoiceCandidates> {
-  const payouts = (await getInvoiceablePayouts()).filter((p) => p.linkedCount > 0);
-  const total = payouts.reduce((sum, p) => sum + p.profit, 0);
-  return { payouts, total };
+export async function getInvoiceCandidates(
+  all?: PayoutInvoiceCandidate[],
+): Promise<InvoiceCandidates> {
+  const source = all ?? (await getInvoiceablePayouts());
+  const payouts = source.filter((p) => p.linkedCount > 0 && p.settlement === "faktura");
+  return { payouts, ...sumCandidates(payouts) };
+}
+
+/** Nefakturisane uplate označene kao KEŠ (otvorene = keš još nije primljen). */
+export async function getCashPayouts(all?: PayoutInvoiceCandidate[]): Promise<{
+  open: PayoutInvoiceCandidate[];
+  received: PayoutInvoiceCandidate[];
+  openTotal: number;
+  openNet: number;
+}> {
+  const source = all ?? (await getInvoiceablePayouts());
+  const cash = source.filter((p) => p.linkedCount > 0 && p.settlement === "kes");
+  const open = cash.filter((p) => !p.cash_received_at);
+  const received = cash.filter((p) => p.cash_received_at);
+  const sums = sumCandidates(open);
+  return { open, received, openTotal: sums.total, openNet: sums.net };
 }
 
 export type BlockedOrder = {
@@ -384,10 +448,26 @@ export async function getBlockedNeedsVpOrders(): Promise<BlockedOrder[]> {
   }));
 }
 
-/** „Drug mi duguje" = Σ zarade nefakturisanih uplata (isti skup kao kandidati). */
-export async function getDrugMiDuguje(): Promise<{ total: number; payoutCount: number }> {
-  const { payouts, total } = await getInvoiceCandidates();
-  return { total, payoutCount: payouts.length };
+/**
+ * „Drug mi duguje" = Σ zarade nefakturisanih uplata „faktura" (za sledeću fakturu)
+ * + Σ zarade keš uplata čiji keš još nije primljen.
+ */
+export async function getDrugMiDuguje(): Promise<{
+  total: number;
+  payoutCount: number;
+  invoiceTotal: number;
+  cashOpenTotal: number;
+  cashOpenCount: number;
+}> {
+  const all = await getInvoiceablePayouts();
+  const [inv, cash] = await Promise.all([getInvoiceCandidates(all), getCashPayouts(all)]);
+  return {
+    total: inv.total + cash.openTotal,
+    payoutCount: inv.payouts.length,
+    invoiceTotal: inv.total,
+    cashOpenTotal: cash.openTotal,
+    cashOpenCount: cash.open.length,
+  };
 }
 
 export type InvoiceRow = {
@@ -434,6 +514,7 @@ export type InvoiceDetail = {
   invoice: InvoiceRow;
   orders: InvoiceDetailOrder[];
   computedTotal: number; // živi Σ profit (kontrola prema zamrznutom total_amount)
+  tax: number; // Σ poreza po uplatama fakture (stopa sa svake uplate)
   isBackfill: boolean;
 };
 
@@ -468,6 +549,20 @@ export async function getInvoiceDetail(id: string): Promise<InvoiceDetail | null
   }));
   const computedTotal = orders.reduce((sum, o) => sum + o.profit, 0);
 
+  // Porez se vodi po uplati (payouts.tax_rate_bp) — sabira se po uplatama fakture.
+  const payoutRows = must(
+    await supabase
+      .from("payouts")
+      .select("id, tax_rate_bp, orders(id)")
+      .eq("invoice_id", id)
+      .order("id", { ascending: true }),
+    "porez po uplatama fakture",
+  ) as unknown as { id: string; tax_rate_bp: number; orders: { id: string }[] }[];
+  const tax = (payoutRows ?? []).reduce((sum, p) => {
+    const profit = p.orders.reduce((s2, o) => s2 + (profits.get(o.id) ?? 0), 0);
+    return sum + taxOf(profit, p.tax_rate_bp);
+  }, 0);
+
   return {
     invoice: {
       id: row.id,
@@ -481,6 +576,7 @@ export async function getInvoiceDetail(id: string): Promise<InvoiceDetail | null
     },
     orders,
     computedTotal,
+    tax,
     isBackfill: row.invoice_number === "ISTORIJA-BACKFILL",
   };
 }

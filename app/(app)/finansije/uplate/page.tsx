@@ -90,6 +90,13 @@ export default async function UplatePage() {
                         <Badge variant="success" className="relative z-10 ml-2 align-middle">
                           Fakturisano
                         </Badge>
+                      ) : p.settlement === "kes" ? (
+                        <Badge
+                          variant={p.cash_received_at ? "success" : "warning"}
+                          className="relative z-10 ml-2 align-middle"
+                        >
+                          {p.cash_received_at ? "Keš primljen" : "Keš"}
+                        </Badge>
                       ) : null}
                     </TableCell>
                     <TableCell className="num text-ink-soft px-4 py-2.5">
@@ -120,7 +127,13 @@ export default async function UplatePage() {
                   title={
                     <span className="flex items-center gap-2">
                       <span className="num">{datum(p.payout_date)}</span>
-                      {p.invoice_id ? <Badge variant="success">Fakturisano</Badge> : null}
+                      {p.invoice_id ? (
+                        <Badge variant="success">Fakturisano</Badge>
+                      ) : p.settlement === "kes" ? (
+                        <Badge variant={p.cash_received_at ? "success" : "warning"}>
+                          {p.cash_received_at ? "Keš primljen" : "Keš"}
+                        </Badge>
+                      ) : null}
                     </span>
                   }
                   subtitle={<span>{num(p.linkedCount)} porudžbina · isporuka {p.delivery_date ? datum(p.delivery_date) : "—"}</span>}

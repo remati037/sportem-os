@@ -154,10 +154,14 @@ async function deliveredUnpaidCount(supabase: Admin, deliveredId: string): Promi
 
 /**
  * Kandidati za fakturu drugu = nefakturisane uplate (payout.invoice_id null) sa
- * bar jednom vezanom porudžbinom. Isti skup kao „za fakturisanje" u finansijama.
+ * bar jednom vezanom porudžbinom, način „faktura" (keš uplate se ne fakturišu). Isti skup kao „za fakturisanje" u finansijama.
  */
 async function invoiceCandidateCount(supabase: Admin): Promise<number> {
-  const { data } = await supabase.from("payouts").select("id, orders(id)").is("invoice_id", null);
+  const { data } = await supabase
+    .from("payouts")
+    .select("id, orders(id)")
+    .is("invoice_id", null)
+    .eq("settlement", "faktura");
   const rows = (data as { id: string; orders: { id: string }[] }[]) ?? [];
   return rows.filter((p) => p.orders.length > 0).length;
 }

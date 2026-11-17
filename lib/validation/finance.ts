@@ -73,6 +73,39 @@ export const issueInvoiceSchema = z.object({
     .max(1000, "Previše uplata."),
 });
 
+/**
+ * Stopa poreza kao procenat („10", „12,5", „12.5") → bazni poeni (1250). Prazno = 0.
+ * String parsiranje — bez float aritmetike (§5).
+ */
+const taxPercentToBp = z
+  .union([z.string(), z.number()])
+  .transform((v, ctx) => {
+    const raw = String(v).trim().replace(",", ".");
+    if (raw === "") return 0;
+    const m = /^(\d{1,3})(?:\.(\d{1,2}))?$/.exec(raw);
+    if (!m) {
+      ctx.addIssue({ code: "custom", message: "Porez: unesite procenat (npr. 10 ili 12,5)." });
+      return z.NEVER;
+    }
+    const bp = Number(m[1]) * 100 + Number((m[2] ?? "").padEnd(2, "0"));
+    if (bp > 10000) {
+      ctx.addIssue({ code: "custom", message: "Porez ne može biti veći od 100 %." });
+      return z.NEVER;
+    }
+    return bp;
+  });
+
+export const setPayoutSettlementSchema = z.object({
+  payout_id: uuid("Neispravna uplata."),
+  settlement: z.enum(["faktura", "kes"], { message: "Izaberite način: faktura ili keš." }),
+  tax_percent: taxPercentToBp,
+});
+
+export const setCashReceivedSchema = z.object({
+  payout_id: uuid("Neispravna uplata."),
+  received: z.boolean(),
+});
+
 export const markInvoicePaidSchema = z.object({
   id: uuid("Neispravna faktura."),
 });

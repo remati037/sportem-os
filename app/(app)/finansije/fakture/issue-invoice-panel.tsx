@@ -44,10 +44,13 @@ export function IssueInvoicePanel({ candidates }: { candidates: PayoutInvoiceCan
     setSelected(new Set(candidates.map((c) => c.id)));
   }
 
-  const total = useMemo(
-    () => candidates.filter((c) => selected.has(c.id)).reduce((sum, c) => sum + c.profit, 0),
-    [candidates, selected],
-  );
+  const { total, tax } = useMemo(() => {
+    const picked = candidates.filter((c) => selected.has(c.id));
+    return {
+      total: picked.reduce((sum, c) => sum + c.profit, 0),
+      tax: picked.reduce((sum, c) => sum + c.tax, 0),
+    };
+  }, [candidates, selected]);
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -95,7 +98,7 @@ export function IssueInvoicePanel({ candidates }: { candidates: PayoutInvoiceCan
         <DialogHeader>
           <DialogTitle>Nova faktura drugu</DialogTitle>
           <DialogDescription>
-            Nefakturisane uplate. Total = Σ zarada izabranih (zamrznuto). Izabrane uplate i njihove
+            Nefakturisane uplate označene za fakturu (keš uplate se ne nude). Total = Σ zarada izabranih (zamrznuto). Izabrane uplate i njihove
             porudžbine dobijaju broj fakture i zaključavaju stavke.
           </DialogDescription>
         </DialogHeader>
@@ -127,7 +130,14 @@ export function IssueInvoicePanel({ candidates }: { candidates: PayoutInvoiceCan
             <span>
               Izabrano: <span className="num font-medium">{num(selected.size)}</span> uplata
             </span>
-            <span className="num font-semibold">Zarada: {rsd(total)}</span>
+            <span className="num font-semibold">
+              Zarada: {rsd(total)}
+              {tax > 0 ? (
+                <span className="font-normal">
+                  {" "}· porez − {rsd(tax)} · neto {rsd(total - tax)}
+                </span>
+              ) : null}
+            </span>
           </div>
 
           {/* Kandidati (uplate) */}
@@ -150,7 +160,14 @@ export function IssueInvoicePanel({ candidates }: { candidates: PayoutInvoiceCan
                   <span className="text-ink-soft min-w-0 flex-1 truncate text-sm">
                     {num(c.linkedCount)} porudžbina
                   </span>
-                  <span className="num text-ink text-sm">{rsd(c.profit)}</span>
+                  <span className="num text-ink text-sm">
+                    {rsd(c.profit)}
+                    {c.tax > 0 ? (
+                      <span className="text-ink-soft block text-right text-xs">
+                        neto {rsd(c.net)}
+                      </span>
+                    ) : null}
+                  </span>
                 </label>
               ))
             )}
