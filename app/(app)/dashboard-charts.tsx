@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 
 import { num, rsd } from "@/lib/format";
+import { taxFromNumer } from "@/lib/tax";
 import { BarList } from "@/components/charts/bar-list";
 import { ColumnChart, type Column } from "@/components/charts/column-chart";
 import { ChartCard, ChartEmpty, Legend, Segmented } from "@/components/charts/core";
@@ -82,6 +83,7 @@ function bucketize(days: ChartDay[], grain: Grain): Bucket[] {
         profit: 0,
         orders: 0,
         cancelled: 0,
+        taxNumer: 0,
         axisLabel: grain === "mesec" ? monthShort.format(first).replace(".", "") : dm(d.day),
         title:
           grain === "dan"
@@ -96,6 +98,7 @@ function bucketize(days: ChartDay[], grain: Grain): Bucket[] {
     b.profit += d.profit;
     b.orders += d.orders;
     b.cancelled += d.cancelled;
+    b.taxNumer += d.taxNumer;
     if (grain === "nedelja") b.title = `${dm(b.day)} – ${dm(d.day)}${d.day.slice(0, 4)}.`;
   }
   return [...out.values()];
@@ -107,7 +110,11 @@ function defaultGrain(dayCount: number): Grain {
   return "mesec";
 }
 
-export function DashboardCharts({ data }: { data: ChartsData }) {
+/**
+ * `afterTax` — prekidač „Posle poreza" sa Dashboarda: kriva zarade se crta
+ * umanjena za porez po mesecu (lib/tax.ts). Ostali grafikoni ostaju pre poreza.
+ */
+export function DashboardCharts({ data, afterTax = false }: { data: ChartsData; afterTax?: boolean }) {
   const dayCount = data.days.length;
   const [grain, setGrain] = useState<Grain>(() => defaultGrain(dayCount));
   const [hidden, setHidden] = useState<Set<string>>(new Set());
@@ -125,8 +132,9 @@ export function DashboardCharts({ data }: { data: ChartsData }) {
           profit: s.profit + d.profit,
           orders: s.orders + d.orders,
           cancelled: s.cancelled + d.cancelled,
+          taxNumer: s.taxNumer + d.taxNumer,
         }),
-        { revenue: 0, profit: 0, orders: 0, cancelled: 0 },
+        { revenue: 0, profit: 0, orders: 0, cancelled: 0, taxNumer: 0 },
       ),
     [data.days],
   );
@@ -143,13 +151,15 @@ export function DashboardCharts({ data }: { data: ChartsData }) {
 
   const trendSeries = [
     { key: "revenue", label: "Promet", color: C_REVENUE },
-    { key: "profit", label: "Zarada", color: C_PROFIT },
+    { key: "profit", label: afterTax ? "Zarada posle poreza" : "Zarada", color: C_PROFIT },
   ];
+  const shownProfit = (b: { profit: number; taxNumer: number }) =>
+    afterTax ? b.profit - taxFromNumer(b.taxNumer) : b.profit;
   const trendPoints: TrendPoint[] = buckets.map((b) => ({
     key: b.key,
     axisLabel: b.axisLabel,
     title: b.title,
-    values: { revenue: b.revenue, profit: b.profit },
+    values: { revenue: b.revenue, profit: shownProfit(b) },
   }));
 
   const orderColumns: Column[] = buckets.map((b) => ({
@@ -194,7 +204,7 @@ export function DashboardCharts({ data }: { data: ChartsData }) {
             items={trendSeries.map((s) => ({
               ...s,
               shape: "line" as const,
-              value: rsd(s.key === "revenue" ? totals.revenue : totals.profit),
+              value: rsd(s.key === "revenue" ? totals.revenue : shownProfit(totals)),
             }))}
             hidden={hidden}
             onToggle={(key) =>

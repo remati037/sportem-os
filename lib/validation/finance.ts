@@ -77,7 +77,7 @@ export const issueInvoiceSchema = z.object({
  * Stopa poreza kao procenat („10", „12,5", „12.5") → bazni poeni (1250). Prazno = 0.
  * String parsiranje — bez float aritmetike (§5).
  */
-const taxPercentToBp = z
+export const taxPercentToBp = z
   .union([z.string(), z.number()])
   .transform((v, ctx) => {
     const raw = String(v).trim().replace(",", ".");
@@ -94,6 +94,16 @@ const taxPercentToBp = z
     }
     return bp;
   });
+
+/** Porez po mesecu (Podešavanja): „2026-11" + procenat. */
+export const taxMonthSchema = z.object({
+  month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Izaberite mesec."),
+  tax_percent: taxPercentToBp,
+});
+
+export const deleteTaxMonthSchema = z.object({
+  month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Neispravan mesec."),
+});
 
 export const setPayoutSettlementSchema = z.object({
   payout_id: uuid("Neispravna uplata."),

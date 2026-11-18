@@ -15,8 +15,14 @@ const PRESETS: { key: PresetKey; label: string }[] = [
   { key: "mesec", label: "Ovaj mesec" },
 ];
 
-export function PeriodFilter({ period }: { period: Period }) {
+/**
+ * `afterTax` — prekidač „Pre poreza / Posle poreza" (`?porez=1`). Prenosi se kroz
+ * sve linkove i formu, da promena perioda ne gasi izabrani prikaz.
+ */
+export function PeriodFilter({ period, afterTax = false }: { period: Period; afterTax?: boolean }) {
   const today = todayBelgrade();
+  const taxQs = afterTax ? "&porez=1" : "";
+  const base = `/?od=${period.from}&do=${period.to}`;
 
   return (
     <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -26,7 +32,7 @@ export function PeriodFilter({ period }: { period: Period }) {
           return (
             <Link
               key={key}
-              href={presetHref(key, today)}
+              href={presetHref(key, today) + taxQs}
               className={
                 "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors " +
                 (active
@@ -40,7 +46,27 @@ export function PeriodFilter({ period }: { period: Period }) {
         })}
       </div>
 
+      <div className="border-border bg-surface inline-flex self-start rounded-md border p-0.5 sm:self-auto" role="group" aria-label="Prikaz zarade">
+        {[
+          { on: false, label: "Pre poreza" },
+          { on: true, label: "Posle poreza" },
+        ].map(({ on, label }) => (
+          <Link
+            key={label}
+            href={base + (on ? "&porez=1" : "")}
+            aria-current={afterTax === on ? "true" : undefined}
+            className={
+              "rounded px-2.5 py-1 text-sm font-medium transition-colors " +
+              (afterTax === on ? "bg-green-soft text-green-deep" : "text-ink-soft hover:bg-surface-2")
+            }
+          >
+            {label}
+          </Link>
+        ))}
+      </div>
+
       <form method="get" action="/" className="flex items-end gap-2">
+        {afterTax ? <input type="hidden" name="porez" value="1" /> : null}
         <label className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-none">
           <span className="text-ink-faint text-xs">Od</span>
           <input

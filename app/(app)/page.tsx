@@ -7,6 +7,7 @@ import { getDashboardCharts } from "@/db/dashboard-charts";
 import { getPdvTurnover } from "@/db/pdv";
 import { rsd, num } from "@/lib/format";
 import { comparisonRange, resolvePeriod } from "@/lib/period";
+import { formatRateBp } from "@/lib/tax";
 
 import { DashboardCharts } from "./dashboard-charts";
 import { MetricCard, marginDelta, pctDelta } from "./metric-card";
@@ -35,7 +36,10 @@ export default async function DashboardPage({
   // Logistika nema Dashboard — sleće na Katalog (izbegava redirect petlju kroz requireRole).
   if (session.profile.role === "logistics") redirect("/katalog");
 
-  const period = resolvePeriod(await searchParams);
+  const sp = await searchParams;
+  const period = resolvePeriod(sp);
+  // Prekidač „Posle poreza" (?porez=1) — podrazumevano pre poreza.
+  const afterTax = sp.porez === "1";
   const cmp = comparisonRange(period);
 
   const [metrics, charts, current, previous, pdv] = await Promise.all([
@@ -49,8 +53,23 @@ export default async function DashboardPage({
   ]);
 
   const base = current ?? metrics;
-  const marzaPct = Math.round(metrics.marza * 100);
   const vs = cmp?.label ?? "";
+
+  // Izbor cifara po prekidaču; poređenje sa prethodnim periodom prati isti izbor.
+  const zaradaOf = (m: typeof metrics) => (afterTax ? m.zaradaPosle : m.zarada);
+  const netoOf = (m: typeof metrics) => (afterTax ? m.netoPosle : m.neto);
+  const marzaOf = (m: typeof metrics) => ({ ...m, marza: afterTax ? m.marzaPosle : m.marza });
+  const marzaPct = Math.round(marzaOf(metrics).marza * 100);
+
+  const monthShort = new Intl.DateTimeFormat("sr-Latn-RS", { month: "short", timeZone: "UTC" });
+  const stope = metrics.porezStope
+    .map((s) => `${formatRateBp(s.rateBp)} ${monthShort.format(new Date(`${s.month}-01T12:00:00Z`)).replace(".", "")}`)
+    .join(", ");
+  const porezHint = !metrics.porezOk
+    ? "Stope poreza nisu dostupne"
+    : stope
+      ? stope + (metrics.kesBezPoreza > 0 ? ` · ${num(metrics.kesBezPoreza)} keš bez poreza` : "")
+      : "Nema upisan porez za period";
 
   return (
     <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6 sm:py-10">
@@ -62,22 +81,26 @@ export default async function DashboardPage({
         <OrdersRefresh />
       </div>
 
-      <PeriodFilter period={period} />
+      <PeriodFilter period={period} afterTax={afterTax} />
 
       {/* Metrike perioda */}
-      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
+      <div
+        className={
+          "mb-6 grid grid-cols-2 gap-4 " + (afterTax ? "md:grid-cols-3 lg:grid-cols-5" : "md:grid-cols-4")
+        }
+      >
         <MetricCard
-          label="Zarada"
-          value={rsd(metrics.zarada)}
-          hint={period.label}
-          delta={previous ? pctDelta(base.zarada, previous.zarada, vs, rsd) : null}
+          label={afterTax ? "Zarada posle poreza" : "Zarada"}
+          value={rsd(zaradaOf(metrics))}
+          hint={afterTax ? `Pre poreza ${rsd(metrics.zarada)}` : period.label}
+          delta={previous ? pctDelta(zaradaOf(base), zaradaOf(previous), vs, rsd) : null}
         />
         <MetricCard
-          label="Neto profit"
-          value={rsd(metrics.neto)}
+          label={afterTax ? "Neto posle poreza" : "Neto profit"}
+          value={rsd(netoOf(metrics))}
           hint={`Troškovi ${rsd(metrics.troskovi)}`}
-          tone={metrics.neto >= 0 ? "ink" : "warning"}
-          delta={previous ? pctDelta(base.neto, previous.neto, vs, rsd) : null}
+          tone={netoOf(metrics) >= 0 ? "ink" : "warning"}
+          delta={previous ? pctDelta(netoOf(base), netoOf(previous), vs, rsd) : null}
         />
         <MetricCard
           label="Porudžbine"
@@ -88,14 +111,21 @@ export default async function DashboardPage({
         <MetricCard
           label="Prosečna marža"
           value={`${marzaPct}%`}
-          hint="Zarada / promet"
-          delta={previous ? marginDelta(base, previous, vs) : null}
+          hint={afterTax ? "Posle poreza / promet" : "Zarada / promet"}
+          delta={previous ? marginDelta(marzaOf(base), marzaOf(previous), vs) : null}
         />
+        {afterTax ? (
+          <MetricCard
+            label="Porez"
+            value={rsd(metrics.porez)}
+            hint={porezHint}
+          />
+        ) : null}
       </div>
 
       <PdvCard data={pdv} />
 
-      <DashboardCharts key={`${period.from}_${period.to}`} data={charts} />
+      <DashboardCharts key={`${period.from}_${period.to}`} data={charts} afterTax={afterTax} />
     </main>
   );
 }

@@ -8,6 +8,8 @@ import { requireRole } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { orderStatusSchema } from "@/lib/validation/orders";
+import { deleteTaxMonthSchema, taxMonthSchema } from "@/lib/validation/finance";
+import { formatRateBp } from "@/lib/tax";
 import {
   archiveTicketTagSchema,
   ticketColumnSchema,
@@ -324,4 +326,53 @@ export async function deleteTicketTag(id: string): Promise<SettingsActionState> 
 
   revalidateTicketConfig();
   return { error: null, success: "Tag obrisan." };
+}
+
+/* ── Porez po mesecu (Admin-only; RLS `tax_months_admin_write`) ─────────── */
+
+function revalidateTax() {
+  revalidatePath("/podesavanja");
+  revalidatePath("/");
+}
+
+/** Upis/izmena stope za mesec („2026-11" + „20"). 0 % je dozvoljeno. */
+export async function upsertTaxMonth(
+  _prev: SettingsActionState,
+  formData: FormData,
+): Promise<SettingsActionState> {
+  const session = await requireRole("admin");
+
+  const parsed = taxMonthSchema.safeParse({
+    month: formData.get("month"),
+    tax_percent: formData.get("tax_percent") ?? "",
+  });
+  if (!parsed.success) return { error: firstZodError(parsed.error) };
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("tax_months").upsert(
+    {
+      month: `${parsed.data.month}-01`,
+      rate_bp: parsed.data.tax_percent,
+      updated_by: session.userId,
+    },
+    { onConflict: "month" },
+  );
+  if (error) return { error: "Čuvanje stope nije uspelo." };
+
+  revalidateTax();
+  return { error: null, success: `Porez za ${parsed.data.month}: ${formatRateBp(parsed.data.tax_percent)}.` };
+}
+
+export async function deleteTaxMonth(month: string): Promise<SettingsActionState> {
+  await requireRole("admin");
+
+  const parsed = deleteTaxMonthSchema.safeParse({ month });
+  if (!parsed.success) return { error: firstZodError(parsed.error) };
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("tax_months").delete().eq("month", `${parsed.data.month}-01`);
+  if (error) return { error: "Brisanje stope nije uspelo." };
+
+  revalidateTax();
+  return { error: null, success: "Stopa obrisana — mesec je bez poreza." };
 }

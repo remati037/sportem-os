@@ -6,6 +6,8 @@ import { createClient } from "@/lib/supabase/server";
 import { mustRows } from "@/lib/supabase/paginate";
 import { todayBelgrade } from "@/lib/date-belgrade";
 import { loadSales, norm, sumItems } from "@/db/sales";
+import { getTaxRateMap } from "@/db/tax";
+import { isTaxExempt, monthOf, taxNumer } from "@/lib/tax";
 
 /*
  * Podaci za grafikone na Dashboardu. ISTA pravila kao kartice
@@ -24,6 +26,7 @@ export type ChartDay = {
   profit: number; // zarada realizovanih
   orders: number; // realizovane porudžbine
   cancelled: number; // otkazane + vraćene
+  taxNumer: number; // Σ zarada × stopa meseca (bez keša) — porez = taxFromNumer
 };
 
 export type ChartStatus = { name: string; color: string; count: number };
@@ -83,9 +86,10 @@ export async function getDashboardCharts(
   const supabase = client ?? (await createClient());
   const today = todayBelgrade();
 
-  const [sales, statusRes] = await Promise.all([
+  const [sales, statusRes, tax] = await Promise.all([
     loadSales(supabase, range.from, range.to),
     supabase.from("order_statuses").select("name, color, sort_order").order("sort_order"),
+    getTaxRateMap(supabase, range.from, range.to),
   ]);
   const statusRows = mustRows<{ name: string; color: string | null; sort_order: number }>(
     statusRes,
@@ -96,7 +100,7 @@ export async function getDashboardCharts(
     // Dani posle „danas" se ne crtaju — inače kriva lažno pada na nulu.
     daysBetween(range.from, range.to < today ? range.to : today).map((day) => [
       day,
-      { day, revenue: 0, profit: 0, orders: 0, cancelled: 0 },
+      { day, revenue: 0, profit: 0, orders: 0, cancelled: 0, taxNumer: 0 },
     ]),
   );
   const statusCount = new Map<string, number>();
@@ -119,6 +123,9 @@ export async function getDashboardCharts(
       bucket.revenue += revenue;
       bucket.profit += profit;
       bucket.orders += 1;
+      if (!isTaxExempt(o.payment_status)) {
+        bucket.taxNumer += taxNumer(profit, tax.rates.get(monthOf(o.day)) ?? 0);
+      }
     }
 
     const wd = (new Date(`${o.day}T12:00:00Z`).getUTCDay() + 6) % 7; // pon=0
