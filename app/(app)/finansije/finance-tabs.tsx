@@ -11,6 +11,7 @@ const TABS = [
   { href: "/finansije/uplate", label: "Uplate" },
   { href: "/finansije/fakture", label: "Fakture" },
   { href: "/finansije/postarina", label: "Poštarina" },
+  { href: "/finansije/izvodi", label: "Izvodi" },
 ];
 
 export function FinanceTabs() {
