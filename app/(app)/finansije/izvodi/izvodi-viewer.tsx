@@ -1,10 +1,9 @@
 "use client";
 
-import { Download, FileText, FileUp, Search, Trash2, X } from "lucide-react";
+import { ChevronDown, Download, FileText, FileUp, Plus, Search, Trash2, X } from "lucide-react";
 import { type ChangeEvent, type DragEvent, useMemo, useState } from "react";
 import { toast } from "sonner";
 
-import { EmptyState } from "@/components/patterns/empty-state";
 import {
   MobileCard,
   MobileCardHeader,
@@ -23,7 +22,14 @@ import {
 import { datum, num, rsd } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-import { type IzvodRow, type ParsedFile, mergeRows, parseIzvodFile, toExcelCsv } from "./parse";
+import {
+  type IzvodRow,
+  type ParsedFile,
+  dateFromFileName,
+  mergeRows,
+  parseIzvodFile,
+  toExcelCsv,
+} from "./parse";
 
 type DayGroup = { date: string; rows: IzvodRow[]; total: number };
 
@@ -48,6 +54,14 @@ function uplataWord(n: number) {
   return m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? "uplate" : "uplata";
 }
 
+/** 1 fajl · 2–4 fajla · 5+ fajlova. */
+function fajlWord(n: number) {
+  const m10 = n % 10;
+  const m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return "fajl";
+  return m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? "fajla" : "fajlova";
+}
+
 function normSearch(s: string) {
   return s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/g, "dj");
 }
@@ -56,6 +70,7 @@ export function IzvodiViewer() {
   const [files, setFiles] = useState<ParsedFile[]>([]);
   const [query, setQuery] = useState("");
   const [dragging, setDragging] = useState(false);
+  const [showFiles, setShowFiles] = useState(false);
 
   const { rows, duplicates } = useMemo(() => mergeRows(files), [files]);
   const allDays = useMemo(() => groupByDay(rows), [rows]);
@@ -105,7 +120,7 @@ export function IzvodiViewer() {
     e.target.value = "";
   }
 
-  function onDrop(e: DragEvent<HTMLLabelElement>) {
+  function onDrop(e: DragEvent<HTMLDivElement>) {
     e.preventDefault();
     setDragging(false);
     void addFiles(e.dataTransfer.files);
@@ -124,67 +139,126 @@ export function IzvodiViewer() {
   }
 
   return (
-    <div className="space-y-6">
-      <label
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={onDrop}
-        className={cn(
-          "border-border bg-surface hover:bg-surface-2 flex cursor-pointer flex-col items-center gap-2 rounded-lg border border-dashed px-6 py-8 text-center transition-colors",
-          dragging && "border-green bg-green-soft",
-        )}
-      >
-        <FileUp className="text-ink-faint size-7" />
-        <span className="text-ink text-[0.9375rem] font-medium">
-          Prevuci izvode ovde ili klikni da izabereš
-        </span>
-        <span className="text-ink-soft text-sm">
-          CSV ili JSON od XExpressa, može više fajlova odjednom. Ništa se ne čuva u bazi.
-        </span>
-        <input
-          type="file"
-          accept=".csv,.json,text/csv,application/json"
-          multiple
-          onChange={onInput}
-          className="hidden"
-        />
-      </label>
-
+    <div
+      className="space-y-6"
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+      }}
+      onDrop={onDrop}
+    >
       {files.length === 0 ? (
-        <EmptyState
-          icon={<FileText />}
-          title="Još nema učitanih izvoda"
-          description="Učitaj jedan ili više dnevnih izvoda i dobićeš pregled po danima sa zbirovima."
-        />
+        <label
+          className={cn(
+            "border-border bg-surface hover:bg-surface-2 flex cursor-pointer flex-col items-center gap-2 rounded-lg border border-dashed px-6 py-10 text-center transition-colors",
+            dragging && "border-green bg-green-soft",
+          )}
+        >
+          <FileUp className="text-ink-faint size-7" />
+          <span className="text-ink text-[0.9375rem] font-medium">
+            Prevuci izvode ovde ili klikni da izabereš
+          </span>
+          <span className="text-ink-soft text-sm">
+            CSV ili JSON od XExpressa, može više fajlova odjednom. Ništa se ne čuva u bazi.
+          </span>
+          <input
+            type="file"
+            accept=".csv,.json,text/csv,application/json"
+            multiple
+            onChange={onInput}
+            className="hidden"
+          />
+        </label>
       ) : (
         <>
-          {/* Učitani fajlovi */}
-          <div className="flex flex-wrap items-center gap-2">
-            {files.map((f) => (
-              <span
-                key={f.fileName}
-                className="border-border bg-surface text-ink-soft inline-flex max-w-full items-center gap-1.5 rounded-md border py-1 pr-1 pl-2.5 text-xs"
+          {/* Učitani fajlovi — sažeto u jedan red, lista na klik */}
+          <div
+            className={cn(
+              "border-border bg-surface shadow-soft rounded-lg border transition-colors",
+              dragging && "border-green bg-green-soft",
+            )}
+          >
+            <div className="flex flex-wrap items-center gap-2 p-2 pl-3">
+              <button
+                type="button"
+                onClick={() => setShowFiles((v) => !v)}
+                aria-expanded={showFiles}
+                className="text-ink hover:text-green-deep flex min-w-0 flex-1 items-center gap-2 text-left text-sm font-medium"
               >
-                <span className="truncate" title={f.fileName}>
-                  {f.fileName}
+                <FileText className="text-ink-faint size-4 shrink-0" />
+                <span className="num truncate">
+                  {num(files.length)} {fajlWord(files.length)} · {num(rows.length)}{" "}
+                  {uplataWord(rows.length)}
                 </span>
-                <span className="num text-ink-faint shrink-0">· {num(f.rows.length)}</span>
-                <button
-                  type="button"
-                  aria-label={`Ukloni ${f.fileName}`}
-                  onClick={() => setFiles((prev) => prev.filter((x) => x.fileName !== f.fileName))}
-                  className="hover:bg-surface-2 hover:text-ink shrink-0 rounded p-0.5"
-                >
-                  <X className="size-3.5" />
-                </button>
-              </span>
-            ))}
-            <Button variant="ghost" size="sm" onClick={() => setFiles([])}>
-              <Trash2 /> Očisti sve
-            </Button>
+                <ChevronDown
+                  className={cn(
+                    "text-ink-faint size-4 shrink-0 transition-transform",
+                    showFiles && "rotate-180",
+                  )}
+                />
+              </button>
+              <Button variant="ghost" size="sm" asChild>
+                <label className="cursor-pointer" title="Dodaj izvode" aria-label="Dodaj izvode">
+                  <Plus /> <span className="hidden sm:inline">Dodaj</span>
+                  <input
+                    type="file"
+                    accept=".csv,.json,text/csv,application/json"
+                    multiple
+                    onChange={onInput}
+                    className="hidden"
+                  />
+                </label>
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setFiles([])}
+                title="Očisti sve"
+                aria-label="Očisti sve"
+              >
+                <Trash2 /> <span className="hidden sm:inline">Očisti sve</span>
+              </Button>
+            </div>
+
+            {showFiles ? (
+              <ul className="border-border divide-border max-h-64 divide-y overflow-y-auto border-t">
+                {files.map((f) => {
+                  const d = dateFromFileName(f.fileName);
+                  const sum = f.rows.reduce((s, r) => s + r.amount, 0);
+                  return (
+                    <li
+                      key={f.fileName}
+                      className="flex items-center gap-3 py-1.5 pr-2 pl-3 text-sm"
+                    >
+                      <span className="min-w-0 flex-1 truncate" title={f.fileName}>
+                        {d ? (
+                          <span className="num text-ink">{datum(d)}</span>
+                        ) : (
+                          <span className="text-ink">{f.fileName}</span>
+                        )}
+                        <span className="text-ink-faint ml-2 text-xs">
+                          {num(f.rows.length)} {uplataWord(f.rows.length)}
+                        </span>
+                      </span>
+                      <span className="num text-ink-soft shrink-0">{rsd(sum)}</span>
+                      <button
+                        type="button"
+                        aria-label={`Ukloni ${f.fileName}`}
+                        onClick={() =>
+                          setFiles((prev) => prev.filter((x) => x.fileName !== f.fileName))
+                        }
+                        className="text-ink-faint hover:bg-surface-2 hover:text-danger shrink-0 rounded p-1"
+                      >
+                        <X className="size-4" />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : null}
           </div>
 
           {/* Zbir */}

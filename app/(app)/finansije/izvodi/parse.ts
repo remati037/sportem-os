@@ -79,7 +79,7 @@ export function parseDate(raw: unknown): string | null {
 }
 
 /** XExpress imenuje fajl „20261110_SPORT_NAME_…" — datum iz imena je rezerva. */
-function dateFromFileName(fileName: string): string | null {
+export function dateFromFileName(fileName: string): string | null {
   const m = fileName.match(/(20\d{2})(\d{2})(\d{2})/);
   return m ? `${m[1]}-${m[2]}-${m[3]}` : null;
 }
